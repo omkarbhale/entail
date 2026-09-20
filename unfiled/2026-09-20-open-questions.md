@@ -2,16 +2,18 @@
 
 Recorded so they are not silently re-derived by whoever builds next.
 
-Nothing here has a position taken on it. An entry may carry later material
-recorded under it. Where an input exists that argues for one answer, that input
-is named, but naming it is not adopting it. Recording a position the captain
-did not take is the failure this product exists to prevent. Nothing is
-described as deferred unless a ruling deferred it: a question nobody has
-answered and a question deliberately parked need different handling later, and
-collapsing the two is that same failure.
+Nothing here has a position taken on it. Where an input exists that argues for
+one answer, that input is named, but naming it is not adopting it. Recording a
+position the captain did not take is the failure this product exists to
+prevent. Nothing is described as deferred unless a ruling deferred it: a
+question nobody has answered and a question deliberately parked need different
+handling later, and collapsing the two is that same failure.
 
 Entries are grouped by where they came from. Sections A and B are what the
-2026-09-20 conversation itself left open.
+2026-09-20 conversation itself left open. Section C is what the prior-art
+investigation and the repository owner flagged as open; those questions were
+not raised in that conversation, and the investigation has ruled on nothing —
+they are listed because nobody has answered them.
 
 Companion to [`2026-09-20-pipeline-design-record.md`](2026-09-20-pipeline-design-record.md).
 
@@ -79,9 +81,6 @@ Point 6 distinguishes cases that should loop from cases where "it is extremely
 clear that something needs a decision" and so go back as a blocker
 immediately. The test that separates them is not given.
 
-**A later statement bears on this.** See
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md#22-clarification-retries-are-not-dropped).
-
 ### B5. What the layer-purity guardrails are
 
 Point 8 rules out hard-blocking and calls for "guardrails from the Entail side
@@ -89,9 +88,6 @@ about deciding what should go where", relying in part on the models being
 intelligent regardless. What a guardrail is, mechanically, is not specified,
 and the ruling explicitly defers the interface side of it as a far
 implementation detail.
-
-**A later statement bears on this.** See
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md#21-layer-purity-is-done-by-the-model-not-by-separate-machinery).
 
 ### B6. Which artifacts are per-task and which are project artifacts
 
