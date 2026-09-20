@@ -28,3 +28,4 @@ disappear.
 | [`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md) | The build philosophy, and what the captain stated after it. |
 | [`2026-09-20-open-questions.md`](2026-09-20-open-questions.md) | What is still open. |
 | [`prior-art-investigation-2026-09-20.md`](prior-art-investigation-2026-09-20.md) | A copy of the prior-art investigation. Its top note states its status. |
+| [`2026-09-20-artifact-shape-decision.md`](2026-09-20-artifact-shape-decision.md) | The artifact-shape decision, and what it leaves open. |
