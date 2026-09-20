@@ -2,14 +2,16 @@
 
 Recorded so they are not silently re-derived by whoever builds next.
 
-An entry may carry later material recorded under it. Where an input exists
-that argues for one answer, that input is named, but naming it is not adopting
-it. Recording a position the captain did not take is the failure this product
-exists to prevent. Nothing is described as deferred unless a ruling deferred
-it: a question nobody has answered and a question deliberately parked need
-different handling later, and collapsing the two is that same failure.
+Nothing here has a position taken on it. An entry may carry later material
+recorded under it. Where an input exists that argues for one answer, that input
+is named, but naming it is not adopting it. Recording a position the captain
+did not take is the failure this product exists to prevent. Nothing is
+described as deferred unless a ruling deferred it: a question nobody has
+answered and a question deliberately parked need different handling later, and
+collapsing the two is that same failure.
 
-Entries are grouped by where they came from.
+Entries are grouped by where they came from. Sections A and B are what the
+2026-09-20 conversation itself left open.
 
 Companion to [`2026-09-20-pipeline-design-record.md`](2026-09-20-pipeline-design-record.md).
 

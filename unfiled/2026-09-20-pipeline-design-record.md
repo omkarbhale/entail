@@ -3,6 +3,10 @@
 Source: a design conversation held on 2026-09-20. Recorded here so it persists
 instead of living only in chat scrollback.
 
+Scope of this record: the intended shape of Entail's pipeline, eight critiques
+raised against that shape and the ruling made on each, the promotion rule for
+per-task artifacts, and the constraints already accepted.
+
 What this record does **not** do: it does not resolve anything the conversation
 left open, and it does not tidy a ruling into something more decided than it
 was. Where a ruling is ambiguous, the ruling is recorded as stated and the
@@ -16,7 +20,7 @@ Entail's decision-record format. See [`README.md`](README.md). The rulings
 below, and the reasoning recorded with them, are the captain's. The critiques
 are firstmate's: the seven points firstmate put to the captain on 2026-09-20,
 plus an eighth firstmate raised. The bold labels and the status lines are the
-recorder's.
+recorder's. Everything else below is the captain's.
 
 ---
 
