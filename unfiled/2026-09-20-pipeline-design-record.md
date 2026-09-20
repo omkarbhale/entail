@@ -84,10 +84,6 @@ performed on whether the artifact satisfies *this task*, not on the whole scope
 of the entire artifact in question. Every pipeline step, for now, only checks
 whether upstream is sufficient for this task.
 
-**Reasoning attached to the ruling.** Narrowing the check to the task is what
-makes sufficiency answerable; asking whether an artifact is sufficient in
-general is not the question the pipeline needs answered.
-
 **Status of the critique.** Accepted as stated.
 
 Note the qualifier "for now" is the captain's, and is recorded rather than
@@ -120,10 +116,6 @@ miss re-asks harmlessly, but a wrong match applies a decision to a case it never
 covered, silently, and it looks like derivation.
 
 **Ruling.** Correct. Bias toward re-asking.
-
-**Reasoning attached to the ruling.** The two error directions are not
-symmetric: a miss costs a repeated question, a wrong match silently launders an
-improvisation as a derivation.
 
 **Also established, separately, at this point in the conversation** (stated as
 something that should have been said sooner, not as a consequence of point 4):
@@ -162,7 +154,7 @@ people hand-fix and the artifacts rot.
 **Ruling.** Right to question it. It will be a blocker handled by the
 orchestration.
 
-**Reasoning attached to the ruling, as given.**
+**Reasoning given with the ruling.**
 
 - If architecture was derived from vision and product decisions, and there was
   no human in the loop for that task's architecture, routing back to the
@@ -200,7 +192,7 @@ separately wondered about as its own layer.
 **Ruling.** Correct. Scope belongs in the decisions phase rather than the
 vision phase.
 
-**Reasoning attached to the ruling.** The vision is often simple to understand,
+**Reasoning given with the ruling.** The vision is often simple to understand,
 and scope is ultimately the decision taken by the user or project maintainer
 about what is in scope versus what is not, which may be bound to change.
 

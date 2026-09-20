@@ -25,5 +25,5 @@ disappear.
 | File | What it is |
 | --- | --- |
 | [`2026-09-20-pipeline-design-record.md`](2026-09-20-pipeline-design-record.md) | The design conversation of 2026-09-20: the intended pipeline flow, eight critiques of it with the ruling on each, the promotion rule for per-task artifacts, and the constraints already accepted. |
-| [`2026-09-20-open-questions.md`](2026-09-20-open-questions.md) | What that conversation left genuinely open, recorded so it is not silently re-derived. |
-| [`prior-art-investigation-2026-09-20.md`](prior-art-investigation-2026-09-20.md) | A copy of the prior-art investigation. It corrects several prior-art claims in `VISION.md`. See the note at the top of that file. |
+| [`2026-09-20-open-questions.md`](2026-09-20-open-questions.md) | What is still open, recorded so it is not silently re-derived, grouped by source: what that conversation left open, and what the prior-art investigation and the repository owner flagged separately. |
+| [`prior-art-investigation-2026-09-20.md`](prior-art-investigation-2026-09-20.md) | A copy of the prior-art investigation, kept as an unadopted input: it has ruled on nothing and its recommendations carry no authority. It is here because several prior-art claims recorded in `VISION.md` — about BMAD-METHOD, GitHub Spec Kit and OpenSpec — are contradicted by the later evidence it gathered, and `VISION.md` is left as written rather than corrected. See the note at the top of that file. |

@@ -7,11 +7,17 @@ one answer, that input is named, but naming it is not adopting it. Recording a
 position the captain did not take is the failure this product exists to
 prevent.
 
+Entries are grouped by where they came from. Sections A and B are what the
+2026-09-20 conversation itself left open. Section C is what the prior-art
+investigation and the repository owner flagged as open; those questions were
+not raised in that conversation, and the investigation has ruled on nothing —
+they are listed because nobody has answered them.
+
 Companion to [`2026-09-20-pipeline-design-record.md`](2026-09-20-pipeline-design-record.md).
 
 ---
 
-## A. Carried forward as explicitly undecided
+## A. Left open by the 2026-09-20 conversation
 
 ### A1. The artifact format itself
 
@@ -22,11 +28,11 @@ Everything in this folder — including the shape of the design record next to
 this file — is ad hoc prose formatting adopted to get the material written
 down, and constitutes no part of an answer here.
 
-An input exists: the prior-art investigation
+An unadopted input exists: the prior-art investigation
 ([`prior-art-investigation-2026-09-20.md`](prior-art-investigation-2026-09-20.md))
 argues this is the load-bearing decision and recommends enumerated decision
-records each citing an upstream anchor. No ruling has been made on that
-recommendation.
+records each citing an upstream anchor. That report decides nothing; no ruling
+has been made on its recommendation.
 
 ### A2. The vertical set
 
@@ -37,28 +43,6 @@ The design record names vision, decisions and architecture as layers where the
 user wants some say, and names development, testing, performance validation, UX
 design, UX validation and accessibility as runs the pipeline spawns. Which of
 those own a persistent artifact is not settled by that naming.
-
-### A3. Where the orchestrator runs
-
-A CLI, a library, a long-running process, a skill inside an agent. Nothing so
-far constrains this.
-
-Two statements bear on it without settling it: "Entail is not a set of skills,
-it is an orchestrator", and the board (a user interface showing all tasks and
-in-flight features and their status) being part of the product.
-
-### A4. Delegation dial semantics
-
-What it means to flip an already-written artifact from authored to derived, and
-whether pins can cover topics that have no decision yet.
-
-### A5. Whether the backlog view is authored or derived
-
-Undecided.
-
-### A6. Success criterion
-
-No success criterion has been stated for Entail as a whole.
 
 ---
 
@@ -134,3 +118,36 @@ ruling. Recorded as stated rather than resolved.
 Points 2 and 7 both carry a "for now" qualifier — every pipeline step checking
 only whether upstream is sufficient for this task, and scope being handled as
 just another product decision. What would later change either is not stated.
+
+---
+
+## C. Flagged outside the 2026-09-20 conversation
+
+These were not raised in that conversation. They are open questions the
+prior-art investigation
+([`prior-art-investigation-2026-09-20.md`](prior-art-investigation-2026-09-20.md),
+§9) named as undetermined, carried forward here by the repository owner. That
+report has ruled on nothing; listing its questions is not adopting anything it
+recommends.
+
+### C1. Where the orchestrator runs
+
+A CLI, a library, a long-running process, a skill inside an agent. Nothing so
+far constrains this.
+
+Two statements bear on it without settling it: "Entail is not a set of skills,
+it is an orchestrator", and the board (a user interface showing all tasks and
+in-flight features and their status) being part of the product.
+
+### C2. Delegation dial semantics
+
+What it means to flip an already-written artifact from authored to derived, and
+whether pins can cover topics that have no decision yet.
+
+### C3. Whether the backlog view is authored or derived
+
+Undecided.
+
+### C4. Success criterion
+
+No success criterion has been stated for Entail as a whole.

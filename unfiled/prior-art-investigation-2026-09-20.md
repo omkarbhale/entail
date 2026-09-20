@@ -1,21 +1,22 @@
 > **Why this file is in the repository.**
 >
-> [`VISION.md`](../VISION.md) is a faithful record of what was written on
-> 2026-09-20, including its "Prior art" section. This investigation established
-> that several of the prior-art claims recorded there are wrong or stale — most
-> consequentially about BMAD-METHOD, GitHub Spec Kit and OpenSpec; see §2,
-> "Corrections to the handoff's premises", below.
+> [`VISION.md`](../VISION.md) is an unaltered record of what was written on
+> 2026-09-20, including its "Prior art" section, and it is **not** corrected.
+> Correcting the record of what someone said destroys the thing that document
+> exists to be.
 >
-> `VISION.md` is **not** corrected. Correcting the record of what someone said
-> destroys the thing that document exists to be. This report is copied here
-> instead, unchanged apart from this note, so that the repository does not
-> assert those claims with nothing to contradict them. Where this report and
-> `VISION.md` disagree on a fact about an existing tool, this report is the
-> later and better-evidenced account; where they disagree on what the captain
-> intended, `VISION.md` stands.
+> Several of the claims recorded there about BMAD-METHOD, GitHub Spec Kit and
+> OpenSpec are contradicted by later evidence, which this investigation
+> gathered and sets out in §2, "Corrections to the handoff's premises", below.
+> This report is copied here, unchanged apart from this note, so that the
+> repository does not assert those claims with nothing to contradict them.
 >
-> This report's recommendations are its author's, not rulings. Nothing in it
-> has been adopted as an Entail decision.
+> **This report is an unadopted input. It has ruled on nothing and decided
+> nothing.** Everything it recommends is its author's own — including the
+> artifact format in §4.2, the delegation front-matter in §5.2, the first
+> milestone in §8, and the "decision required from the captain" in §11 — and
+> carries no authority in this repository. Where this report and `VISION.md`
+> disagree on what the captain intended, `VISION.md` stands.
 >
 > Source: `entail-priorart-b2`, dated 2026-09-20. Content preserved verbatim
 > below.
