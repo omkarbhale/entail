@@ -112,9 +112,7 @@ from what was asked of it.
 
 **Each layer gets everything before it, along with its brief.**
 
-This is the captain's position. It is not derived from anything in this
-repository, and it is not presented as following from the design record or from
-the handoff.
+This is the captain's position.
 
 He states that it was always true and was always assumed. It had not been
 stated in the handoff or in the design record, and it is written down here for
