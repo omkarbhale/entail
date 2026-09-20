@@ -7,15 +7,6 @@
 **Party who made it: the recorder.** It is not the captain's decision, and the
 captain named its authority deliberately.
 
-The layout below — its headings, its numbering, its ordering — is ad hoc
-formatting invented to get this written down, exactly as
-[`README.md`](README.md) says of this folder. Section 1.3.1 asks what Entail's
-concrete syntax should be, and this document had to be written in some shape
-before that question had an answer. The shape used here is that ad hoc shape
-and is no part of an answer to 1.3.1.
-
----
-
 ## 1. The decision
 
 Entail's artifacts are enumerated decision records, each carrying the upstream
