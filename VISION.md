@@ -4,7 +4,8 @@
 2026-09-20. Preserved as stated. Entail has no artifact format yet, so this is
 a plain document. Entail's own artifacts are the source of truth for Entail's
 direction; the then-latest artifacts inside Entail are what gets followed when
-scoping and building Entail itself.*
+scoping and building Entail itself. The Prior art section below is corrected,
+not amended, by `unfiled/prior-art-investigation-2026-09-20.md`.*
 
 ## The problem
 

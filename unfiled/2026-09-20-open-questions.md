@@ -1,0 +1,136 @@
+# Open questions as of 2026-09-20
+
+Recorded so they are not silently re-derived by whoever builds next.
+
+Nothing here has a position taken on it. Where an input exists that argues for
+one answer, that input is named, but naming it is not adopting it. Recording a
+position the captain did not take is the failure this product exists to
+prevent.
+
+Companion to [`2026-09-20-pipeline-design-record.md`](2026-09-20-pipeline-design-record.md).
+
+---
+
+## A. Carried forward as explicitly undecided
+
+### A1. The artifact format itself
+
+Enumerated decision records with upstream citations, prose documents, or a
+hybrid. **Deliberately deferred, not decided.**
+
+Everything in this folder — including the shape of the design record next to
+this file — is ad hoc prose formatting adopted to get the material written
+down, and constitutes no part of an answer here.
+
+An input exists: the prior-art investigation
+([`prior-art-investigation-2026-09-20.md`](prior-art-investigation-2026-09-20.md))
+argues this is the load-bearing decision and recommends enumerated decision
+records each citing an upstream anchor. No ruling has been made on that
+recommendation.
+
+### A2. The vertical set
+
+How many layers own a persistent artifact, and whether that set is fixed by
+Entail or chosen per project.
+
+The design record names vision, decisions and architecture as layers where the
+user wants some say, and names development, testing, performance validation, UX
+design, UX validation and accessibility as runs the pipeline spawns. Which of
+those own a persistent artifact is not settled by that naming.
+
+### A3. Where the orchestrator runs
+
+A CLI, a library, a long-running process, a skill inside an agent. Nothing so
+far constrains this.
+
+Two statements bear on it without settling it: "Entail is not a set of skills,
+it is an orchestrator", and the board (a user interface showing all tasks and
+in-flight features and their status) being part of the product.
+
+### A4. Delegation dial semantics
+
+What it means to flip an already-written artifact from authored to derived, and
+whether pins can cover topics that have no decision yet.
+
+### A5. Whether the backlog view is authored or derived
+
+Undecided.
+
+### A6. Success criterion
+
+No success criterion has been stated for Entail as a whole.
+
+---
+
+## B. Ambiguities in the 2026-09-20 rulings
+
+These are flagged, not resolved. Each is recorded as stated in the design
+record; this section only marks where a builder will find the ruling
+under-determined.
+
+### B1. Briefs: handed to the developer, or kept separate
+
+Raised in the same breath as the flow and not ruled on: whether the per-
+iteration briefs are built and handed to the developer or kept separate,
+because the developer should not be overloaded.
+
+### B2. Which settings are per project and which are per task
+
+Points 3 and 5 both turn on the distinction between per-project settings and
+per-task decisions, and give one example ("the user can decide that for one
+project they want a validation pipeline, or do not want one"). The full
+partition — which settings sit on which side — is not enumerated.
+
+### B3. The loopback retry count
+
+Point 6 gives it as "a few tries, two or three, or maybe one". The number is
+left open by the ruling itself, as is whether it is fixed, configurable, or
+per-layer.
+
+### B4. The bound on what layers may settle between themselves
+
+Point 6 states that bounding is needed, and states the principle: interpreting
+what is already upstream can be looped easily, but nothing in that can be
+changed, and if it really is a blocker it will be raised. How that bound is
+expressed or enforced is not specified.
+
+### B5. What makes something "extremely clear" enough to route back as a blocker
+
+Point 6 distinguishes cases that should loop from cases where "it is extremely
+clear that something needs a decision" and so go back as a blocker
+immediately. The test that separates them is not given.
+
+### B6. What the layer-purity guardrails are
+
+Point 8 rules out hard-blocking and calls for "guardrails from the Entail side
+about deciding what should go where", relying in part on the models being
+intelligent regardless. What a guardrail is, mechanically, is not specified,
+and the ruling explicitly defers the interface side of it as a far
+implementation detail.
+
+### B7. Which artifacts are per-task and which are project artifacts
+
+Point 6 establishes the distinction, gives per-task architecture as the
+example, and states that per-task artifacts can be volatile while the main
+project artifacts should always require a decision. The membership of each set
+beyond that example is not settled. Related: A2.
+
+### B8. What counts as "inconsistencies in the existing pipeline" for promotion
+
+The promotion rule triggers when a task cannot be completed because of
+inconsistencies in the existing pipeline. What qualifies is not defined.
+
+### B9. The word "promoted" in the promotion rule
+
+The rule states that a per-task artifact gets promoted automatically, and in
+the same breath that the task is simply blocked and the orchestrator asks the
+user to go into the right layer and asks them what to do. Whether "promoted
+automatically" names an automatic change to a project artifact, or names the
+automatic escalation of the question to the user, is not disambiguated by the
+ruling. Recorded as stated rather than resolved.
+
+### B10. The scope of "for now"
+
+Points 2 and 7 both carry a "for now" qualifier — every pipeline step checking
+only whether upstream is sufficient for this task, and scope being handled as
+just another product decision. What would later change either is not stated.
