@@ -17,9 +17,14 @@ critique and the correction are kept. The vision asks delegated output to be
 ([`VISION.md`](../VISION.md), "Review debt"); a record showing only the
 conclusion drops the rationale half of that.
 
-The layout below (Critique / Ruling / Reasoning / Also established) is ad hoc
-formatting for this document only. It is not Entail's decision-record format.
-See [`README.md`](README.md).
+The layout below is ad hoc formatting for this document only. It is not
+Entail's decision-record format. See [`README.md`](README.md). The labels it
+uses are: **Critique**, **Ruling**, **Reasoning given with the ruling**, **Also
+established** (by the same ruling, or separately at that point in the
+conversation), **Correction supplied by the ruling**, **Instruction attached to
+the ruling**, and **Status of the critique**. The text under each label is the
+captain's; the labels themselves, and the status line in particular, are the
+recorder's classification of what the ruling did.
 
 ---
 
@@ -30,9 +35,10 @@ Stated as the intended shape of the pipeline.
 - Somebody arrives and describes some task, feature, activity, or a product to
   build. That goes into a pipeline and follows it.
 - First step: check the product vision — conflicts, missing, scope mismatch.
+  (Later revised by the rulings on point 2 and point 7 below.)
 - If the vision is empty, start a small grill on the vision.
 - Once that is done, check decisions — the same things: check missing or
-  mismatch, follow existing.
+  mismatch, follow existing. (Later revised by the ruling on point 2 below.)
 - During the pipeline there are stricter briefs, in some format, which check
   whether the thing already exists. If a decision worth asking for this task
   already exists, do not ask it again.
