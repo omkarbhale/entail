@@ -2,18 +2,17 @@
 
 Recorded so they are not silently re-derived by whoever builds next.
 
-Nothing here has a position taken on it. Where an input exists that argues for
-one answer, that input is named, but naming it is not adopting it. Recording a
-position the captain did not take is the failure this product exists to
-prevent. Nothing is described as deferred unless a ruling deferred it: a
-question nobody has answered and a question deliberately parked need different
-handling later, and collapsing the two is that same failure.
+Where an input exists that argues for one answer, that input is named, but
+naming it is not adopting it. Recording a position the captain did not take
+is the failure this product exists to prevent. Nothing is described as
+deferred unless a ruling deferred it: a question nobody has answered and a
+question deliberately parked need different handling later, and collapsing
+the two is that same failure.
 
 Entries are grouped by where they came from. Sections A and B are what the
 2026-09-20 conversation itself left open. Section C is what the prior-art
 investigation and the repository owner flagged as open; those questions were
-not raised in that conversation, and the investigation has ruled on nothing —
-they are listed because nobody has answered them.
+not raised in that conversation, and the investigation has ruled on nothing.
 
 Companion to [`2026-09-20-pipeline-design-record.md`](2026-09-20-pipeline-design-record.md).
 
@@ -120,12 +119,11 @@ just another product decision. What would later change either is not stated.
 
 ## C. Flagged outside the 2026-09-20 conversation
 
-These were not raised in that conversation. They are open questions the
-prior-art investigation
+These were not raised in that conversation. They are questions the prior-art
+investigation
 ([`prior-art-investigation-2026-09-20.md`](prior-art-investigation-2026-09-20.md),
 §9) named as undetermined, carried forward here by the repository owner. That
-report has ruled on nothing; listing its questions is not adopting anything it
-recommends.
+report has ruled on nothing.
 
 ### C1. Entail's artifact format
 
@@ -149,7 +147,8 @@ down, and constitutes no part of an answer here.
 
 The investigation argues this is the load-bearing decision and recommends
 enumerated decision records each citing an upstream anchor (§9.1, §4.2, §11).
-That report decides nothing; no ruling has been made on its recommendation.
+That report decides nothing. Its recommendation was adopted by the recorder
+under the derived authority above; the captain did not rule on it.
 
 ### C2. Where the orchestrator runs
 

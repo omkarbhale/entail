@@ -2,18 +2,18 @@
 
 A holding place, not a scheme.
 
-Entail has no artifact format, no directory taxonomy, no layer naming
-convention and no file format standard. None of those have been decided. This
-folder exists only so that material which currently lives in chat scrollback
-lives in the repository instead, where it is diffable and reviewable.
+Entail has no directory taxonomy, no layer naming convention and no file
+format standard. None of those have been decided. This folder exists only so
+that material which currently lives in chat scrollback lives in the
+repository instead, where it is diffable and reviewable.
 
 Nothing about this folder is a proposal. The name `unfiled` is chosen to be
 unmistakably provisional and to avoid colliding with any layer name Entail
 might later use (vision, decisions, architecture, and so on). The structure
 inside each document below — its headings, its fields, its ordering — is ad hoc
 prose formatting invented to get the material written down. It is not a
-decision-record format and must not be read as one; the artifact format is
-explicitly an open question, recorded as such in
+decision-record format and must not be read as one; Entail's own
+artifact shape is recorded separately, at C1 of
 [`2026-09-20-open-questions.md`](2026-09-20-open-questions.md).
 
 When Entail can organise its own repository using its own principles, this
