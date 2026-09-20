@@ -2,7 +2,9 @@
 
 *Entail's vision artifact: the handoff that seeds the project, written
 2026-09-20. Preserved as stated. Entail has no artifact format yet, so this is
-a plain document.*
+a plain document. Entail's own artifacts are the source of truth for Entail's
+direction; the then-latest artifacts inside Entail are what gets followed when
+scoping and building Entail itself.*
 
 ## The problem
 
