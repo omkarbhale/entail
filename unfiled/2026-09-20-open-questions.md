@@ -5,7 +5,9 @@ Recorded so they are not silently re-derived by whoever builds next.
 Nothing here has a position taken on it. Where an input exists that argues for
 one answer, that input is named, but naming it is not adopting it. Recording a
 position the captain did not take is the failure this product exists to
-prevent.
+prevent. Nothing is described as deferred unless a ruling deferred it: a
+question nobody has answered and a question deliberately parked need different
+handling later, and collapsing the two is that same failure.
 
 Entries are grouped by where they came from. Sections A and B are what the
 2026-09-20 conversation itself left open. Section C is what the prior-art
@@ -19,22 +21,7 @@ Companion to [`2026-09-20-pipeline-design-record.md`](2026-09-20-pipeline-design
 
 ## A. Left open by the 2026-09-20 conversation
 
-### A1. The artifact format itself
-
-Enumerated decision records with upstream citations, prose documents, or a
-hybrid. **Deliberately deferred, not decided.**
-
-Everything in this folder — including the shape of the design record next to
-this file — is ad hoc prose formatting adopted to get the material written
-down, and constitutes no part of an answer here.
-
-An unadopted input exists: the prior-art investigation
-([`prior-art-investigation-2026-09-20.md`](prior-art-investigation-2026-09-20.md))
-argues this is the load-bearing decision and recommends enumerated decision
-records each citing an upstream anchor. That report decides nothing; no ruling
-has been made on its recommendation.
-
-### A2. The vertical set
+### A1. The vertical set
 
 How many layers own a persistent artifact, and whether that set is fixed by
 Entail or chosen per project.
@@ -97,7 +84,7 @@ implementation detail.
 Point 6 establishes the distinction, gives per-task architecture as the
 example, and states that per-task artifacts can be volatile while the main
 project artifacts should always require a decision. The membership of each set
-beyond that example is not settled. Related: A2.
+beyond that example is not settled. Related: A1.
 
 ### B8. What counts as "inconsistencies in the existing pipeline" for promotion
 
@@ -130,7 +117,26 @@ prior-art investigation
 report has ruled on nothing; listing its questions is not adopting anything it
 recommends.
 
-### C1. Where the orchestrator runs
+### C1. Entail's artifact format
+
+Enumerated decision records with upstream citations, prose documents, or a
+hybrid. That option set is the investigation's own (§11), not the captain's.
+
+**Unanswered, not deferred.** The question was put to the captain; he answered
+a different and narrower one — how to store this record: "You can write it in
+any format you like - this is just for persistence in Entail for now". That
+settles the format of this folder. Entail's artifact format as a product
+decision was never addressed, and no ruling deferred it.
+
+Everything in this folder — including the shape of the design record next to
+this file — is ad hoc prose formatting adopted to get the material written
+down, and constitutes no part of an answer here.
+
+The investigation argues this is the load-bearing decision and recommends
+enumerated decision records each citing an upstream anchor (§9.1, §4.2, §11).
+That report decides nothing; no ruling has been made on its recommendation.
+
+### C2. Where the orchestrator runs
 
 A CLI, a library, a long-running process, a skill inside an agent. Nothing so
 far constrains this.
@@ -139,15 +145,15 @@ Two statements bear on it without settling it: "Entail is not a set of skills,
 it is an orchestrator", and the board (a user interface showing all tasks and
 in-flight features and their status) being part of the product.
 
-### C2. Delegation dial semantics
+### C3. Delegation dial semantics
 
 What it means to flip an already-written artifact from authored to derived, and
 whether pins can cover topics that have no decision yet.
 
-### C3. Whether the backlog view is authored or derived
+### C4. Whether the backlog view is authored or derived
 
 Undecided.
 
-### C4. Success criterion
+### C5. Success criterion
 
 No success criterion has been stated for Entail as a whole.
