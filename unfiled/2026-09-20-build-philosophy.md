@@ -2,8 +2,8 @@
 
 Source: the same design conversation of 2026-09-20 recorded in
 [`2026-09-20-pipeline-design-record.md`](2026-09-20-pipeline-design-record.md),
-plus what the captain stated after it. Recorded here so it persists instead of
-living only in chat scrollback.
+plus what the captain stated later in it. Recorded here so it persists instead
+of living only in chat scrollback.
 
 What this record does **not** do. On the captain's instruction, this document
 records the settled position only; the recorder's earlier misreadings of it are
@@ -12,8 +12,7 @@ general rule for the repository, and the eight-point design record keeps its
 critiques beside its rulings, unchanged.
 
 Where the captain ruled without explaining, the ruling is recorded alone.
-Nothing below is given a rationale he did not give. Where the text states a
-reading rather than something he said, it says so.
+Nothing below is given a rationale he did not give.
 
 The layout below is ad hoc formatting for this document only. It is not Entail's
 decision-record format; no such format has been chosen. See
@@ -51,7 +50,7 @@ difficult.
 
 ---
 
-## 2. Statements the captain made after the design conversation
+## 2. Statements the captain made later in the design conversation
 
 ### 2.1 Layer purity is done by the model, not by separate machinery
 
