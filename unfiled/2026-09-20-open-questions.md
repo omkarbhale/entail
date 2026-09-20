@@ -132,11 +132,16 @@ recommends.
 Enumerated decision records with upstream citations, prose documents, or a
 hybrid. That option set is the investigation's own (§11), not the captain's.
 
-**Unanswered, not deferred.** The question was put to the captain; he answered
-a different and narrower one — how to store this record: "You can write it in
+**Decided under derived authority.** The captain delegated the call on
+2026-09-20 — "You decide artifact shape ;) also note that artifact shape is
+derived" — and the recorder decided it under that authority. The record, with
+the parts of it left unresolved, is
+[`2026-09-20-artifact-shape-decision.md`](2026-09-20-artifact-shape-decision.md).
+
+Before that, the question had been put to the captain and he answered a
+different and narrower one — how to store this record: "You can write it in
 any format you like - this is just for persistence in Entail for now". That
-settles the format of this folder. Entail's artifact format as a product
-decision was never addressed, and no ruling deferred it.
+settles the format of this folder.
 
 Everything in this folder — including the shape of the design record next to
 this file — is ad hoc prose formatting adopted to get the material written
