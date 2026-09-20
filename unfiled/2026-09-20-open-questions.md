@@ -68,6 +68,13 @@ Point 6 gives it as "a few tries, two or three, or maybe one". The number is
 left open by the ruling itself, as is whether it is fixed, configurable, or
 per-layer.
 
+**Narrowed, not closed.**
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md) records a
+later refinement stating a condition in place of a count — retry when
+interpretation is the problem, route upstream when it is not — and stating that
+clarification retries are not dropped; the number, and whether there is one at
+all, is still open.
+
 ### B3. The bound on what layers may settle between themselves
 
 Point 6 states that bounding is needed, and states the principle: interpreting
@@ -81,6 +88,12 @@ Point 6 distinguishes cases that should loop from cases where "it is extremely
 clear that something needs a decision" and so go back as a blocker
 immediately. The test that separates them is not given.
 
+**Narrowed, not closed.**
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md) records a
+later refinement naming interpretation as what separates them — retry when
+interpretation is the problem, route upstream when it is not — but how that is
+told apart in a given case is still not given.
+
 ### B5. What the layer-purity guardrails are
 
 Point 8 rules out hard-blocking and calls for "guardrails from the Entail side
@@ -88,6 +101,13 @@ about deciding what should go where", relying in part on the models being
 intelligent regardless. What a guardrail is, mechanically, is not specified,
 and the ruling explicitly defers the interface side of it as a far
 implementation detail.
+
+**Narrowed, not closed.**
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md) records a
+later refinement stating that layer purity is done automatically, by the model,
+using instructions for deciding that Entail supplies, and is not separate
+machinery; what those instructions say, and the interface side, are still
+open.
 
 ### B6. Which artifacts are per-task and which are project artifacts
 

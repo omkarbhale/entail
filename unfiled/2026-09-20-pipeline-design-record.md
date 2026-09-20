@@ -185,6 +185,12 @@ orchestration.
   be changed and clarified. Those per-task ones can be volatile.
 - The main project artifacts should always require a decision.
 
+**Later refined.** The retry given above as a count — "a few tries, two or
+three, or maybe one" — was later given a condition instead: retry when
+interpretation is the problem, and route upstream when it is not. Clarification
+retries are not dropped. The ruling above is left as it was made; see
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md).
+
 **Status of the critique.** Accepted as a real gap; answered with the loopback
 design above.
 
@@ -228,6 +234,12 @@ be done in the decisions layer, Entail should stop them.
   but is a far implementation detail and not the core problem.
 - If something is working, use it rather than diving deep into where a decision
   is getting parked.
+
+**Later refined.** The guardrails called for above were later stated to be no
+separate machinery: layer purity is done automatically, by the model, using
+instructions for deciding that Entail supplies. The ruling above is left as it
+was made; see
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md).
 
 **Status of the critique.** The premise (layers should hold what belongs to
 them) stands; the proposed remedy (stop the user) is overridden. Both are kept.
