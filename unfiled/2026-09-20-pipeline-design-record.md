@@ -12,10 +12,10 @@ critique and the correction are kept, because a conclusion without its
 rationale cannot be audited. That is the recorder's own choice.
 
 The layout below is ad hoc formatting for this document only. It is not
-Entail's decision-record format. See [`README.md`](README.md). The text under
-the bold labels below is the captain's, except the status lines and the
-cross-references, which are the recorder's; the labels themselves are the
-recorder's classification of what the ruling did.
+Entail's decision-record format. See [`README.md`](README.md). The rulings
+below, and the reasoning recorded with them, are the captain's. The bold labels
+are the recorder's classification of what the ruling did, as are the status
+lines and the cross-references.
 
 ---
 
@@ -170,7 +170,7 @@ orchestration.
   needs a decision, that is routed back as a blocker.
 
 **A later statement bears on this.** See
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md#22-clarification-retries-are-not-dropped-and-gain-a-condition).
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md#22-clarification-retries-are-not-dropped).
 
 **Also established by the same ruling — per-task vs project artifacts.**
 

@@ -79,7 +79,7 @@ clear that something needs a decision" and so go back as a blocker
 immediately. The test that separates them is not given.
 
 **A later statement bears on this.** See
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md#22-clarification-retries-are-not-dropped-and-gain-a-condition).
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md#22-clarification-retries-are-not-dropped).
 
 ### B5. What the layer-purity guardrails are
 

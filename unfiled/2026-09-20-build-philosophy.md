@@ -62,7 +62,7 @@ Bears on
 [point 8](2026-09-20-pipeline-design-record.md#point-8--layer-purity) of the
 design record.
 
-### 2.2 Clarification retries are not dropped, and gain a condition
+### 2.2 Clarification retries are not dropped
 
 Clarification retries are not dropped. Retry when interpretation is the problem,
 and route upstream when it is not.
