@@ -13,9 +13,10 @@ rationale cannot be audited. That is the recorder's own choice.
 
 The layout below is ad hoc formatting for this document only. It is not
 Entail's decision-record format. See [`README.md`](README.md). The rulings
-below, and the reasoning recorded with them, are the captain's. The bold labels
-are the recorder's classification of what the ruling did, as are the status
-lines and the cross-references.
+below, and the reasoning recorded with them, are the captain's. The critiques
+are firstmate's: the seven points firstmate put to the captain on 2026-09-20,
+plus an eighth firstmate raised. The bold labels and the status lines are the
+recorder's.
 
 ---
 
@@ -169,9 +170,6 @@ orchestration.
 - Not every scenario should be looped. If it is extremely clear that something
   needs a decision, that is routed back as a blocker.
 
-**A later statement bears on this.** See
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md#22-clarification-retries-are-not-dropped).
-
 **Also established by the same ruling — per-task vs project artifacts.**
 
 - Nothing in terms of clarification will change the product vision, but
@@ -224,9 +222,6 @@ be done in the decisions layer, Entail should stop them.
   but is a far implementation detail and not the core problem.
 - If something is working, use it rather than diving deep into where a decision
   is getting parked.
-
-**A later statement bears on this.** See
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md#21-layer-purity-is-done-by-the-model-not-by-separate-machinery).
 
 **Status of the critique.** The premise (layers should hold what belongs to
 them) stands; the proposed remedy (stop the user) is overridden. Both are kept.

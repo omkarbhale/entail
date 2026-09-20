@@ -119,9 +119,3 @@ the handoff.
 He states that it was always true and was always assumed. It had not been
 stated in the handoff or in the design record, and it is written down here for
 the first time.
-
-Why that matters in practice, as the recorder reads it: a builder reading only
-the handoff ([`VISION.md`](../VISION.md)) and the design record could have
-implemented adjacent-layer handoff — each layer receiving only its immediate
-predecessor's output — and nothing in either document would have contradicted
-them. That reading is the recorder's; the captain did not state it.
