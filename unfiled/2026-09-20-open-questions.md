@@ -130,10 +130,8 @@ report has ruled on nothing.
 Enumerated decision records with upstream citations, prose documents, or a
 hybrid. That option set is the investigation's own (§11), not the captain's.
 
-**Decided under derived authority.** The captain delegated the call on
-2026-09-20 — "You decide artifact shape ;) also note that artifact shape is
-derived" — and the recorder decided it under that authority. The record, with
-the parts of it left unresolved, is
+**Decided under derived authority.** The record, with the parts of it left
+unresolved, is
 [`2026-09-20-artifact-shape-decision.md`](2026-09-20-artifact-shape-decision.md).
 
 Before that, the question had been put to the captain and he answered a
@@ -147,8 +145,9 @@ down, and constitutes no part of an answer here.
 
 The investigation argues this is the load-bearing decision and recommends
 enumerated decision records each citing an upstream anchor (§9.1, §4.2, §11).
-That report decides nothing. Its recommendation was adopted by the recorder
-under the derived authority above; the captain did not rule on it.
+That report decides nothing. The outcome decided coincides with what it
+recommends; what determined that decision is recorded at
+[`2026-09-20-artifact-shape-decision.md`](2026-09-20-artifact-shape-decision.md).
 
 ### C2. Where the orchestrator runs
 

@@ -12,9 +12,9 @@ unmistakably provisional and to avoid colliding with any layer name Entail
 might later use (vision, decisions, architecture, and so on). The structure
 inside each document below — its headings, its fields, its ordering — is ad hoc
 prose formatting invented to get the material written down. It is not a
-decision-record format and must not be read as one; Entail's own
-artifact shape is recorded separately, at C1 of
-[`2026-09-20-open-questions.md`](2026-09-20-open-questions.md).
+decision-record format and must not be read as one; Entail's own artifact
+shape is recorded at
+[`2026-09-20-artifact-shape-decision.md`](2026-09-20-artifact-shape-decision.md).
 
 When Entail can organise its own repository using its own principles, this
 material should be re-filed by those principles and this folder should
