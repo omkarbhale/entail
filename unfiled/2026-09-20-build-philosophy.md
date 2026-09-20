@@ -5,12 +5,6 @@ Source: the same design conversation of 2026-09-20 recorded in
 plus what the captain stated after it. Recorded here so it persists instead of
 living only in chat scrollback.
 
-Scope of this record: the principle the captain stated for how Entail is to be
-built, two refinements he made to rulings already recorded and one ruling he
-made where the repository had nothing recorded, one direction he raised without
-settling, the evidence he gave for the premise the product rests on, and one
-standing assumption that had never been written down.
-
 What this record does **not** do. On the captain's instruction, this document
 records the settled position only; the recorder's earlier misreadings of it are
 not kept alongside it. That instruction is scoped to this document. It is not a
@@ -84,9 +78,8 @@ and route upstream when it is not.
 This refines the ruling at
 [point 6](2026-09-20-pipeline-design-record.md#point-6--there-is-no-loopback) of
 the design record, which gave the retry as a count — "a few tries, two or three,
-or maybe one". The refinement states a condition in place of relying on a count.
-Whether a count also remains, and what it is, is not stated here; it is still
-open as
+or maybe one". The refinement states a condition. Whether a count also remains,
+and what it is, is not stated here; it is still open as
 [`2026-09-20-open-questions.md`](2026-09-20-open-questions.md) B2 records.
 
 ### 2.3 Citations stay

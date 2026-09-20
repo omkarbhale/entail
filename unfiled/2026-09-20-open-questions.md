@@ -2,21 +2,17 @@
 
 Recorded so they are not silently re-derived by whoever builds next.
 
-Every question here is still open, and nothing here is closed. Some entries
-carry a later narrowing, recorded as such under the entry; a narrowing is not
-an answer. Apart from those, no position has been taken on anything here. Where
-an input exists that argues for one answer, that input is named, but naming it
-is not adopting it. Recording a position the captain did not take is the
-failure this product exists to prevent. Nothing is described as deferred unless
-a ruling deferred it: a question nobody has answered and a question deliberately
-parked need different handling later, and collapsing the two is that same
-failure.
+Every question here is still open, and nothing here is closed. An entry may
+carry later material recorded under it. Where an input exists that argues for
+one answer, that input is named, but naming it is not adopting it. Recording a
+position the captain did not take is the failure this product exists to
+prevent. Nothing is described as deferred unless a ruling deferred it: a
+question nobody has answered and a question deliberately parked need different
+handling later, and collapsing the two is that same failure.
 
 Entries are grouped by where they came from. Sections A and B are what the
 2026-09-20 conversation itself left open. Section C is what the prior-art
-investigation and the repository owner flagged as open; those questions were
-not raised in that conversation, and the investigation has ruled on nothing —
-they are listed because nobody has answered them.
+investigation and the repository owner flagged as open.
 
 Companion to [`2026-09-20-pipeline-design-record.md`](2026-09-20-pipeline-design-record.md).
 
@@ -73,10 +69,9 @@ per-layer.
 
 **Narrowed, not closed.**
 [`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md) records a
-later refinement stating a condition in place of a count — retry when
-interpretation is the problem, route upstream when it is not — and stating that
-clarification retries are not dropped; the number, and whether there is one at
-all, is still open.
+later refinement: clarification retries are not dropped, and the condition is
+to retry when interpretation is the problem and route upstream when it is not.
+The number, and whether there is one at all, is still open.
 
 ### B3. The bound on what layers may settle between themselves
 
@@ -160,11 +155,12 @@ hybrid. That option set is the investigation's own (§11), not the captain's.
 captain ruling that citations stay. Whether that ruling narrows the option set
 above is undetermined, and is part of this same open call.
 
-**Unanswered, not deferred.** The question was put to the captain; he answered
-a different and narrower one — how to store this record: "You can write it in
-any format you like - this is just for persistence in Entail for now". That
-settles the format of this folder. Entail's artifact format as a product
-decision was never addressed, and no ruling deferred it.
+**Unanswered, not deferred.** The question was put to the captain in the
+2026-09-20 conversation; he answered a different and narrower one — how to
+store this record: "You can write it in any format you like - this is just for
+persistence in Entail for now". That settles the format of this folder. That
+conversation did not address Entail's artifact format as a product decision,
+and no ruling deferred it.
 
 Everything in this folder — including the shape of the design record next to
 this file — is ad hoc prose formatting adopted to get the material written
