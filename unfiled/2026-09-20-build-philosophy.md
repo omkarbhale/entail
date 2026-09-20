@@ -59,7 +59,8 @@ deciding that Entail supplies. It is not separate machinery.
 
 Bears on
 [point 8](2026-09-20-pipeline-design-record.md#point-8--layer-purity) of the
-design record.
+design record, and on
+[`2026-09-20-open-questions.md`](2026-09-20-open-questions.md) B5.
 
 ### 2.2 Clarification retries are not dropped
 
