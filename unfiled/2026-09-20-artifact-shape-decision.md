@@ -85,18 +85,3 @@ Open.
 Because the decision is derived rather than his, nothing in it is owed
 protection. If the vision or the captain's rulings move, it is regenerated
 wholesale rather than patched.
-
----
-
-## 2. Locations
-
-- [`2026-09-20-build-philosophy.md` §2.3](2026-09-20-build-philosophy.md#23-citations-stay)
-- [`2026-09-20-open-questions.md` C1](2026-09-20-open-questions.md#c1-entails-artifact-format)
-
-## 3. Undetermined and not filled in here
-
-- What mechanism, if any, acts on a decision once it is marked stale. Section
-  1.3.3 reaches the marking and stops there; nothing available to the recorder
-  states what happens next.
-- What regeneration in section 1.4 is performed by, and on what trigger. The
-  captain stated the consequence and not the mechanism.
