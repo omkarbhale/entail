@@ -123,7 +123,8 @@ These were not raised in that conversation. They are questions the prior-art
 investigation
 ([`prior-art-investigation-2026-09-20.md`](prior-art-investigation-2026-09-20.md),
 §9) named as undetermined, carried forward here by the repository owner. That
-report has ruled on nothing.
+report has ruled on nothing; listing its questions is not adopting anything it
+recommends.
 
 ### C1. Entail's artifact format
 
