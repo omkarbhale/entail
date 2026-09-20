@@ -146,8 +146,7 @@ down, and constitutes no part of an answer here.
 The investigation argues this is the load-bearing decision and recommends
 enumerated decision records each citing an upstream anchor (§9.1, §4.2, §11).
 That report decides nothing. The outcome decided coincides with what it
-recommends; what determined that decision is recorded at
-[`2026-09-20-artifact-shape-decision.md`](2026-09-20-artifact-shape-decision.md).
+recommends; what determined that decision is recorded with the decision above.
 
 ### C2. Where the orchestrator runs
 
