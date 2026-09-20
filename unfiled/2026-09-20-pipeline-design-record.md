@@ -13,7 +13,8 @@ rationale cannot be audited. That is the recorder's own choice.
 
 The layout below is ad hoc formatting for this document only. It is not
 Entail's decision-record format. See [`README.md`](README.md). The text under
-the bold labels below is the captain's; the labels themselves are the
+the bold labels below is the captain's, except the status lines and the
+cross-references, which are the recorder's; the labels themselves are the
 recorder's classification of what the ruling did.
 
 ---
@@ -169,7 +170,7 @@ orchestration.
   needs a decision, that is routed back as a blocker.
 
 **A later statement bears on this.** See
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md).
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md#22-clarification-retries-are-not-dropped-and-gain-a-condition).
 
 **Also established by the same ruling — per-task vs project artifacts.**
 
@@ -225,7 +226,7 @@ be done in the decisions layer, Entail should stop them.
   is getting parked.
 
 **A later statement bears on this.** See
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md).
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md#21-layer-purity-is-done-by-the-model-not-by-separate-machinery).
 
 **Status of the critique.** The premise (layers should hold what belongs to
 them) stands; the proposed remedy (stop the user) is overridden. Both are kept.

@@ -79,7 +79,7 @@ clear that something needs a decision" and so go back as a blocker
 immediately. The test that separates them is not given.
 
 **A later statement bears on this.** See
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md).
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md#22-clarification-retries-are-not-dropped-and-gain-a-condition).
 
 ### B5. What the layer-purity guardrails are
 
@@ -90,7 +90,7 @@ and the ruling explicitly defers the interface side of it as a far
 implementation detail.
 
 **A later statement bears on this.** See
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md).
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md#21-layer-purity-is-done-by-the-model-not-by-separate-machinery).
 
 ### B6. Which artifacts are per-task and which are project artifacts
 
@@ -136,7 +136,7 @@ Enumerated decision records with upstream citations, prose documents, or a
 hybrid. That option set is the investigation's own (§11), not the captain's.
 
 **A later statement bears on this.** See
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md).
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md#23-citations-stay).
 
 **Unanswered, not deferred.** The question was put to the captain in the
 2026-09-20 conversation; he answered a different and narrower one — how to
