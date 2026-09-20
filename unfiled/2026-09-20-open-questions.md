@@ -31,14 +31,15 @@ user wants some say, and names development, testing, performance validation, UX
 design, UX validation and accessibility as runs the pipeline spawns. Which of
 those own a persistent artifact is not settled by that naming.
 
-**This contradicts the standing vision artifact, and the contradiction is
-recorded here rather than resolved.** [`VISION.md`](../VISION.md) line 41 states
-"Each vertical owns a persistent artifact", and its vertical list (lines 14-16)
-includes development, testing and validation — the same items the 2026-09-20
+**A possible contradiction with the standing vision artifact, flagged rather
+than settled.** [`VISION.md`](../VISION.md) line 41 states "Each vertical owns
+a persistent artifact", and its vertical list (lines 14-16) includes
+development, testing and validation — the same items the 2026-09-20
 conversation places among the runs the pipeline spawns "beyond the artifacts
-themselves", which own no artifact. Neither side is adopted here. Which
-verticals own artifacts is the open call above, and this mismatch is part of
-what that call has to settle.
+themselves". That placement reads as though those runs own no artifact, which
+is what line 41 denies of any vertical. The conversation did not say it; the
+reading is the recorder's, and whether it is what the conversation meant is
+part of the open call above.
 
 ### A2. Briefs: handed to the developer, or kept separate
 

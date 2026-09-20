@@ -12,10 +12,8 @@ left open, and it does not tidy a ruling into something more decided than it
 was. Where a ruling is ambiguous, the ruling is recorded as stated and the
 ambiguity is logged in [`2026-09-20-open-questions.md`](2026-09-20-open-questions.md).
 Where a ruling rejected or corrected the critique that prompted it, both the
-critique and the correction are kept. The vision asks delegated output to be
-"enumerated decisions with rationale, not a long document"
-([`VISION.md`](../VISION.md), "Review debt"); a record showing only the
-conclusion drops the rationale half of that.
+critique and the correction are kept, because a conclusion without its
+rationale cannot be audited. That is the recorder's own choice.
 
 The layout below is ad hoc formatting for this document only. It is not
 Entail's decision-record format. See [`README.md`](README.md). The labels it
