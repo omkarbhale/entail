@@ -72,7 +72,7 @@ is just improvisation. With one, it's derivation.
 The category exists and is called spec-driven development. Specifications, not
 code, are the source of truth. Much of what I described is already built.
 
-| Tool | What it is | Overlap |
+| Tool | What it does | Overlap with my idea |
 | --- | --- | --- |
 | BMAD-METHOD | Agent personas per role (Analyst, PM, Architect, PO, Dev, QA, UX). Planning phase produces brief, PRD, architecture doc, then shards them into story files carrying constraints and rationale. | Closest to my framing. Essentially the vertical separation, already built. |
 | GitHub Spec Kit | Python CLI, 30+ agents. Five stages: constitution, specify, plan, tasks, implement. A Constitution Check gate blocks plans that violate stated principles. | The constitution is the persistent-vision enforcement I wanted. |
