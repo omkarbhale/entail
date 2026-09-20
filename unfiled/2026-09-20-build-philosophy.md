@@ -6,9 +6,10 @@ plus the refinements the captain stated after it. Recorded here so it persists
 instead of living only in chat scrollback.
 
 Scope of this record: the principle the captain stated for how Entail is to be
-built, three refinements he made to positions already recorded, one direction he
-raised without settling, the evidence he gave for the premise the product rests
-on, and one standing assumption that had never been written down.
+built, two refinements he made to rulings already recorded and one ruling he
+made where the repository had nothing recorded, one direction he raised without
+settling, the evidence he gave for the premise the product rests on, and one
+standing assumption that had never been written down.
 
 What this record does **not** do. On the captain's instruction, this document
 records the settled position only; the recorder's earlier misreadings of it are
@@ -56,10 +57,12 @@ difficult.
 
 ---
 
-## 2. Refinements to earlier rulings
+## 2. Two refinements, and one ruling that establishes a position
 
-Three positions already recorded are refined by what the captain stated. He gave
-no reasoning with any of the three, and none is supplied here.
+Three statements the captain made. Two of them refine rulings already recorded
+in the design record. The third rules on something the repository held no
+recorded position on at all, so it establishes a position rather than refining
+one. He gave no reasoning with any of the three, and none is supplied here.
 
 ### 2.1 Layer purity is done by the model, not by separate machinery
 
@@ -90,10 +93,14 @@ open as
 
 Citations stay.
 
-Recorded as stated. The design record contains no ruling on citations, so this
-refines nothing in it; that observation is the recorder's, and what the
-statement is a refinement *of* is not restated here because the captain did not
-say.
+Recorded as stated; "stay" is the whole ruling. It refines nothing, because no
+recorded position on citations existed for it to refine. The design record
+contains no ruling on citations; the only other mentions in the repository are
+in the prior-art investigation, an unadopted input that has ruled on nothing,
+and in [`2026-09-20-open-questions.md`](2026-09-20-open-questions.md) C1, whose
+option set is that investigation's own rather than the captain's. This is
+therefore the first recorded ruling on citations anywhere in this repository.
+That classification is the recorder's.
 
 ---
 

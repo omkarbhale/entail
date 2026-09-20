@@ -176,6 +176,9 @@ orchestration.
 - Not every scenario should be looped. If it is extremely clear that something
   needs a decision, that is routed back as a blocker.
 
+**Later refined.** The ruling above is left as it was made. See
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md).
+
 **Also established by the same ruling — per-task vs project artifacts.**
 
 - Nothing in terms of clarification will change the product vision, but
@@ -184,9 +187,6 @@ orchestration.
 - A task artifact could be architecture regarding just that one task, which can
   be changed and clarified. Those per-task ones can be volatile.
 - The main project artifacts should always require a decision.
-
-**Later refined.** The ruling above is left as it was made. See
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md).
 
 **Status of the critique.** Accepted as a real gap; answered with the loopback
 design above.
