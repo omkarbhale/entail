@@ -3,10 +3,6 @@
 Source: a design conversation held on 2026-09-20. Recorded here so it persists
 instead of living only in chat scrollback.
 
-Scope of this record: the intended shape of Entail's pipeline, eight critiques
-raised against that shape and the ruling made on each, the promotion rule for
-per-task artifacts, and the constraints already accepted.
-
 What this record does **not** do: it does not resolve anything the conversation
 left open, and it does not tidy a ruling into something more decided than it
 was. Where a ruling is ambiguous, the ruling is recorded as stated and the
@@ -16,13 +12,9 @@ critique and the correction are kept, because a conclusion without its
 rationale cannot be audited. That is the recorder's own choice.
 
 The layout below is ad hoc formatting for this document only. It is not
-Entail's decision-record format. See [`README.md`](README.md). The labels it
-uses are: **Critique**, **Ruling**, **Reasoning given with the ruling**, **Also
-established** (by the same ruling, or separately at that point in the
-conversation), **Correction supplied by the ruling**, **Instruction attached to
-the ruling**, and **Status of the critique**. The text under each label is the
-captain's; the labels themselves, and the status line in particular, are the
-recorder's classification of what the ruling did.
+Entail's decision-record format. See [`README.md`](README.md). The text under
+each label is the captain's; the labels themselves, and the status line in
+particular, are the recorder's classification of what the ruling did.
 
 ---
 

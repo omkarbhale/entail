@@ -51,12 +51,7 @@ difficult.
 
 ---
 
-## 2. Two refinements, and one ruling that establishes a position
-
-Three statements the captain made. Two of them refine rulings already recorded
-in the design record. The third rules on something the repository held no
-recorded position on at all, so it establishes a position rather than refining
-one. He gave no reasoning with any of the three, and none is supplied here.
+## 2. Statements the captain made after the design conversation
 
 ### 2.1 Layer purity is done by the model, not by separate machinery
 
@@ -86,14 +81,8 @@ and what it is, is not stated here; it is still open as
 
 Citations stay.
 
-Recorded as stated; "stay" is the whole ruling. It refines nothing, because no
-recorded position on citations existed for it to refine. The design record
-contains no ruling on citations; the only other mentions in the repository are
-in the prior-art investigation, an unadopted input that has ruled on nothing,
-and in [`2026-09-20-open-questions.md`](2026-09-20-open-questions.md) C1, whose
-option set is that investigation's own rather than the captain's. This is
-therefore the first recorded ruling on citations anywhere in this repository.
-That classification is the recorder's.
+Recorded as stated; "stay" is the whole ruling. See
+[`2026-09-20-open-questions.md`](2026-09-20-open-questions.md) C1.
 
 ---
 

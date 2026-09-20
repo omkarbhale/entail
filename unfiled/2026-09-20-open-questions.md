@@ -10,9 +10,7 @@ prevent. Nothing is described as deferred unless a ruling deferred it: a
 question nobody has answered and a question deliberately parked need different
 handling later, and collapsing the two is that same failure.
 
-Entries are grouped by where they came from. Sections A and B are what the
-2026-09-20 conversation itself left open. Section C is what the prior-art
-investigation and the repository owner flagged as open.
+Entries are grouped by where they came from.
 
 Companion to [`2026-09-20-pipeline-design-record.md`](2026-09-20-pipeline-design-record.md).
 
@@ -104,8 +102,7 @@ implementation detail.
 [`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md) records a
 later refinement stating that layer purity is done automatically, by the model,
 using instructions for deciding that Entail supplies, and is not separate
-machinery; what those instructions say, and the interface side, are still
-open.
+machinery; what those instructions say is still open.
 
 ### B6. Which artifacts are per-task and which are project artifacts
 
