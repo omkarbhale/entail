@@ -13,8 +13,8 @@ rationale cannot be audited. That is the recorder's own choice.
 
 The layout below is ad hoc formatting for this document only. It is not
 Entail's decision-record format. See [`README.md`](README.md). The text under
-each label is the captain's; the labels themselves, and the status line in
-particular, are the recorder's classification of what the ruling did.
+the bold labels below is the captain's; the labels themselves are the
+recorder's classification of what the ruling did.
 
 ---
 
@@ -168,7 +168,7 @@ orchestration.
 - Not every scenario should be looped. If it is extremely clear that something
   needs a decision, that is routed back as a blocker.
 
-**Later refined.** The ruling above is left as it was made. See
+**A later statement bears on this.** See
 [`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md).
 
 **Also established by the same ruling — per-task vs project artifacts.**
@@ -224,7 +224,7 @@ be done in the decisions layer, Entail should stop them.
 - If something is working, use it rather than diving deep into where a decision
   is getting parked.
 
-**Later refined.** The ruling above is left as it was made. See
+**A later statement bears on this.** See
 [`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md).
 
 **Status of the critique.** The premise (layers should hold what belongs to

@@ -65,12 +65,6 @@ Point 6 gives it as "a few tries, two or three, or maybe one". The number is
 left open by the ruling itself, as is whether it is fixed, configurable, or
 per-layer.
 
-**Narrowed, not closed.**
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md) records a
-later refinement: clarification retries are not dropped, and the condition is
-to retry when interpretation is the problem and route upstream when it is not.
-The number, and whether there is one at all, is still open.
-
 ### B3. The bound on what layers may settle between themselves
 
 Point 6 states that bounding is needed, and states the principle: interpreting
@@ -84,11 +78,8 @@ Point 6 distinguishes cases that should loop from cases where "it is extremely
 clear that something needs a decision" and so go back as a blocker
 immediately. The test that separates them is not given.
 
-**Narrowed, not closed.**
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md) records a
-later refinement naming interpretation as what separates them — retry when
-interpretation is the problem, route upstream when it is not — but how that is
-told apart in a given case is still not given.
+**A later statement bears on this.** See
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md).
 
 ### B5. What the layer-purity guardrails are
 
@@ -98,11 +89,8 @@ intelligent regardless. What a guardrail is, mechanically, is not specified,
 and the ruling explicitly defers the interface side of it as a far
 implementation detail.
 
-**Narrowed, not closed.**
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md) records a
-later refinement stating that layer purity is done automatically, by the model,
-using instructions for deciding that Entail supplies, and is not separate
-machinery; what those instructions say is still open.
+**A later statement bears on this.** See
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md).
 
 ### B6. Which artifacts are per-task and which are project artifacts
 
@@ -147,10 +135,8 @@ recommends.
 Enumerated decision records with upstream citations, prose documents, or a
 hybrid. That option set is the investigation's own (§11), not the captain's.
 
-**A later ruling, bearing undetermined.**
-[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md) records the
-captain ruling that citations stay. Whether that ruling narrows the option set
-above is undetermined, and is part of this same open call.
+**A later statement bears on this.** See
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md).
 
 **Unanswered, not deferred.** The question was put to the captain in the
 2026-09-20 conversation; he answered a different and narrower one — how to

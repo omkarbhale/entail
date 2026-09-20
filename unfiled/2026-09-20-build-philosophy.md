@@ -58,24 +58,19 @@ difficult.
 Layer purity is done automatically, by the model, using instructions for
 deciding that Entail supplies. It is not separate machinery.
 
-This refines the ruling at
+Bears on
 [point 8](2026-09-20-pipeline-design-record.md#point-8--layer-purity) of the
-design record, which called for "guardrails from the Entail side about deciding
-what should go where". The ruling itself stands as recorded there; what the
-guardrails are is now answered as instructions the model follows rather than as
-a mechanism built beside it.
+design record.
 
 ### 2.2 Clarification retries are not dropped, and gain a condition
 
 Clarification retries are not dropped. Retry when interpretation is the problem,
 and route upstream when it is not.
 
-This refines the ruling at
+Whether a count also remains, and what it is, is not stated here. Bears on
 [point 6](2026-09-20-pipeline-design-record.md#point-6--there-is-no-loopback) of
-the design record, which gave the retry as a count — "a few tries, two or three,
-or maybe one". The refinement states a condition. Whether a count also remains,
-and what it is, is not stated here; it is still open as
-[`2026-09-20-open-questions.md`](2026-09-20-open-questions.md) B2 records.
+the design record, and on
+[`2026-09-20-open-questions.md`](2026-09-20-open-questions.md) B2.
 
 ### 2.3 Citations stay
 
