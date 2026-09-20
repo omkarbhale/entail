@@ -111,16 +111,6 @@ own hedge:
 The "Maybe" is his and is kept. This is direction, not a ruling, and nothing
 downstream should treat it as decided.
 
-**A convergence, noted as supporting evidence only.** The prior-art
-investigation
-([`prior-art-investigation-2026-09-20.md`](prior-art-investigation-2026-09-20.md),
-§5.2) describes BMAD's `<frozen-after-approval>` block, which marks the
-human-owned portion of an artifact as a read-only authority boundary and routes
-findings by whether a root cause sits inside it. That is a built mechanism doing
-what the captain's direction gestures at. Noting the convergence is evidence
-that the direction is implementable; it is not an adoption of that
-investigation, which remains an unadopted input and has ruled on nothing.
-
 ---
 
 ## 4. Evidence for the premise
@@ -146,8 +136,8 @@ He states that it was always true and was always assumed. It had not been
 stated in the handoff or in the design record, and it is written down here for
 the first time.
 
-Why that matters in practice: a builder reading only the handoff
-([`VISION.md`](../VISION.md)) and the design record could have implemented
-adjacent-layer handoff — each layer receiving only its immediate predecessor's
-output — and nothing in either document would have contradicted them. That is
-the reading this record exists to foreclose.
+Why that matters in practice, as the recorder reads it: a builder reading only
+the handoff ([`VISION.md`](../VISION.md)) and the design record could have
+implemented adjacent-layer handoff — each layer receiving only its immediate
+predecessor's output — and nothing in either document would have contradicted
+them. That reading is the recorder's; the captain did not state it.
