@@ -2,8 +2,8 @@
 
 Source: the same design conversation of 2026-09-20 recorded in
 [`2026-09-20-pipeline-design-record.md`](2026-09-20-pipeline-design-record.md),
-plus the refinements the captain stated after it. Recorded here so it persists
-instead of living only in chat scrollback.
+plus what the captain stated after it. Recorded here so it persists instead of
+living only in chat scrollback.
 
 Scope of this record: the principle the captain stated for how Entail is to be
 built, two refinements he made to rulings already recorded and one ruling he

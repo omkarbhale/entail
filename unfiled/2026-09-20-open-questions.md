@@ -2,12 +2,15 @@
 
 Recorded so they are not silently re-derived by whoever builds next.
 
-Nothing here has a position taken on it. Where an input exists that argues for
-one answer, that input is named, but naming it is not adopting it. Recording a
-position the captain did not take is the failure this product exists to
-prevent. Nothing is described as deferred unless a ruling deferred it: a
-question nobody has answered and a question deliberately parked need different
-handling later, and collapsing the two is that same failure.
+Every question here is still open, and nothing here is closed. Some entries
+carry a later narrowing, recorded as such under the entry; a narrowing is not
+an answer. Apart from those, no position has been taken on anything here. Where
+an input exists that argues for one answer, that input is named, but naming it
+is not adopting it. Recording a position the captain did not take is the
+failure this product exists to prevent. Nothing is described as deferred unless
+a ruling deferred it: a question nobody has answered and a question deliberately
+parked need different handling later, and collapsing the two is that same
+failure.
 
 Entries are grouped by where they came from. Sections A and B are what the
 2026-09-20 conversation itself left open. Section C is what the prior-art
@@ -151,6 +154,11 @@ recommends.
 
 Enumerated decision records with upstream citations, prose documents, or a
 hybrid. That option set is the investigation's own (§11), not the captain's.
+
+**A later ruling, bearing undetermined.**
+[`2026-09-20-build-philosophy.md`](2026-09-20-build-philosophy.md) records the
+captain ruling that citations stay. Whether that ruling narrows the option set
+above is undetermined, and is part of this same open call.
 
 **Unanswered, not deferred.** The question was put to the captain; he answered
 a different and narrower one — how to store this record: "You can write it in
