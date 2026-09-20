@@ -21,8 +21,11 @@ uses are: **Critique**, **Ruling**, **Reasoning given with the ruling**, **Also
 established** (by the same ruling, or separately at that point in the
 conversation), **Correction supplied by the ruling**, **Instruction attached to
 the ruling**, and **Status of the critique**. The text under each label is the
-captain's; the labels themselves, and the status line in particular, are the
-recorder's classification of what the ruling did.
+captain's, except the critique bodies at points 1 through 7, which are the
+recorder's; the critique at point 8 is the captain's, layer purity being a
+point he added in his own words, and the rulings on all eight are his. The
+labels themselves, and the status line in particular, are the recorder's
+classification of what the ruling did.
 
 ---
 
