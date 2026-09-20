@@ -136,12 +136,11 @@ recommends.
 Enumerated decision records with upstream citations, prose documents, or a
 hybrid. That option set is the investigation's own (§11), not the captain's.
 
-**Unanswered, not deferred.** The question was put to the captain in the
-2026-09-20 conversation; he answered a different and narrower one — how to
-store this record: "You can write it in any format you like - this is just for
-persistence in Entail for now". That settles the format of this folder. That
-conversation did not address Entail's artifact format as a product decision,
-and no ruling deferred it.
+**Unanswered, not deferred.** The question was put to the captain; he answered
+a different and narrower one — how to store this record: "You can write it in
+any format you like - this is just for persistence in Entail for now". That
+settles the format of this folder. Entail's artifact format as a product
+decision was never addressed, and no ruling deferred it.
 
 Everything in this folder — including the shape of the design record next to
 this file — is ad hoc prose formatting adopted to get the material written

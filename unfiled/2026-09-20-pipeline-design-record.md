@@ -18,9 +18,9 @@ rationale cannot be audited. That is the recorder's own choice.
 The layout below is ad hoc formatting for this document only. It is not
 Entail's decision-record format. See [`README.md`](README.md). The rulings
 below, and the reasoning recorded with them, are the captain's. The critiques
-are firstmate's: the seven points firstmate put to the captain on 2026-09-20,
-plus an eighth firstmate raised. The bold labels and the status lines are the
-recorder's. Everything else below is the captain's.
+at points 1 through 7 are the recorder's; point 8 the captain raised himself.
+The bold labels and the status lines are the recorder's. Everything else under
+the labels below is the captain's.
 
 ---
 
