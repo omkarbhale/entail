@@ -1,0 +1,293 @@
+/*
+ * The provenance palette. Three marks for five kinds, on purpose: almost
+ * everything is invented, so the invented kinds share one quiet mark and the
+ * inspector names which kind it is. Only what is recorded, and what the user
+ * set, stands out.
+ *
+ *   recorded  green, solid underline on a green wash: loud, and rare
+ *   user      blue, solid underline: the user's own changes
+ *   invented  ink as normal, grey dotted underline: legible, quiet
+ *
+ * No other colour on the page carries meaning, so none may be green or blue.
+ */
+:root {
+  --recorded: #0b7a5a;
+  --recorded-wash: #d9f1e7;
+  --user: #2458c6;
+  --user-wash: #e2eafb;
+  --invented: #a2a6ac;
+  --invented-wash: #efefed;
+
+  --ink: #1d1f23;
+  --ink-quiet: #5d6068;
+  --rule: #d8d6d1;
+  --board-bg: #ffffff;
+  --frame-bg: #ebe8e2;
+  --focus: #1d1f23;
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--frame-bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+code {
+  font: 0.9em ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+/* ---- The frame: about the mockup, not part of the board ---- */
+
+.frame {
+  color: var(--ink-quiet);
+  font-size: 13px;
+}
+
+.banner {
+  margin: 0 0 8px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.frame-error {
+  margin: 0 0 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--ink-quiet);
+  background: var(--board-bg);
+  color: var(--ink);
+}
+
+.frame-loading {
+  color: var(--ink-quiet);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.inspector {
+  position: sticky;
+  top: 16px;
+  padding: 12px 14px;
+  border: 1px dashed var(--ink-quiet);
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.inspector p {
+  margin: 0 0 6px;
+}
+
+.inspector-empty,
+.inspector-name,
+.inspector-pinned {
+  color: var(--ink-quiet);
+}
+
+.inspector-shown {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.inspector-part {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+}
+
+.inspector-part h2 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-quiet);
+}
+
+.inspector blockquote {
+  margin: 4px 0 8px;
+  padding-left: 10px;
+  border-left: 3px solid var(--recorded);
+}
+
+.kind {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.kind-recorded {
+  background: var(--recorded-wash);
+  color: var(--recorded);
+}
+
+.kind-user {
+  background: var(--user-wash);
+  color: var(--user);
+}
+
+.kind-invented {
+  background: var(--invented-wash);
+  color: var(--ink-quiet);
+}
+
+/* ---- The board ---- */
+
+.board {
+  padding: 16px 20px 20px;
+  background: var(--board-bg);
+  border: 1px solid var(--rule);
+}
+
+.board h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+}
+
+.stages {
+  margin: 0 0 16px;
+  color: var(--ink-quiet);
+}
+
+.stages .mark-text {
+  white-space: pre;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 10px 12px 10px 0;
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+td.stop {
+  min-width: 14em;
+}
+
+.stop-detail {
+  font-size: 14px;
+  color: var(--ink-quiet);
+}
+
+.advance {
+  margin-top: 6px;
+}
+
+.modes {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+/* ---- Marks ---- */
+
+.mark {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-underline-offset: 3px;
+}
+
+.mark-text {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.mark-recorded {
+  color: var(--recorded);
+  text-decoration: underline solid var(--recorded) 2px;
+}
+
+.mark-recorded.mark-text {
+  background: var(--recorded-wash);
+  padding: 0 3px;
+}
+
+.mark-user {
+  text-decoration: underline solid var(--user) 2px;
+}
+
+.mark-invented {
+  text-decoration: underline dotted var(--invented) 1px;
+}
+
+.mark-control {
+  padding: 3px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--board-bg);
+  white-space: nowrap;
+}
+
+.modes .mark-control {
+  max-width: 11em;
+  white-space: normal;
+}
+
+.mark-control[aria-pressed='true'] {
+  border-color: var(--ink-quiet);
+  background: var(--invented-wash);
+  font-weight: 600;
+}
+
+.mark-control[aria-disabled='true']:not([aria-pressed='true']) {
+  color: var(--ink-quiet);
+  cursor: not-allowed;
+}
+
+.mark-shown,
+.mark:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
