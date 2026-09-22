@@ -1,7 +1,8 @@
 // One inspectable thing on the board, drawn by how loudly its provenance
 // should show: recorded loudly, set-by-you plainly, everything invented
-// quietly. Which kind a target shows as is decided in targets.ts (D-50). Pointing at it or focusing it shows it in the inspector; clicking
-// keeps it there and, for a control, also acts.
+// quietly. Which kind a target shows as is decided in targets.ts (D-50).
+// Pointing at it or focusing it shows it in the inspector; clicking keeps it
+// there and, for a control, also acts.
 
 import { createContext, useContext, type ReactNode } from 'react'
 import type { ProvenanceKind } from '../../mock-server/src/provenance.ts'

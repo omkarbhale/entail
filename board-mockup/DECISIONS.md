@@ -154,7 +154,8 @@ point 3, where whether a project wants a validation pipeline is a
 per-project choice.
 
 **Where the mock depends on it:** `board.stages` is a single list and the
-advance rule moves to the next entry.
+advance rule moves to the next entry. The arrow drawn between stage names,
+`board.labels.stageSeparator`, depicts that line.
 
 ### D-12. Are the runs the pipeline spawns stages, parts of a stage, or something beside the stages?
 
@@ -508,8 +509,8 @@ served with provenance, with no exceptions: headings, column names, state
 words, the action's label, and glyphs such as the arrow between stages, the
 colon after a heading and the dash for an item with no stop. The UI writes no
 text or glyph on the board itself. Text that describes the mockup is written
-in the UI and carries no provenance. That covers the banner, the legend, the inspector and the error
-shown when the mock server is down. The UI draws that frame visibly apart
+in the UI and carries no provenance. That covers the banner, the legend, the
+inspector and the error shown when the mock server is down. The UI draws that frame visibly apart
 from the board, so none of its text can be read as part of Entail's design.
 
 The line is drawn by what the text depicts, not by how important it seems.
