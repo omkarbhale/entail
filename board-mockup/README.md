@@ -56,7 +56,11 @@ one question: why the value is what it is, why the field exists at all, and
 where the words used to show it came from.
 
 The palette is defined in [`ui/src/styles.css`](ui/src/styles.css). Only
-three marks appear on the board:
+three marks appear on the board. A thing that answers several questions is
+marked by the weakest answer among them, strongest first: recorded,
+interpreted, assumed, placeholder. So it shows as recorded only if every part
+of it is recorded. The one exception is a value you set yourself, which shows
+as set by you whatever its other parts say (DECISIONS.md D-50).
 
 - **Recorded**, green: stated in `VISION.md` or `unfiled/`. It is rare on
   purpose.

@@ -180,6 +180,10 @@ code {
   color: var(--ink-quiet);
 }
 
+.stages .mark-text {
+  white-space: pre;
+}
+
 .table-scroll {
   overflow-x: auto;
 }

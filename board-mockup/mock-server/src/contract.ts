@@ -55,18 +55,22 @@ export type Item = {
 }
 
 /**
- * Every word the board itself shows, so that each one carries provenance like
- * any other value. Text that describes the mockup rather than depicting the
- * board (its banner, legend and inspector) is the UI's own; see DECISIONS.md
- * D-41.
+ * Every word and glyph the board itself shows, so that each one carries
+ * provenance like any other value. Text that describes the mockup rather than
+ * depicting the board (its banner, legend and inspector) is the UI's own; see
+ * DECISIONS.md D-41.
  */
 export type Labels = {
   readonly heading: Sourced<string>
   readonly stages: Sourced<string>
+  /** Drawn between consecutive stage names. */
+  readonly stageSeparator: Sourced<string>
   readonly title: Sourced<string>
   readonly stage: Sourced<string>
   readonly motion: Sourced<string>
   readonly stop: Sourced<string>
+  /** Shown in the stop column for an item with no stop. */
+  readonly noStop: Sourced<string>
   readonly advanceMode: Sourced<string>
   readonly moving: Sourced<string>
   readonly stopped: Sourced<string>

@@ -155,11 +155,13 @@ const MOCK_WORDS = assumed('D-39', 'Nothing records these words. They are this m
 
 const LABELS: Labels = {
   heading: sourced('In flight', RECORD_WORDS('in-flight features')),
-  stages: sourced('Stages', RECORD_WORDS('the next stage')),
+  stages: sourced('Stages:', RECORD_WORDS('the next stage')),
+  stageSeparator: sourced(' → ', assumed('D-11', 'An arrow between stage names says the stages are one ordered, fixed line that every item follows. That is this mock’s assumption.')),
   title: sourced('Task or feature', RECORD_WORDS('all tasks and in-flight features')),
   stage: sourced('Stage', RECORD_WORDS('the next stage')),
   motion: sourced('Moving or stopped', MOCK_WORDS),
   stop: sourced('Why it stopped', MOCK_WORDS),
+  noStop: sourced('—', assumed('D-39', 'Nothing records how an item with no stop is shown. A dash is this mock’s.')),
   advanceMode: sourced('When its stage is done', MOCK_WORDS),
   moving: sourced('moving', MOCK_WORDS),
   stopped: sourced('stopped', RECORD_WORDS('stopping only when')),
@@ -172,7 +174,7 @@ const LABELS: Labels = {
   cannotAdvance: sourced('cannot be sent on now', MOCK_WORDS),
 }
 
-const LABEL_SET = assumed('D-41', 'The board’s own words are served, so each carries provenance like any other value.')
+const LABEL_SET = assumed('D-41', 'The board’s own words and glyphs are served, so each carries provenance like any other value.')
 const LABEL_FIELD = assumed('D-09', 'Which words the board needs follows from its layout, which is this mock’s.')
 
 // ---- The board ------------------------------------------------------------
@@ -213,10 +215,12 @@ export const FIELDS: FieldCatalogue = {
   labels: {
     heading: LABEL_FIELD,
     stages: LABEL_FIELD,
+    stageSeparator: LABEL_FIELD,
     title: LABEL_FIELD,
     stage: LABEL_FIELD,
     motion: LABEL_FIELD,
     stop: LABEL_FIELD,
+    noStop: LABEL_FIELD,
     advanceMode: LABEL_FIELD,
     moving: LABEL_FIELD,
     stopped: LABEL_FIELD,

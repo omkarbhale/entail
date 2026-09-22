@@ -4,8 +4,10 @@
 //
 // A target has several parts because one thing on screen can answer several
 // "where did this come from" questions at once: the value, why its field
-// exists, and the words used to show it. The first part decides how loudly
-// the target is marked on the board.
+// exists, and the words used to show it. A target is marked set-by-you when
+// its value was set by the user; otherwise it takes the weakest provenance
+// among its parts, so it can show as recorded only if every part is recorded
+// (DECISIONS.md D-50).
 
 import type {
   AdvanceMode,
@@ -17,9 +19,14 @@ import type {
   Sourced,
   StopCategory,
 } from '../../mock-server/src/contract.ts'
-import type { Provenance } from '../../mock-server/src/provenance.ts'
+import type { Provenance, ProvenanceKind } from '../../mock-server/src/provenance.ts'
 
-export type Part = { readonly heading: string; readonly provenance: Provenance }
+export type Part = {
+  readonly heading: string
+  readonly provenance: Provenance
+  /** This part is the value itself, rather than a reason around it. */
+  readonly isValue?: true
+}
 
 export type Target = {
   /** What this is, for the inspector's title. */
@@ -27,6 +34,8 @@ export type Target = {
   /** The text the board shows for it. */
   readonly shown: string
   readonly parts: readonly [Part, ...Part[]]
+  /** Decides how the target is marked on the board. */
+  readonly kind: ProvenanceKind
 }
 
 export type Targets = ReadonlyMap<string, Target>
@@ -44,6 +53,15 @@ export const stopWord = (labels: Labels, category: StopCategory): Sourced<string
 export const modeWord = (labels: Labels, mode: AdvanceMode): Sourced<string> =>
   mode === 'automatic' ? labels.automatic : labels.stopForUser
 
+/** Strongest first. user-input is not on it; see kindOf. */
+const LADDER: readonly ProvenanceKind[] = ['recorded', 'interpreted', 'assumed', 'placeholder']
+
+function kindOf(parts: readonly Part[]): ProvenanceKind {
+  if (parts.some((p) => p.isValue && p.provenance.kind === 'user-input')) return 'user-input'
+  const ranks = parts.map((p) => LADDER.indexOf(p.provenance.kind)).filter((rank) => rank >= 0)
+  return ranks.length === 0 ? 'user-input' : LADDER[Math.max(...ranks)]!
+}
+
 export const ADVANCE_MODES: readonly AdvanceMode[] = ['automatic', 'stop-for-user']
 
 export const COLUMNS = ['title', 'stage', 'motion', 'stop', 'advanceMode'] as const satisfies readonly (keyof Item & keyof Labels)[]
@@ -52,9 +70,10 @@ export function buildTargets({ value: board, provenance: boardProvenance }: Sour
   const labels = board.labels.value
   const targets = new Map<string, Target>()
   const add = (key: string, name: string, shown: Sourced<string> | string, ...parts: [Part, ...Part[]]): void => {
-    targets.set(key, { name, shown: typeof shown === 'string' ? shown : shown.value, parts })
+    targets.set(key, { name, shown: typeof shown === 'string' ? shown : shown.value, parts, kind: kindOf(parts) })
   }
   const words = (label: Sourced<string>): Part => ({ heading: 'The words used to show it', provenance: label.provenance })
+  const value = (provenance: Provenance, heading = 'This value'): Part => ({ heading, provenance, isValue: true })
 
   add(
     'heading',
@@ -74,8 +93,9 @@ export function buildTargets({ value: board, provenance: boardProvenance }: Sour
     words(labels.stages),
   )
   for (const { value: stage } of board.stages.value) {
-    add(`stage:${stage.id.value}`, 'A stage', stage.name, { heading: 'This stage', provenance: stage.name.provenance })
+    add(`stage:${stage.id.value}`, 'A stage', stage.name, value(stage.name.provenance, 'This stage'))
   }
+  add('stage-separator', 'Between stages', labels.stageSeparator, words(labels.stageSeparator))
   for (const column of COLUMNS) {
     add(
       `column:${column}`,
@@ -94,7 +114,7 @@ export function buildTargets({ value: board, provenance: boardProvenance }: Sour
       `${id}:title`,
       'Title',
       item.title,
-      { heading: 'This value', provenance: item.title.provenance },
+      value(item.title.provenance),
       { heading: 'Why items have a title', provenance: fields.item.title },
       { heading: 'This item', provenance: itemProvenance },
     )
@@ -103,7 +123,7 @@ export function buildTargets({ value: board, provenance: boardProvenance }: Sour
       `${id}:stage`,
       `Stage ${of}`,
       name ?? item.stage.value,
-      { heading: 'This value', provenance: item.stage.provenance },
+      value(item.stage.provenance),
       { heading: 'Why items have a stage', provenance: fields.item.stage },
       ...(name === undefined ? [] : [{ heading: 'The stage’s name', provenance: name.provenance }]),
     )
@@ -112,7 +132,7 @@ export function buildTargets({ value: board, provenance: boardProvenance }: Sour
       `${id}:motion`,
       `Moving or stopped, ${of}`,
       motion,
-      { heading: 'This value', provenance: item.motion.provenance },
+      value(item.motion.provenance),
       { heading: 'Why items are moving or stopped', provenance: fields.item.motion },
       words(motion),
     )
@@ -121,9 +141,10 @@ export function buildTargets({ value: board, provenance: boardProvenance }: Sour
       add(
         `${id}:stop`,
         `Why it stopped, ${of}`,
-        '—',
-        { heading: 'This value: no stop', provenance: item.stop.provenance },
+        labels.noStop,
+        value(item.stop.provenance, 'This value: no stop'),
         { heading: 'Why items carry a stop', provenance: fields.item.stop },
+        words(labels.noStop),
       )
     } else {
       const category = stopWord(labels, stop.category.value)
@@ -131,7 +152,7 @@ export function buildTargets({ value: board, provenance: boardProvenance }: Sour
         `${id}:stop.category`,
         `Why it stopped, ${of}`,
         category,
-        { heading: 'This value', provenance: stop.category.provenance },
+        value(stop.category.provenance),
         { heading: 'Why stops have a reason', provenance: fields.stop.category },
         { heading: 'This stop', provenance: item.stop.provenance },
         words(category),
@@ -140,7 +161,7 @@ export function buildTargets({ value: board, provenance: boardProvenance }: Sour
         `${id}:stop.detail`,
         `What it stopped on, ${of}`,
         stop.detail,
-        { heading: 'This value', provenance: stop.detail.provenance },
+        value(stop.detail.provenance),
         { heading: 'Why a stop carries a sentence', provenance: fields.stop.detail },
       )
     }
@@ -148,7 +169,7 @@ export function buildTargets({ value: board, provenance: boardProvenance }: Sour
       const word = modeWord(labels, mode)
       const field = { heading: 'Why items have this setting', provenance: fields.item.advanceMode }
       if (mode === item.advanceMode.value) {
-        add(`${id}:mode:${mode}`, `Current setting ${of}`, word, { heading: 'This value', provenance: item.advanceMode.provenance }, field, words(word))
+        add(`${id}:mode:${mode}`, `Current setting ${of}`, word, value(item.advanceMode.provenance), field, words(word))
       } else {
         add(`${id}:mode:${mode}`, `Other setting ${of}`, word, { heading: 'The words of this option', provenance: word.provenance }, field)
       }
@@ -158,7 +179,7 @@ export function buildTargets({ value: board, provenance: boardProvenance }: Sour
       `${id}:advance`,
       `Sending on ${of}`,
       action,
-      { heading: item.advanceable.value ? 'Why it can be sent on now' : 'Why it cannot be sent on now', provenance: item.advanceable.provenance },
+      value(item.advanceable.provenance, item.advanceable.value ? 'Why it can be sent on now' : 'Why it cannot be sent on now'),
       { heading: 'Why the board knows this', provenance: fields.item.advanceable },
       words(action),
     )

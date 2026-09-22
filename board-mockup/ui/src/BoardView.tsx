@@ -1,5 +1,5 @@
-// The board: the stages once, then one row per item in flight. Every word
-// here is served; the component only decides where it goes.
+// The board: the stages once, then one row per item in flight. Every word and
+// glyph here is served; the component only decides where it goes.
 
 import type { AdvanceMode, Board, Sourced } from '../../mock-server/src/contract.ts'
 import { Mark } from './Mark.tsx'
@@ -19,10 +19,10 @@ export function BoardView({ board: { value: board }, busy, onAdvance, onSetMode 
         <Mark k="heading" />
       </h1>
       <p className="stages">
-        <Mark k="stages" />:{' '}
+        <Mark k="stages" />{' '}
         {board.stages.value.map(({ value: stage }, i) => (
           <span key={stage.id.value}>
-            {i > 0 && ' → '}
+            {i > 0 && <Mark k="stage-separator" />}
             <Mark k={`stage:${stage.id.value}`} />
           </span>
         ))}

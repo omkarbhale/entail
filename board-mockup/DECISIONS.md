@@ -503,16 +503,19 @@ layer produced, "Maybe."
 
 ### D-41. Where does the board end and the mockup around it begin?
 
-**Assumed to proceed (not an answer):** every word that depicts the board is
-served with provenance: headings, column names, state words and the action's
-label. Text that describes the mockup is written in the UI and carries no
-provenance. That covers the banner, the legend, the inspector and the error
+**Assumed to proceed (not an answer):** everything that depicts the board is
+served with provenance, with no exceptions: headings, column names, state
+words, the action's label, and glyphs such as the arrow between stages, the
+colon after a heading and the dash for an item with no stop. The UI writes no
+text or glyph on the board itself. Text that describes the mockup is written
+in the UI and carries no provenance. That covers the banner, the legend, the inspector and the error
 shown when the mock server is down. The UI draws that frame visibly apart
 from the board, so none of its text can be read as part of Entail's design.
 
 The line is drawn by what the text depicts, not by how important it seems.
-The captain's rule is that provenance goes on every single detail, and this
-entry is here so the one exception is stated rather than silent.
+The captain's rule is that provenance goes on every single detail, so nothing
+on the board is exempt, however small. The frame is not part of the board, and
+this entry is here so that line is stated rather than silent.
 
 **Where the mock depends on it:** `board.labels`, and the frame in
 `ui/src/App.tsx`.
@@ -589,3 +592,18 @@ core loop does not need it. Nothing records that the board should have any of
 them. Any that turns out to be wanted is its own question.
 
 **Nowhere in the mock**, which is the assumption.
+
+### D-50. How do the user's own changes rank against recorded, interpreted, assumed and placeholder?
+
+**Assumed to proceed (not an answer):** they are not on that ladder. A thing
+on the board that answers several questions is marked by the weakest
+provenance among its parts, ranked recorded, then interpreted, then assumed,
+then placeholder, so it can show as recorded only if every part is recorded.
+A value the user changed through one of the two actions is marked *set by
+you* whatever its other parts are. Only the value itself can make a thing
+*set by you*: why its field exists, or the words used to show it, never do.
+Whether a user's change should outrank, rank below, or sit beside what is
+recorded is open, and so is whether the real board marks it at all (D-40).
+
+**Where the mock depends on it:** how each target is marked, in
+`ui/src/targets.ts`.
