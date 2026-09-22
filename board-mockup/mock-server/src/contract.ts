@@ -54,10 +54,36 @@ export type Item = {
   readonly advanceable: Sourced<boolean>
 }
 
+/**
+ * Every word the board itself shows, so that each one carries provenance like
+ * any other value. Text that describes the mockup rather than depicting the
+ * board (its banner, legend and inspector) is the UI's own; see DECISIONS.md
+ * D-41.
+ */
+export type Labels = {
+  readonly heading: Sourced<string>
+  readonly stages: Sourced<string>
+  readonly title: Sourced<string>
+  readonly stage: Sourced<string>
+  readonly motion: Sourced<string>
+  readonly stop: Sourced<string>
+  readonly advanceMode: Sourced<string>
+  readonly moving: Sourced<string>
+  readonly stopped: Sourced<string>
+  readonly stageComplete: Sourced<string>
+  readonly hasSomethingToRaise: Sourced<string>
+  readonly needsUser: Sourced<string>
+  readonly automatic: Sourced<string>
+  readonly stopForUser: Sourced<string>
+  readonly advance: Sourced<string>
+  readonly cannotAdvance: Sourced<string>
+}
+
 export type Board = {
   /** In order; advancing moves an item to the next one in this list. */
   readonly stages: Sourced<ListOf<Stage>>
   readonly items: Sourced<ListOf<Item>>
+  readonly labels: Sourced<Labels>
 }
 
 /** Body of a refused request, served with a 4xx status. */
@@ -70,6 +96,7 @@ export type Refusal = {
 /** Every served record type, by name. FieldCatalogue is derived from it. */
 export type ServedRecords = {
   readonly board: Board
+  readonly labels: Labels
   readonly stage: Stage
   readonly item: Item
   readonly stop: Stop

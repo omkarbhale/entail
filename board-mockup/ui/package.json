@@ -1,0 +1,26 @@
+{
+  "name": "entail-board-ui",
+  "version": "0.0.0",
+  "private": true,
+  "description": "React board for the Entail board mockup. Renders only what the mock server serves.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p . && vite build",
+    "typecheck": "tsc -p .",
+    "check": "npm run typecheck"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.0"
+  }
+}

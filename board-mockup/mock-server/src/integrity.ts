@@ -71,7 +71,7 @@ export function problems(
       if (problem !== undefined) out.push(problem)
     }
   }
-  return out
+  return [...new Set(out)]
 }
 
 function readRepoFile(file: string): string | undefined {

@@ -117,12 +117,12 @@ not state, that those items matter most.
 
 ### D-09. Is the board a list of items, or columns by stage?
 
-**Assumed to proceed (not an answer):** not yet assumed. The contract serves
-the stages in order and each item's stage, which supports either layout. The
-UI will choose one when it is built, and that choice will be recorded here as
-an assumption.
+**Assumed to proceed (not an answer):** a list. The UI shows one table, one
+row per item, with the stage as a column. The stage sequence is shown once,
+above the table, rather than as columns an item moves across.
 
-**Nowhere in the mock yet.**
+**Where the mock depends on it:** the UI's layout, and the set of words
+served in `board.labels`, which follows from it.
 
 ---
 
@@ -446,7 +446,8 @@ fetches the board when it loads and after each of its own actions. There is
 no polling and no push. The mock has no change from elsewhere to learn about
 anyway.
 
-**Nowhere in the mock server.** It will shape the UI.
+**Where the mock depends on it:** the UI fetches the board when it loads and
+again after each action. It has no refresh button.
 
 ### D-37. Is this HTTP API a draft of a real interface?
 
@@ -479,7 +480,9 @@ next stage", "sent automatically", "something to raise" and "the user is
 needed".
 
 **Where the mock depends on it:** every name in
-`mock-server/src/contract.ts`, and the `stage.name` field.
+`mock-server/src/contract.ts`, the `stage.name` field, and every word in
+`board.labels`. A label made from recorded words is marked *interpreted*, never
+*recorded*: the words are recorded, their use as that label is not.
 
 ### D-40. Does the real board show provenance, or is that a device of this mockup?
 
@@ -493,3 +496,96 @@ where the captain raised a separation between what the user gave and what a
 layer produced, "Maybe."
 
 **Where the mock depends on it:** all of `mock-server/src/provenance.ts`.
+
+---
+
+## H. Raised by drawing the board
+
+### D-41. Where does the board end and the mockup around it begin?
+
+**Assumed to proceed (not an answer):** every word that depicts the board is
+served with provenance: headings, column names, state words and the action's
+label. Text that describes the mockup is written in the UI and carries no
+provenance. That covers the banner, the legend, the inspector and the error
+shown when the mock server is down. The UI draws that frame visibly apart
+from the board, so none of its text can be read as part of Entail's design.
+
+The line is drawn by what the text depicts, not by how important it seems.
+The captain's rule is that provenance goes on every single detail, and this
+entry is here so the one exception is stated rather than silent.
+
+**Where the mock depends on it:** `board.labels`, and the frame in
+`ui/src/App.tsx`.
+
+### D-42. What does a stopped item look like next to a moving one?
+
+**Assumed to proceed (not an answer):** the same row, carrying the word
+*stopped* and the reason. It is not sorted to the top, gets no colour, gets
+no separate section and no count. An item that needs the user looks like any
+other stopped item except for its words.
+
+**Bears on it:** the board statement; items stop "only when they have
+something to raise or the user is needed somewhere", which gives those items
+a reason to stand out and does not say how.
+
+**Where the mock depends on it:** the UI's table.
+
+### D-43. What does the user see after sending an item on or changing its setting?
+
+**Assumed to proceed (not an answer):** the row simply shows the new state.
+The changed value is marked as set by the user. There is no confirmation
+message, no animation and no record of the change elsewhere.
+
+**Where the mock depends on it:** the UI refetches the board after each
+action (D-36).
+
+### D-44. Is sending an item on confirmed first, and can it be undone?
+
+**Assumed to proceed (not an answer):** no to both. One click sends it on, and
+nothing takes it back.
+
+**Nowhere in the mock**, beyond the absence of both.
+
+### D-45. How is an action that is not available shown?
+
+**Assumed to proceed (not an answer):** the button stays where it is, under
+the item's stage, but is disabled and reads *cannot be sent on now*. Pointing
+at it shows the server's reason for that item. The button is not hidden.
+
+**Where the mock depends on it:** the `item.advanceable` field.
+
+### D-46. Where is the automatic / stop setting, and how is it presented?
+
+**Assumed to proceed (not an answer):** on each row, as a choice between two
+options under the heading *When its stage is done*. Both options are always
+visible and the current one is selected.
+
+**Where the mock depends on it:** the UI's table, and D-28.
+
+### D-47. Does each item show the whole sequence of stages, or only its own?
+
+**Assumed to proceed (not an answer):** only its own stage's name. The
+sequence is shown once above the table.
+
+**Where the mock depends on it:** the UI's layout (D-09).
+
+### D-48. What does the board show when it cannot reach whatever serves it?
+
+**Assumed to proceed (not an answer):** no board. It shows a message, in the
+mockup's frame, saying the mock server is not reachable and how to start it.
+What the real board would show if the orchestrator were unreachable is open,
+and depends on D-33.
+
+**Where the mock depends on it:** the UI's load error.
+
+### D-49. Which things that boards usually have does this one need?
+
+**Assumed to proceed (not an answer):** none of them. The board has no
+filtering, search, sorting controls, grouping, counts or summaries, item
+detail view, history, comments, assignees, due dates, priorities, bulk
+actions, way to add or remove items, refresh button, live updates,
+notifications, settings, sign-in or theming. Each was left out because the
+core loop does not need it. Nothing records that the board should have any of
+them. Any that turns out to be wanted is its own question.
+
+**Nowhere in the mock**, which is the assumption.

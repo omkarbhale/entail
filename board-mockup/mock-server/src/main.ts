@@ -13,7 +13,8 @@ if (found.length > 0) {
   process.exit(1)
 }
 
-const port = Number(process.env['PORT'] ?? 4317)
+// Fixed, because the UI's dev server forwards /api here (ui/vite.config.ts).
+const port = 4317
 boardServer(INITIAL_ITEMS, { decisions }).listen(port, () => {
   console.log(`Entail board mock server on http://localhost:${port} (in-memory, resets on restart)`)
 })

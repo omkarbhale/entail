@@ -11,6 +11,7 @@ import type {
   Board,
   FieldCatalogue,
   Item,
+  Labels,
   ListOf,
   Motion,
   Stage,
@@ -139,12 +140,54 @@ const ITEM_LIST = assumed(
   'The items are samples. They are listed in the order this mock declares them, which is not an ordering rule.',
 )
 
+// ---- Words ----------------------------------------------------------------
+
+// A label built from the record's own words is interpreted, never recorded:
+// the words are recorded, their use as this label is not. The citation quotes
+// just those words, so integrity.ts checks they are really there.
+const RECORD_WORDS = (words: string): Provenance =>
+  interpreted(
+    { ...BOARD_STATEMENT, quote: words },
+    'D-39',
+    `The record says “${words}”. Using that as this label is this mock’s.`,
+  )
+const MOCK_WORDS = assumed('D-39', 'Nothing records these words. They are this mock’s.')
+
+const LABELS: Labels = {
+  heading: sourced('In flight', RECORD_WORDS('in-flight features')),
+  stages: sourced('Stages', RECORD_WORDS('the next stage')),
+  title: sourced('Task or feature', RECORD_WORDS('all tasks and in-flight features')),
+  stage: sourced('Stage', RECORD_WORDS('the next stage')),
+  motion: sourced('Moving or stopped', MOCK_WORDS),
+  stop: sourced('Why it stopped', MOCK_WORDS),
+  advanceMode: sourced('When its stage is done', MOCK_WORDS),
+  moving: sourced('moving', MOCK_WORDS),
+  stopped: sourced('stopped', RECORD_WORDS('stopping only when')),
+  stageComplete: sourced('stage done, waiting to be sent on', MOCK_WORDS),
+  hasSomethingToRaise: sourced('has something to raise', RECORD_WORDS('something to raise')),
+  needsUser: sourced('you are needed', RECORD_WORDS('the user is needed somewhere')),
+  automatic: sourced('send it on automatically', RECORD_WORDS('sent automatically')),
+  stopForUser: sourced('stop and wait for me', MOCK_WORDS),
+  advance: sourced('Send to the next stage', RECORD_WORDS('sent to the next stage')),
+  cannotAdvance: sourced('cannot be sent on now', MOCK_WORDS),
+}
+
+const LABEL_SET = assumed('D-41', 'The board’s own words are served, so each carries provenance like any other value.')
+const LABEL_FIELD = assumed('D-09', 'Which words the board needs follows from its layout, which is this mock’s.')
+
 // ---- The board ------------------------------------------------------------
 
 const BOARD = recorded(BOARD_IS_WANTED)
 
 export function board(items: ListOf<Item>): Sourced<Board> {
-  return sourced({ stages: sourced(STAGES, STAGE_LIST), items: sourced(items, ITEM_LIST) }, BOARD)
+  return sourced(
+    {
+      stages: sourced(STAGES, STAGE_LIST),
+      items: sourced(items, ITEM_LIST),
+      labels: sourced(LABELS, LABEL_SET),
+    },
+    BOARD,
+  )
 }
 
 export const INITIAL_ITEMS: ListOf<Item> = ITEMS
@@ -165,6 +208,25 @@ export const FIELDS: FieldCatalogue = {
       'The record speaks of sending items to the next stage, so stages exist. Which stages, and listing them on the board, are this mock’s.',
     ),
     items: recorded(BOARD_STATEMENT),
+    labels: LABEL_SET,
+  },
+  labels: {
+    heading: LABEL_FIELD,
+    stages: LABEL_FIELD,
+    title: LABEL_FIELD,
+    stage: LABEL_FIELD,
+    motion: LABEL_FIELD,
+    stop: LABEL_FIELD,
+    advanceMode: LABEL_FIELD,
+    moving: LABEL_FIELD,
+    stopped: LABEL_FIELD,
+    stageComplete: LABEL_FIELD,
+    hasSomethingToRaise: LABEL_FIELD,
+    needsUser: LABEL_FIELD,
+    automatic: LABEL_FIELD,
+    stopForUser: LABEL_FIELD,
+    advance: LABEL_FIELD,
+    cannotAdvance: LABEL_FIELD,
   },
   stage: {
     id: STAGE_KEY,
