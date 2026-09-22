@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  mock-server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: board-mockup/mock-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # board-mockup/README.md: "Needs Node 22.18 or later."
+          node-version: '22.18'
+      - run: npm ci
+      # Type tests plus the integrity check: citations still quote their
+      # recorded files and decision ids still resolve in DECISIONS.md.
+      - run: npm run check
+
+  ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: board-mockup/ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+      - run: npm ci
+      - run: npm run build
