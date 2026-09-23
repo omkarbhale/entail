@@ -29,7 +29,7 @@ export type Citation = {
 export type DecisionId = `D-${number}`
 
 /**
- * Why a value is what it is. One of five kinds, and every served value must
+ * Why a value is what it is. One of six kinds, and every served value must
  * pick one; there is no "unmarked".
  *
  * - recorded:    the value is stated in a recorded file. The only kind that
@@ -41,8 +41,13 @@ export type DecisionId = `D-${number}`
  *                an open question, taken only so the board could be drawn.
  * - placeholder: sample content with no design weight: a made-up task title,
  *                an id. It exists so there is something to render.
- * - user-input:  the person using this mockup set it, through one of the
- *                mock's actions, since the server started.
+ * - user-input:  the person using this mockup set it, since the server
+ *                started: through one of the board's actions, or as an answer
+ *                whose words they stated and an agent passed on unchanged.
+ * - agent-composed: an agent composed it and the person using this mockup
+ *                agreed to it. They did not state it. Never shown as set by
+ *                the user, because recording an agreement as a statement is
+ *                the leakage Entail exists to prevent (DECISIONS.md D-56).
  */
 export type Provenance =
   | { readonly kind: 'recorded'; readonly cites: Citation }
@@ -55,6 +60,7 @@ export type Provenance =
   | { readonly kind: 'assumed'; readonly reason: string; readonly decision: DecisionId }
   | { readonly kind: 'placeholder'; readonly reason: string }
   | { readonly kind: 'user-input'; readonly action: string; readonly note: string }
+  | { readonly kind: 'agent-composed'; readonly action: string; readonly note: string }
 
 export type ProvenanceKind = Provenance['kind']
 

@@ -26,16 +26,47 @@ export type Stage = {
   readonly name: Sourced<string>
 }
 
-export type Motion = 'moving' | 'stopped'
+export type Motion = 'moving' | 'stopped' | 'landed'
 
 export type StopCategory = 'stage-complete' | 'has-something-to-raise' | 'needs-user'
 
 export type AdvanceMode = 'automatic' | 'stop-for-user'
 
+/**
+ * What the board hands the user for a stop that needs an answer: a ready-made
+ * invocation of the MCP tool Entail is imagined to expose (DECISIONS.md D-52).
+ * It is depicted only. No such tool exists and nothing here can call one.
+ */
+export type Handover = {
+  /** Names this one thing to be resolved, so the agent need not reconstruct it. */
+  readonly pending: Sourced<string>
+  /** The imagined MCP tool's name. */
+  readonly tool: Sourced<string>
+  /** The words the user gives their agent, carrying the task and the thing being resolved. */
+  readonly text: Sourced<string>
+}
+
 export type Stop = {
   readonly category: Sourced<StopCategory>
   /** One sentence saying what the item is stopped on. */
   readonly detail: Sourced<string>
+  /** null for a stop that asks nothing, which is one waiting to be sent on. */
+  readonly handover: Sourced<Handover | null>
+}
+
+/**
+ * Who the words of an answer came from. Both arrive through an agent; they are
+ * still not the same thing, and are never recorded as each other (D-56).
+ */
+export type AnswerOrigin = 'stated-by-user' | 'composed-by-agent'
+
+export type Answer = {
+  /** The Handover.pending it answers. */
+  readonly pending: Sourced<string>
+  /** What the item had asked, as it was asked. */
+  readonly asked: Sourced<string>
+  readonly answer: Sourced<string>
+  readonly origin: Sourced<AnswerOrigin>
 }
 
 export type Item = {
@@ -44,14 +75,23 @@ export type Item = {
   /** A Stage id from Board.stages. */
   readonly stage: Sourced<string>
   readonly motion: Sourced<Motion>
-  /** null while the item is moving. */
+  /** null unless the item is stopped. */
   readonly stop: Sourced<Stop | null>
+  /**
+   * The tmux pane an agent is imagined to be working this item's stage in, while
+   * the item is moving (D-51). Depicted only: nothing is spawned.
+   */
+  readonly agent: Sourced<string | null>
   readonly advanceMode: Sourced<AdvanceMode>
   /**
    * Whether POST .../advance would be accepted now. The rule lives on the
    * server so the UI holds none; the provenance says why, for this item.
    */
   readonly advanceable: Sourced<boolean>
+  /** What the item has asked and had answered, in the order answered. */
+  readonly answers: Sourced<ListOf<Answer>>
+  /** null until the item has a pull request. */
+  readonly pullRequest: Sourced<string | null>
 }
 
 /**
@@ -81,6 +121,22 @@ export type Labels = {
   readonly stopForUser: Sourced<string>
   readonly advance: Sourced<string>
   readonly cannotAdvance: Sourced<string>
+  /** Shown beside the pane of a moving item's agent. */
+  readonly agent: Sourced<string>
+  readonly handover: Sourced<string>
+  readonly copy: Sourced<string>
+  readonly answers: Sourced<string>
+  readonly statedByUser: Sourced<string>
+  readonly composedByAgent: Sourced<string>
+  /** The advance action's words at the last stage, where sending on means landing. */
+  readonly land: Sourced<string>
+  readonly landed: Sourced<string>
+  readonly landedHeading: Sourced<string>
+  readonly pullRequest: Sourced<string>
+  /** Shown for a landed item that was never asked anything. */
+  readonly noAnswers: Sourced<string>
+  readonly describe: Sourced<string>
+  readonly submit: Sourced<string>
 }
 
 export type Board = {
@@ -104,6 +160,8 @@ export type ServedRecords = {
   readonly stage: Stage
   readonly item: Item
   readonly stop: Stop
+  readonly handover: Handover
+  readonly answer: Answer
   readonly refusal: Refusal
 }
 
@@ -134,15 +192,52 @@ export type Catalogue = {
 /**
  * GET  /api/board                        -> 200 Sourced<Board>
  * GET  /api/catalogue                    -> 200 Catalogue
+ * POST /api/items                        -> 201 Sourced<Item> | 400 Sourced<Refusal>
+ *        body: CreateItemRequest
  * POST /api/items/:id/advance            -> 200 Sourced<Item> | 404/409 Sourced<Refusal>
- * PUT  /api/items/:id/advance-mode       -> 200 Sourced<Item> | 400/404 Sourced<Refusal>
+ * PUT  /api/items/:id/advance-mode       -> 200 Sourced<Item> | 400/404/409 Sourced<Refusal>
  *        body: SetAdvanceModeRequest
+ * POST /api/resolutions                  -> 200 Sourced<Item> | 400/404/409 Sourced<Refusal>
+ *        body: ResolveRequest
+ * POST /api/stage-endings                -> 200 Sourced<Item> | 400/404/409 Sourced<Refusal>
+ *        body: StageEndingRequest
  *
  * Any other path -> 404 Sourced<Refusal>.
+ *
+ * /api/resolutions stands in for the one write the imagined MCP tool would
+ * make, and is the only way an answer enters (D-55). The board never calls
+ * it; only the mockup's frame does, playing the agent.
+ *
+ * /api/stage-endings stands in for whatever ends a moving item's stage, which
+ * does not exist (D-65). The board never calls it either; only the mockup's
+ * frame does, playing a stage finishing.
  */
+export type CreateItemRequest = {
+  /** The task or feature, in the user's own words. */
+  readonly description: string
+}
+
 export type SetAdvanceModeRequest = {
   readonly mode: AdvanceMode
 }
+
+/** What the imagined MCP tool would be given by the agent. */
+export type ResolveRequest = {
+  readonly item: string
+  readonly pending: string
+  readonly answer: string
+  readonly origin: AnswerOrigin
+}
+
+/** How the frame's stand-in plays a moving item's stage ending (D-65). */
+export type StageEndingRequest =
+  | { readonly item: string; readonly category: 'stage-complete' }
+  | {
+      readonly item: string
+      readonly category: Exclude<StopCategory, 'stage-complete'>
+      /** What the stage asks, as the stand-in typed it. */
+      readonly asks: string
+    }
 
 export type ApiResponseBody = Sourced<Board> | Sourced<Item> | Sourced<Refusal> | Catalogue
 

@@ -58,3 +58,23 @@ export const FLOW_UNTIL_PR: Citation = {
   section: FLOW,
   quote: 'And so on, until the final pull request.',
 }
+
+export const FLOW_ARRIVES: Citation = {
+  file: DESIGN_RECORD,
+  section: FLOW,
+  quote:
+    'Somebody arrives and describes some task, feature, activity, or a product ' +
+    'to build. That goes into a pipeline and follows it.',
+}
+
+export const PROMOTION_ASKS_USER: Citation = {
+  file: DESIGN_RECORD,
+  section: '3. Promotion of per-task artifacts',
+  quote: 'the orchestrator asks the user to go into the right layer, and asks them what to do.',
+}
+
+export const USER_GAVE_VS_LAYER_PRODUCED: Citation = {
+  file: 'unfiled/2026-09-20-build-philosophy.md',
+  section: '3. Raised, and not settled',
+  quote: 'There should probably be separation between what the user gave and what a layer produced',
+}

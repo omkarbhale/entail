@@ -5,10 +5,13 @@ import type {
   AdvanceMode,
   Board,
   Catalogue,
+  CreateItemRequest,
   Item,
   Refusal,
+  ResolveRequest,
   SetAdvanceModeRequest,
   Sourced,
+  StageEndingRequest,
 } from '../../mock-server/src/contract.ts'
 
 export async function loadBoard(): Promise<{ board: Sourced<Board>; catalogue: Catalogue }> {
@@ -24,6 +27,23 @@ export const advance = (id: string): Promise<Sourced<Item>> =>
 
 export const setAdvanceMode = (id: string, mode: AdvanceMode): Promise<Sourced<Item>> =>
   request('PUT', `/api/items/${encodeURIComponent(id)}/advance-mode`, { mode } satisfies SetAdvanceModeRequest)
+
+export const describeWork = (description: string): Promise<Sourced<Item>> =>
+  request('POST', '/api/items', { description } satisfies CreateItemRequest)
+
+/**
+ * Stands in for the imagined MCP tool's one write (DECISIONS.md D-55). Only
+ * the mockup's frame calls it, playing the agent; the board never does.
+ */
+export const resolveAsAgent = (resolution: ResolveRequest): Promise<Sourced<Item>> =>
+  request('POST', '/api/resolutions', resolution)
+
+/**
+ * Stands in for whatever ends a moving item's stage (DECISIONS.md D-65). Only
+ * the mockup's frame calls it, playing a stage finishing; the board never does.
+ */
+export const endStageAsStandIn = (ending: StageEndingRequest): Promise<Sourced<Item>> =>
+  request('POST', '/api/stage-endings', ending)
 
 /** Thrown when the mock server answers with a refusal; carries its served reason. */
 export class Refused extends Error {}
