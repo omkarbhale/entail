@@ -515,7 +515,7 @@ words, the action's label, and glyphs such as the arrow between stages, the
 colon after a heading and the dash for an item with no stop. The UI writes no
 text or glyph on the board itself. Text that describes the mockup is written
 in the UI and carries no provenance. That covers the banner, the legend, the
-inspector and the error shown when the mock server is down. The UI draws that frame visibly apart
+inspector, the two stand-ins (D-55, D-65) and the error shown when the mock server is down. The UI draws that frame visibly apart
 from the board, so none of its text can be read as part of Entail's design.
 
 The line is drawn by what the text depicts, not by how important it seems.
