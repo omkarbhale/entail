@@ -59,7 +59,7 @@ describe('HTTP', () => {
     assert.equal(status, 200)
     assert.equal(board.provenance.kind, 'recorded')
     assert.equal(board.value.stages.value.length, 6)
-    assert.equal(board.value.items.value.length, 5)
+    assert.equal(board.value.items.value.length, 6)
     const everyValueSourced = (node: unknown): boolean =>
       typeof node !== 'object' || node === null
         ? false
@@ -94,7 +94,7 @@ describe('HTTP', () => {
     ['item-2', 'has something to raise'],
     ['item-3', 'needs the user'],
     ['item-4', 'is moving'],
-    ['item-5', 'is at the last stage'],
+    ['item-6', 'has landed'],
   ] as const) {
     it(`refuses to advance an item that ${why}`, async () => {
       assert.equal((await itemOf(id)).advanceable.value, false)
@@ -111,6 +111,80 @@ describe('HTTP', () => {
     assert.equal(item.value.advanceMode.value, 'stop-for-user')
     assert.equal(item.value.advanceMode.provenance.kind, 'user-input')
     assert.deepEqual({ ...item.value, advanceMode: before.advanceMode }, before)
+  })
+
+  it('lands an item sent on from its completed last stage, keeping its pull request', async () => {
+    assert.equal((await itemOf('item-5')).advanceable.value, true)
+    const [status, item] = await call<Sourced<Item>>('POST', '/api/items/item-5/advance')
+    assert.equal(status, 200)
+    assert.equal(item.value.motion.value, 'landed')
+    assert.equal(item.value.motion.provenance.kind, 'user-input')
+    assert.equal(item.value.stage.value, 'pull-request')
+    assert.equal(item.value.pullRequest.value, '#318')
+    assert.equal(item.value.agent.value, null)
+    assert.equal(item.value.advanceable.value, false)
+  })
+
+  it('shows an agent pane on a moving item and after an advance, spawning nothing', async () => {
+    assert.equal((await itemOf('item-4')).agent.value, 'entail:item-4.development')
+    assert.equal((await itemOf('item-1')).agent.value, 'entail:item-1.pull-request')
+    assert.equal((await itemOf('item-1')).agent.provenance.kind, 'assumed')
+  })
+
+  it('hands over a ready-made invocation for a stop that asks something, and none for one that does not', async () => {
+    const raised = await itemOf('item-2')
+    const handover = raised.stop.value?.handover.value
+    assert.ok(handover)
+    assert.equal(handover.pending.value, 'item-2/q1')
+    assert.match(handover.text.value, /item-2\/q1/)
+    assert.match(handover.text.value, /Rate-limit the public API/)
+    assert.match(handover.text.value, /entail_resolve/)
+    assert.ok((await itemOf('item-3')).stop.value?.handover.value)
+  })
+
+  it('puts described work into the pipeline at the first stage, in the user’s words', async () => {
+    const [status, item] = await call<Sourced<Item>>('POST', '/api/items', { description: '  Export audit log as JSON  ' })
+    assert.equal(status, 201)
+    assert.equal(item.value.title.value, 'Export audit log as JSON')
+    assert.equal(item.value.title.provenance.kind, 'user-input')
+    assert.equal(item.value.stage.value, 'vision')
+    assert.equal(item.value.motion.value, 'moving')
+    assert.equal(item.value.agent.value, `entail:${item.value.id.value}.vision`)
+    assert.equal(item.value.advanceMode.value, 'stop-for-user')
+    assert.deepEqual(await itemOf(item.value.id.value), item.value)
+    assert.equal((await call('POST', '/api/items', { description: '   ' }))[0], 400)
+    assert.equal((await call('POST', '/api/items', {}))[0], 400)
+  })
+
+  it('records an answer the user stated as set by the user, and one an agent composed as not', async () => {
+    const stated = { item: 'item-2', pending: 'item-2/q1', answer: 'Per key.', origin: 'stated-by-user' }
+    const [status, item] = await call<Sourced<Item>>('POST', '/api/resolutions', stated)
+    assert.equal(status, 200)
+    assert.equal(item.value.motion.value, 'moving')
+    assert.equal(item.value.stage.value, 'architecture')
+    assert.equal(item.value.stop.value, null)
+    const [answer] = item.value.answers.value
+    assert.ok(answer)
+    assert.equal(answer.value.answer.value, 'Per key.')
+    assert.equal(answer.value.answer.provenance.kind, 'user-input')
+    assert.equal(answer.value.origin.value, 'stated-by-user')
+
+    const composed = { item: 'item-3', pending: 'item-3/q1', answer: 'Use “project”.', origin: 'composed-by-agent' }
+    const [, other] = await call<Sourced<Item>>('POST', '/api/resolutions', composed)
+    const [agreed] = other.value.answers.value
+    assert.ok(agreed)
+    assert.equal(agreed.value.answer.provenance.kind, 'agent-composed')
+    assert.equal(agreed.value.origin.provenance.kind, 'agent-composed')
+    assert.equal(agreed.provenance.kind, 'agent-composed')
+  })
+
+  it('refuses an answer for something the item is not waiting on', async () => {
+    const wrong = { item: 'item-4', pending: 'item-4/q1', answer: 'x', origin: 'stated-by-user' }
+    assert.equal((await call('POST', '/api/resolutions', wrong))[0], 409)
+    const stale = { item: 'item-2', pending: 'item-2/q1', answer: 'again', origin: 'stated-by-user' }
+    assert.equal((await call('POST', '/api/resolutions', stale))[0], 409)
+    assert.equal((await call('POST', '/api/resolutions', { ...wrong, item: 'nope' }))[0], 404)
+    assert.equal((await call('POST', '/api/resolutions', { ...wrong, origin: 'someone' }))[0], 400)
   })
 
   it('refuses a malformed mode, an unknown item and an unknown route', async () => {

@@ -81,21 +81,20 @@ shown.
 
 ### D-06. How does work get onto the board?
 
-**Assumed to proceed (not an answer):** it does not. The board has no action
-for starting work, so the items are seeded when the server starts. Submitting
-work is outside this mockup's scope. It is recorded here because a board
-nobody can add to is not how the real one can work.
+**Assumed to proceed (not an answer):** see D-58, which replaced the
+assumption first taken here. The board now has one way to start work: somebody
+describes it. The sample items are still seeded when the server starts.
 
 **Bears on it:** design record §1, "Somebody arrives and describes some task…
 That goes into a pipeline and follows it."
 
 **Where the mock depends on it:** the seed list in
-`mock-server/src/fiction.ts`.
+`mock-server/src/fiction.ts`, and D-58.
 
 ### D-07. What happens when an item finishes its last stage?
 
-**Assumed to proceed (not an answer):** nothing is allowed to happen. The
-mock refuses to advance an item at the last stage. Nothing recorded says
+**Assumed to proceed (not an answer):** see D-60, which replaced the
+assumption first taken here that nothing may happen. Nothing recorded says
 whether the item then leaves the board, stays as done, or waits for a merge.
 
 **Bears on it:** design record §1, "And so on, until the final pull request."
@@ -205,8 +204,9 @@ the item moving backwards, as a stop, or not at all, is not stated.
 
 ### D-16. What states does an item have?
 
-**Assumed to proceed (not an answer):** two, *moving* and *stopped*. There is
-no queued, not-started, done, failed, cancelled or paused.
+**Assumed to proceed (not an answer):** three, *moving*, *stopped* and
+*landed*. *Landed* was added with completion (D-60). There is no queued,
+not-started, failed, cancelled or paused.
 
 **Bears on it:** the board statement ("stopping only when…"), which implies
 stopped and not-stopped and names nothing else.
@@ -257,17 +257,17 @@ raised it.
 
 ### D-20. Where does the user answer what an item raised, or do what it needs?
 
-**Assumed to proceed (not an answer):** not on this board. The board has two
-actions, and neither of them answers anything. So an item stopped for either
-of those reasons stays stopped for as long as the mock runs.
-
-This is the largest gap the mockup shows. Stopping for the user is the point
-of the board, and the board offers nothing to do once it has stopped.
+**Assumed to proceed (not an answer):** see D-52, which replaced the
+assumption first taken here. The first version of this mockup offered nothing
+to do once an item stopped for the user. It now hands over what an agent needs
+to answer it through Entail's imagined MCP. The board still does not take an
+answer itself.
 
 **Bears on it:** design record §3, where the orchestrator "asks the user to go
 into the right layer, and asks them what to do".
 
-**Where the mock depends on it:** the advance rule refuses these items.
+**Where the mock depends on it:** the advance rule refuses these items, and
+D-52.
 
 ### D-21. Does the board show what is happening inside a moving item?
 
@@ -308,10 +308,10 @@ nothing marking it stale".
 ### D-24. When may the user advance an item?
 
 **Assumed to proceed (not an answer):** only when it is stopped at a completed
-stage, and not at the last stage. The mock refuses to advance an item that is
-moving, which would mean skipping the rest of its stage. It also refuses one
-that has something to raise or needs the user, which would mean overriding
-it.
+stage. At the last stage that lands it (D-60). The mock refuses to advance an
+item that is moving, which would mean skipping the rest of its stage. It also
+refuses one that has something to raise or needs the user, which would mean
+overriding it, and one that has landed.
 
 **Bears on it:** the board statement: items "can be sent to the next stage or
 sent automatically". It gives no condition.
@@ -370,10 +370,11 @@ and 5, where some settings are per project and some per task;
 
 ### D-29. What is the setting for new work, before the user touches it?
 
-**Assumed to proceed (not an answer):** no default exists, because nothing
-creates work (D-06). The sample items use both values.
+**Assumed to proceed (not an answer):** see D-59, which replaced the
+assumption first taken here that no default exists. The sample items use both
+values.
 
-**Nowhere in the mock.**
+**Where the mock depends on it:** D-59.
 
 ### D-30. Does switching an item to automatic send it on at once if it is already waiting at a completed stage?
 
@@ -478,7 +479,10 @@ are *item*, *stage* and each stage's name, *moving* and *stopped*, *stage
 complete*, *has something to raise*, *needs user*, *advance*, *automatic* and
 *stop for user*. The only recorded words among them are "stage", "sent to the
 next stage", "sent automatically", "something to raise" and "the user is
-needed".
+needed". The words added with answering, creating work and completion
+(D-51 to D-61) are the mock's too, except "describes some task, feature",
+"goes into a pipeline", "the final pull request" and "what the user gave",
+which are recorded words used as labels.
 
 **Where the mock depends on it:** every name in
 `mock-server/src/contract.ts`, the `stage.name` field, and every word in
@@ -587,10 +591,12 @@ and depends on D-33.
 **Assumed to proceed (not an answer):** none of them. The board has no
 filtering, search, sorting controls, grouping, counts or summaries, item
 detail view, history, comments, assignees, due dates, priorities, bulk
-actions, way to add or remove items, refresh button, live updates,
+actions, way to remove items, refresh button, live updates,
 notifications, settings, sign-in or theming. Each was left out because the
-core loop does not need it. Nothing records that the board should have any of
-them. Any that turns out to be wanted is its own question.
+core loop does not need it. A way to add items was since added (D-58); what
+the three later additions left out is listed in D-64. Nothing records that the
+board should have any of them. Any that turns out to be wanted is its own
+question.
 
 **Nowhere in the mock**, which is the assumption.
 
@@ -600,11 +606,281 @@ them. Any that turns out to be wanted is its own question.
 on the board that answers several questions is marked by the weakest
 provenance among its parts, ranked recorded, then interpreted, then assumed,
 then placeholder, so it can show as recorded only if every part is recorded.
-A value the user changed through one of the two actions is marked *set by
-you* whatever its other parts are. Only the value itself can make a thing
+A value the user set through one of the board's actions, or an answer whose
+words they stated (D-56), is marked *set by you* whatever its other parts
+are. Only the value itself can make a thing
 *set by you*: why its field exists, or the words used to show it, never do.
 Whether a user's change should outrank, rank below, or sit beside what is
 recorded is open, and so is whether the real board marks it at all (D-40).
 
+A value an agent composed and the user agreed to (D-56) is off the ladder too,
+and is marked *agreed by you*, never *set by you*. The same rule applies: only
+the value itself can make a thing *agreed by you*. A thing whose value is set
+by the user shows as *set by you* even if a part of it was agreed to.
+
 **Where the mock depends on it:** how each target is marked, in
 `ui/src/targets.ts`.
+
+---
+
+## I. Raised by adding answering, creating work and completion
+
+The captain described how the flow is imagined to work, when asking for these
+three additions: advancing is imagined to spawn agents in tmux, the way
+firstmate does, and answering what an item raises is imagined to go through an
+MCP that Entail exposes, which any agent (the user's own or another) can be
+asked to use, with Entail's MCP telling the agent what to do. He said both are
+how it is imagined, not how it has been decided. Those words are in the
+request for this change, not in `VISION.md` or `unfiled/`, so nothing on the
+board can cite them. Every entry below that leans on them is an assumption.
+
+### D-51. What does advancing an item mean?
+
+**Assumed to proceed (not an answer):** it spawns an agent for the item's new
+stage, in a tmux pane of its own. The board shows that only as a pane name on
+a moving item, `entail:<item>.<stage>`, beside the words *agent at work in
+tmux pane*. The mock spawns nothing, runs no tmux command, launches no
+process and shells out to nothing. The pane name is invented, and so is its
+form.
+
+Also assumed: an item going back into motion after an answer (D-57) is shown
+in the same pane name, as though its stage's agent carried on. Whether it is
+the same agent, a new one, or no agent at all is open. So is whether a pane
+outlives its stage, whether an item has one pane or one per stage, and who
+closes it.
+
+**Bears on it:** the captain's description of how the flow is imagined
+(introduction to this section). Nothing recorded.
+
+**Where the mock depends on it:** the `item.agent` field, the `agent` label,
+and `paneName` in `mock-server/src/rules.ts`.
+
+### D-52. Where does the user answer what an item raised, or do what it needs?
+
+**Assumed to proceed (not an answer):** through an agent, using an MCP that
+Entail is imagined to expose. An item stopped because it *has something to
+raise* or *needs the user* shows what it asks, and under it the board hands
+over a ready-made invocation for the user to give an agent. The board does not
+collect the answer. It shows and routes. This replaces the assumption in D-20,
+which left these items with nothing to do.
+
+The mock builds no MCP server, adds no MCP dependency and makes nothing an
+agent could call. The tool named in the invocation, `entail_resolve`, does not
+exist.
+
+The same assumption covers both reasons for stopping (D-18), although only
+the second is described in the record as sending the user into a layer. The
+board treats "go into the right layer" as something the agent does with the
+MCP's instructions, not something the user does by hand.
+
+**Bears on it:** design record §3, where the orchestrator "asks the user to go
+into the right layer, and asks them what to do"; the captain's description of
+how resolution is imagined (introduction to this section).
+
+**Where the mock depends on it:** the `stop.handover` field, the `handover`
+label, the `raised` refusal in `mock-server/src/rules.ts`.
+
+### D-53. What does the invocation the board hands over carry?
+
+**Assumed to proceed (not an answer):** only what points at the thing: the
+item's id and title, the stage it stopped at, what it asks, a pending id that
+names this one thing to be resolved, and the tool's name. It says to ask the
+MCP about that pending id and do what the MCP says. It does not carry the
+artifacts, the upstream decisions, the conversation that raised it or any
+instructions for how to answer. Those are imagined to come from Entail's MCP,
+which is what keeps the flow's integrity, so the user does not have to
+reconstruct them and the agent does not get to choose them.
+
+The pending id's form, `<item>/q<n>`, and the invocation's wording are the
+mock's. Whether the handover is words for a person to paste, a structured
+call, a link or something else is open. So is whether an item can have more
+than one thing pending at once; in the mock it cannot.
+
+**Where the mock depends on it:** the `handover` record, built in
+`mock-server/src/fiction.ts`.
+
+### D-54. Does exposing an MCP mean Entail's orchestrator is a long-running process?
+
+**Not assumed.** An MCP that agents call implies something running to answer
+them, rather than a CLI invoked per command. That would bear on D-33 and on
+[open questions C2](../unfiled/2026-09-20-open-questions.md#c2-where-the-orchestrator-runs),
+which is open. The mock does not decide it. Its HTTP route standing in for the
+tool (D-55) lives in the mock server only because the UI needed something to
+fetch from, and says nothing about where the orchestrator runs. An MCP server
+started per session by the agent, or one that reads and writes files in the
+repository and exits, would also fit; nothing here chooses between them.
+
+**Nowhere in the mock.**
+
+### D-55. How does an answer enter, in this mock?
+
+**Assumed to proceed (not an answer):** through one route only,
+`POST /api/resolutions`, which stands in for the one write the imagined MCP
+tool would make. It is the single writer: nothing else can record an answer,
+and the board has no field, button or form for one. Two paths would drift.
+The route refuses an answer for an item that is not waiting on one, and for a
+pending id that is not the one the item is waiting on, so an answer cannot
+land on the wrong question or be given twice.
+
+The board never calls this route. The mockup's frame does, in a panel drawn
+outside the board that plays the part of the agent, so the loop can be seen
+end to end in a browser. That panel is the mockup standing in for an agent,
+not a design for anything Entail shows (D-41).
+
+**Where the mock depends on it:** the `/api/resolutions` route in
+`mock-server/src/server.ts`, `resolve` in `mock-server/src/rules.ts`, and the
+agent panel in `ui/src/AgentStandIn.tsx`.
+
+### D-56. Is an answer the user stated the same as one an agent composed and the user agreed to?
+
+**Assumed to proceed (not an answer):** no, and they are never recorded as
+each other. Both arrive through an agent. An answer the user stated, whose
+words the agent passed on unchanged, has origin `stated-by-user`. An answer
+an agent composed and the user agreed to has origin `composed-by-agent`.
+Recording the second as the first would be the leakage Entail exists to
+prevent: a decision the user never made reading as theirs.
+
+The distinction is carried twice. In what Entail would record, as the
+answer's `origin` field, shown on the board as *you said this* or *an agent
+proposed this, and you agreed*. And in this mockup's provenance vocabulary,
+which gains a sixth kind, `agent-composed`, beside `user-input`. The
+existing `user-input` kind could not carry it: it is what the board marks
+*set by you*, and an agreement is not that. An `agent-composed` value is
+marked on its own, as *agreed by you*, never as *set by you*, and like
+`user-input` it is off the ladder of D-50.
+
+Also assumed: the agent says which it was, and the tool requires it to say;
+there is no default. Nothing checks the agent's claim. Whether Entail should
+verify it, default to the weaker claim when unsure, keep the words the user
+agreed to separately from the words the user said, or record an edit by the
+user to a composed answer as a third origin, is open. So is whether a user
+can reject a composed answer and what that records.
+
+**Bears on it:**
+[build philosophy §3](../unfiled/2026-09-20-build-philosophy.md#3-raised-and-not-settled):
+"There should probably be separation between what the user gave and what a
+layer produced", raised and not ruled on, "Maybe."; D-40.
+
+**Where the mock depends on it:** the `answer.origin` field, the
+`agent-composed` kind in `mock-server/src/provenance.ts`, and how targets are
+marked in `ui/src/targets.ts`.
+
+### D-57. What happens to an item once what it asked is answered?
+
+**Assumed to proceed (not an answer):** it goes back into motion in the same
+stage, and is not sent on. The answer stays on the item, with what was asked,
+as it was asked, and who the words came from. Nothing records whether an
+answer should instead be routed upstream into an artifact, amend a layer, or
+be re-checked before the item moves again.
+
+**Bears on it:** design record, point 6, where a blocker can be routed
+upstream; point 1, where amending is a separate operation from executing.
+
+**Where the mock depends on it:** `resolve` in `mock-server/src/rules.ts`,
+and the `item.answers` field.
+
+### D-58. How does work get onto the board?
+
+**Assumed to proceed (not an answer):** somebody describes a task or feature
+in their own words, in one box at the top of the board, and it enters the
+pipeline. This replaces the assumption in D-06. The words become the item's
+title, trimmed and otherwise unchanged, which answers D-03 for new work only.
+A description is refused if it is empty or longer than 2000 characters, a
+limit that is the mock's. The new item starts at the first stage, already
+moving, with an agent imagined in a pane for that stage (D-51), nothing
+asked yet and no pull request.
+
+Nothing else is asked when work is created: no kind (D-02), no project
+(D-05), no choice of validations, no priority. The design record makes some
+of those per-project settings, and asking for them at submission is what
+point 5's critique warned against.
+
+**Bears on it:** design record §1, "Somebody arrives and describes some task,
+feature, activity, or a product to build. That goes into a pipeline and
+follows it."; point 5.
+
+**Where the mock depends on it:** `POST /api/items`, `describe` in
+`mock-server/src/rules.ts`, and the `describe` and `submit` labels.
+
+### D-59. What is the automatic / stop-for-user setting for new work?
+
+**Assumed to proceed (not an answer):** *stop and wait for me*, until the
+user changes it. This replaces the assumption in D-29, now that work can be
+created. It follows the record's statement that the user wants some say in
+the early layers, which is where new work starts. Nothing records a default.
+
+**Bears on it:** design record §1, "For vision, decisions, and architecture —
+at least the early layers — the user wants some say in what is going on."
+
+**Where the mock depends on it:** `describe` in `mock-server/src/rules.ts`.
+
+### D-60. What happens when an item finishes its last stage?
+
+**Assumed to proceed (not an answer):** once its last stage is done and it is
+waiting, sending it on lands it. The action's words change to *Land it*, and
+the item takes a third state, *landed*, beside *moving* and *stopped*
+(D-16). This replaces the assumption in D-07. A landed item cannot be sent on,
+changed or reopened.
+
+Nothing records what landing is: whether it is the pull request merging,
+the user approving it, Entail noticing a merge made elsewhere, or something
+else, or who merges. The mock merges nothing and opens no pull request. An
+automatic item would presumably land by itself; nothing in the mock runs, so
+the question does not come up there (D-32).
+
+**Bears on it:** design record §1, "And so on, until the final pull request."
+
+**Where the mock depends on it:** the advance rule and the `landed` state in
+`mock-server/src/rules.ts`, and the `land` and `landed` labels.
+
+### D-61. What is left behind when an item lands?
+
+**Assumed to proceed (not an answer):** the item itself, in a list of landed
+work under the items in flight; its pull request; and every answer it was
+given along the way, each with what was asked and who the words came from.
+That last part is the point of keeping it: once the work has landed, the
+answers are what says which decisions in it were the user's and which were
+agreed to.
+
+Not shown, and open: which artifacts the item derived or amended, what
+becomes of its per-task artifacts (open questions B6 and point 6's
+per-task artifacts, which "can be volatile"), whether its branch or its agent's
+pane is cleaned up, and whether a landed item ever leaves the board.
+
+**Bears on it:** design record, point 6; open questions B6.
+
+**Where the mock depends on it:** the `item.pullRequest` and `item.answers`
+fields, and the landed list in `ui/src/BoardView.tsx`.
+
+### D-62. Can the user answer on the board when no agent is at hand?
+
+**Assumed to proceed (not an answer):** no. There is exactly one way for an
+answer to enter (D-55), and it is through an agent. A form on the board would
+be a second writer, and the two would drift: one would record origin and the
+other would have to guess it. Whether the real product needs a way to answer
+without an agent is open.
+
+**Nowhere in the mock**, which is the assumption.
+
+### D-63. Where does a landed item appear?
+
+**Assumed to proceed (not an answer):** in its own list, headed *Landed*,
+below the table of items in flight. The server serves one list of items and
+the UI draws a landed item there rather than in the table; that split is by
+the item's state and is the only thing the UI decides about where an item
+goes.
+
+**Where the mock depends on it:** `ui/src/BoardView.tsx`.
+
+### D-64. Which things that a flow like this usually has does the board need?
+
+**Assumed to proceed (not an answer):** none of them. Adding answering,
+creating work and completion brought none of these with it: editing or
+deleting work once created, attachments or links in a description, choosing
+the starting stage, drafts, templates, a history or undo of answers, telling
+the user when an answer has been recorded, showing which agent answered,
+confirming a copy to the clipboard, reopening landed work, cleaning up after
+it, or a count of what is pending. Each is left out because the flow does not
+need it to be drawn. D-49 still holds for everything else.
+
+**Nowhere in the mock**, which is the assumption.

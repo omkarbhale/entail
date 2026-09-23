@@ -14,7 +14,8 @@ here runs a stage, derives an artifact or evaluates anything.
   API contract.
 - [`ui/`](ui/) is the React and TypeScript board. It holds no state of its
   own: everything on the board arrives from the mock server. Only the text
-  around the board (banner, legend, inspector) is the UI's own (D-41).
+  around the board (banner, legend, inspector, agent stand-in) is the UI's
+  own (D-41).
 
 TypeScript was chosen for these two packages only. It says nothing about
 where Entail's orchestrator runs or what it is written in (DECISIONS.md D-33
@@ -48,6 +49,22 @@ The server refuses to start if any citation in its provenance does not match
 the file it cites, or if any decision id it uses is missing from
 DECISIONS.md.
 
+## What you can do on it
+
+- **Describe a task or feature** in the box at the top, and it enters the
+  pipeline at the first stage (D-58).
+- **Send an item to the next stage** when it is waiting at a completed stage.
+  Advancing is imagined to spawn an agent in a tmux pane; the board shows the
+  pane's name and nothing is spawned (D-51). At the last stage the same action
+  lands the item, and it moves to the *Landed* list with its pull request and
+  every answer it was given (D-60, D-61).
+- **Answer what an item raises** through an agent. An item that has something
+  to raise, or needs you, shows what it asks and a ready-made invocation of
+  the MCP Entail is imagined to expose (D-52, D-53). The board does not take
+  the answer. The dashed panel under the board is the mockup playing that
+  agent: it is the only way an answer enters, through one stand-in route
+  (D-55). No MCP exists and nothing can call one.
+
 ## Reading the board
 
 Pointing at anything on the board shows, in the inspector beside it, where
@@ -56,16 +73,19 @@ one question: why the value is what it is, why the field exists at all, and
 where the words used to show it came from.
 
 The palette is defined in [`ui/src/styles.css`](ui/src/styles.css). Only
-three marks appear on the board. A thing that answers several questions is
+four marks appear on the board. A thing that answers several questions is
 marked by the weakest answer among them, strongest first: recorded,
 interpreted, assumed, placeholder. So it shows as recorded only if every part
-of it is recorded. The one exception is a value you set yourself, which shows
-as set by you whatever its other parts say (DECISIONS.md D-50).
+of it is recorded. The exceptions are a value you set yourself, which shows
+as set by you, and one an agent composed and you agreed to, which shows as
+agreed by you, whatever their other parts say (DECISIONS.md D-50, D-56).
 
 - **Recorded**, green: stated in `VISION.md` or `unfiled/`. It is rare on
   purpose.
-- **Set by you**, blue: changed through one of the two actions since the
-  server started.
+- **Set by you**, blue: changed through one of the board's actions since the
+  server started, or an answer whose words you stated.
+- **Agreed by you**, violet, dashed: an answer an agent composed and you
+  agreed to. You did not state it, so it is never shown as set by you.
 - **Invented**, a quiet dotted underline: interpreted, assumed or
   placeholder. That is almost everything. The inspector says which of the
   three it is, and names the open question in DECISIONS.md where there is

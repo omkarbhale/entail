@@ -26,6 +26,12 @@ export const userInput = (action: string, note: string): Provenance => ({
   note,
 })
 
+export const agentComposed = (action: string, note: string): Provenance => ({
+  kind: 'agent-composed',
+  action,
+  note,
+})
+
 export const sourced = <T extends Payload>(value: T, provenance: Provenance): Sourced<T> => ({
   value,
   provenance,

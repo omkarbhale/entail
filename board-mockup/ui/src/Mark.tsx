@@ -1,6 +1,6 @@
 // One inspectable thing on the board, drawn by how loudly its provenance
-// should show: recorded loudly, set-by-you plainly, everything invented
-// quietly. Which kind a target shows as is decided in targets.ts (D-50).
+// should show: recorded loudly, set-by-you and agreed-by-you plainly and apart
+// from each other, everything invented quietly. Which kind a target shows as is decided in targets.ts (D-50).
 // Pointing at it or focusing it shows it in the inspector; clicking keeps it
 // there and, for a control, also acts.
 
@@ -18,9 +18,15 @@ export type Inspection = {
 
 export const InspectionContext = createContext<Inspection | undefined>(undefined)
 
-/** The palette has three marks, not five: see styles.css. */
-export const markOf = (kind: ProvenanceKind): 'recorded' | 'user' | 'invented' =>
-  kind === 'recorded' ? 'recorded' : kind === 'user-input' ? 'user' : 'invented'
+/** The palette has four marks, not six: see styles.css. */
+export const markOf = (kind: ProvenanceKind): 'recorded' | 'user' | 'agreed' | 'invented' =>
+  kind === 'recorded'
+    ? 'recorded'
+    : kind === 'user-input'
+      ? 'user'
+      : kind === 'agent-composed'
+        ? 'agreed'
+        : 'invented'
 
 type Props = {
   readonly k: string

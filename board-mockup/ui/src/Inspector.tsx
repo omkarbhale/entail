@@ -12,6 +12,7 @@ const KIND_NAMES: Record<Provenance['kind'], string> = {
   assumed: 'Assumed',
   placeholder: 'Placeholder',
   'user-input': 'Set by you',
+  'agent-composed': 'Agreed by you, composed by an agent',
 }
 
 type Props = {
@@ -74,6 +75,12 @@ function Explanation({ provenance: p, question }: { provenance: Provenance; ques
       return (
         <p>
           You did this ({p.action}). {p.note}
+        </p>
+      )
+    case 'agent-composed':
+      return (
+        <p>
+          An agent composed this and you agreed to it ({p.action}). {p.note}
         </p>
       )
   }

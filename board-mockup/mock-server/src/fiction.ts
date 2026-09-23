@@ -8,8 +8,11 @@
 
 import type {
   AdvanceMode,
+  Answer,
+  AnswerOrigin,
   Board,
   FieldCatalogue,
+  Handover,
   Item,
   Labels,
   ListOf,
@@ -20,15 +23,18 @@ import type {
 } from './contract.ts'
 import { assumed, interpreted, placeholder, recorded, sourced } from './mark.ts'
 import type { Citation, Provenance, Sourced } from './provenance.ts'
-import { advanceability } from './rules.ts'
+import { advanceability, agentPane } from './rules.ts'
 import {
   BOARD_IS_WANTED,
   BOARD_STATEMENT,
+  FLOW_ARRIVES,
   FLOW_DECISIONS,
   FLOW_RUNS,
   FLOW_UNTIL_PR,
   FLOW_USER_SAY,
   FLOW_VISION,
+  PROMOTION_ASKS_USER,
+  USER_GAVE_VS_LAYER_PRODUCED,
 } from './sources.ts'
 
 // ---- Stages ---------------------------------------------------------------
@@ -62,7 +68,22 @@ const STAGE_LIST = interpreted(
 const SAMPLE = placeholder('Sample value on a sample item. No such work exists and nothing is running it.')
 const ITEM_ID = placeholder('Identifier this mock uses to address actions. It carries no meaning.')
 const SAMPLE_ITEM = placeholder('Sample item. No such work exists and nothing is running it.')
-const NOT_STOPPED = placeholder('This sample item is moving, and a moving item has no stop.')
+const NOT_STOPPED = placeholder('This sample item is not stopped, so it has no stop.')
+const NOTHING_ASKED = placeholder('This stop is waiting to be sent on and asks nothing, so there is nothing to hand over.')
+const SAMPLE_ANSWER = placeholder('Sample answer on a sample item. Nobody gave it, and nothing was asked.')
+const SAMPLE_ANSWERS = placeholder('Sample answers on a sample item.')
+const NO_SAMPLE_PR = placeholder('This sample item has no pull request yet.')
+const IDLE = placeholder('This sample item is not moving, so no agent is imagined at work on it.')
+
+/** The imagined MCP tool (D-52). No such tool exists. */
+const TOOL = sourced('entail_resolve', assumed('D-52', 'Nothing records an MCP or its tools. The name is this mock’s.'))
+const PENDING_ID = assumed('D-53', 'Names the one thing to be resolved, so the agent need not reconstruct it. Its form is this mock’s.')
+const HANDOVER = assumed(
+  'D-53',
+  'What the board hands over is only what points at the thing: the task, where it stopped, and what it asks. The MCP is imagined to give the agent the rest.',
+)
+
+type SampleAnswer = { readonly asked: string; readonly answer: string; readonly origin: AnswerOrigin }
 
 type Seed = {
   readonly id: string
@@ -70,15 +91,45 @@ type Seed = {
   readonly stage: string
   readonly advanceMode: AdvanceMode
   readonly stop?: { readonly category: StopCategory; readonly detail: string }
+  readonly landed?: true
+  readonly answers?: readonly SampleAnswer[]
+  readonly pullRequest?: string
 }
 
+const STAGE_NAME = new Map(STAGES.map(({ value: s }) => [s.id.value, s.name.value]))
+
+const handover = (seed: Seed, detail: string): Sourced<Handover> => {
+  const pending = `${seed.id}/q1`
+  const text =
+    `Ask Entail’s MCP (${TOOL.value}) about ${pending} and do what it tells you. ` +
+    `Task: ${seed.id}, “${seed.title}”, stopped at ${STAGE_NAME.get(seed.stage) ?? seed.stage}. ` +
+    `It asks: ${detail}`
+  return sourced({ pending: sourced(pending, PENDING_ID), tool: TOOL, text: sourced(text, HANDOVER) }, HANDOVER)
+}
+
+const sampleAnswer = (seed: Seed, a: SampleAnswer, i: number): Sourced<Answer> =>
+  sourced(
+    {
+      pending: sourced(`${seed.id}/q${i + 1}`, SAMPLE_ANSWER),
+      asked: sourced(a.asked, SAMPLE_ANSWER),
+      answer: sourced(a.answer, SAMPLE_ANSWER),
+      origin: sourced(a.origin, SAMPLE_ANSWER),
+    },
+    SAMPLE_ANSWER,
+  )
+
 const item = (seed: Seed): Sourced<Item> => {
-  const motion: Motion = seed.stop === undefined ? 'moving' : 'stopped'
+  const motion: Motion = seed.landed ? 'landed' : seed.stop === undefined ? 'moving' : 'stopped'
   const stop: Sourced<Stop | null> =
     seed.stop === undefined
       ? sourced(null, NOT_STOPPED)
       : sourced(
-          { category: sourced(seed.stop.category, SAMPLE), detail: sourced(seed.stop.detail, SAMPLE) },
+          {
+            category: sourced(seed.stop.category, SAMPLE),
+            detail: sourced(seed.stop.detail, SAMPLE),
+            handover:
+              seed.stop.category === 'stage-complete' ? sourced(null, NOTHING_ASKED) : handover(seed, seed.stop.detail),
+          },
           SAMPLE,
         )
   const position = { stage: sourced(seed.stage, SAMPLE), motion: sourced(motion, SAMPLE), stop }
@@ -87,16 +138,19 @@ const item = (seed: Seed): Sourced<Item> => {
       id: sourced(seed.id, ITEM_ID),
       title: sourced(seed.title, SAMPLE),
       ...position,
+      agent: motion === 'moving' ? agentPane(seed.id, seed.stage) : sourced(null, IDLE),
       advanceMode: sourced(seed.advanceMode, SAMPLE),
       advanceable: advanceability(position, STAGE_IDS),
+      answers: sourced((seed.answers ?? []).map((a, i) => sampleAnswer(seed, a, i)), SAMPLE_ANSWERS),
+      pullRequest: seed.pullRequest === undefined ? sourced(null, NO_SAMPLE_PR) : sourced(seed.pullRequest, SAMPLE),
     },
     SAMPLE_ITEM,
   )
 }
 
 // One item per situation the board has to show: stopped for each of the three
-// assumed reasons, moving, and stopped at the last stage, where there is
-// nowhere recorded to advance to.
+// assumed reasons, moving, stopped at the last stage, where sending it on lands
+// it, and landed, with what it left behind.
 const ITEMS: ListOf<Item> = [
   item({
     id: 'item-1',
@@ -132,6 +186,27 @@ const ITEMS: ListOf<Item> = [
     stage: 'pull-request',
     advanceMode: 'stop-for-user',
     stop: { category: 'stage-complete', detail: 'The pull request is ready and waiting for you.' },
+    pullRequest: '#318',
+  }),
+  item({
+    id: 'item-6',
+    title: 'Paginate the audit log',
+    stage: 'pull-request',
+    advanceMode: 'stop-for-user',
+    landed: true,
+    pullRequest: '#301',
+    answers: [
+      {
+        asked: 'Nothing upstream settles whether the page size is fixed or chosen by the reader.',
+        answer: 'Fixed at 50. Readers do not choose.',
+        origin: 'stated-by-user',
+      },
+      {
+        asked: 'The decisions do not say whether older entries are paged by date or by count.',
+        answer: 'By count, so every page is the same length; dates are shown on each entry.',
+        origin: 'composed-by-agent',
+      },
+    ],
   }),
 ]
 
@@ -145,9 +220,9 @@ const ITEM_LIST = assumed(
 // A label built from the record's own words is interpreted, never recorded:
 // the words are recorded, their use as this label is not. The citation quotes
 // just those words, so integrity.ts checks they are really there.
-const RECORD_WORDS = (words: string): Provenance =>
+const RECORD_WORDS = (words: string, from: Citation = BOARD_STATEMENT): Provenance =>
   interpreted(
-    { ...BOARD_STATEMENT, quote: words },
+    { ...from, quote: words },
     'D-39',
     `The record says “${words}”. Using that as this label is this mock’s.`,
   )
@@ -172,6 +247,19 @@ const LABELS: Labels = {
   stopForUser: sourced('stop and wait for me', MOCK_WORDS),
   advance: sourced('Send to the next stage', RECORD_WORDS('sent to the next stage')),
   cannotAdvance: sourced('cannot be sent on now', MOCK_WORDS),
+  agent: sourced('agent at work in tmux pane', assumed('D-51', 'Advancing is imagined to spawn an agent in a tmux pane. Nothing records it; these words are this mock’s.')),
+  handover: sourced('Give this to an agent. Entail’s MCP tells it what to do:', assumed('D-52', 'Nothing records an MCP. These words are this mock’s.')),
+  copy: sourced('Copy', MOCK_WORDS),
+  answers: sourced('Answered', MOCK_WORDS),
+  statedByUser: sourced('you said this', RECORD_WORDS('what the user gave', USER_GAVE_VS_LAYER_PRODUCED)),
+  composedByAgent: sourced('an agent proposed this, and you agreed', assumed('D-56', 'Nothing records these words. They are this mock’s.')),
+  land: sourced('Land it', MOCK_WORDS),
+  landed: sourced('landed', MOCK_WORDS),
+  landedHeading: sourced('Landed', MOCK_WORDS),
+  pullRequest: sourced('Pull request', RECORD_WORDS('the final pull request', FLOW_UNTIL_PR)),
+  noAnswers: sourced('Nothing was asked of you.', MOCK_WORDS),
+  describe: sourced('Describe a task or feature', RECORD_WORDS('describes some task, feature', FLOW_ARRIVES)),
+  submit: sourced('Put it into the pipeline', RECORD_WORDS('That goes into a pipeline', FLOW_ARRIVES)),
 }
 
 const LABEL_SET = assumed('D-41', 'The board’s own words and glyphs are served, so each carries provenance like any other value.')
@@ -200,6 +288,14 @@ const STOP_REASONS: Provenance = interpreted(
   BOARD_STATEMENT,
   'D-17',
   'The record names two occasions to stop in one sentence. Treating them as two categories, adding a third for an item waiting to be sent on, and their names, are this mock’s.',
+)
+
+const HANDING_OVER = assumed('D-52', 'The board hands over what an agent needs to answer through Entail’s imagined MCP, and takes no answer itself.')
+const TWO_ORIGINS = assumed('D-56', 'An answer the user stated and one an agent composed and the user agreed to are shown in different words.')
+const TAKING_WORK = interpreted(
+  FLOW_ARRIVES,
+  'D-58',
+  'The record has somebody describe a task and it goes into the pipeline. One box on the board for that description, and nothing else asked, is this mock’s.',
 )
 
 export const FIELDS: FieldCatalogue = {
@@ -231,6 +327,19 @@ export const FIELDS: FieldCatalogue = {
     stopForUser: LABEL_FIELD,
     advance: LABEL_FIELD,
     cannotAdvance: LABEL_FIELD,
+    agent: assumed('D-51', 'Showing what advancing is imagined to start, beside a moving item, is this mock’s.'),
+    handover: HANDING_OVER,
+    copy: HANDING_OVER,
+    answers: assumed('D-57', 'Showing what an item was asked and answered, on the item, is this mock’s.'),
+    statedByUser: TWO_ORIGINS,
+    composedByAgent: TWO_ORIGINS,
+    land: assumed('D-60', 'That sending an item on from its last stage lands it, so the action needs other words there, is this mock’s.'),
+    landed: assumed('D-60', 'A third state for an item that has landed is this mock’s.'),
+    landedHeading: assumed('D-63', 'Listing landed items apart from those in flight is this mock’s.'),
+    pullRequest: assumed('D-61', 'Showing the pull request an item leaves behind is this mock’s.'),
+    noAnswers: assumed('D-61', 'Saying so when a landed item was never asked anything is this mock’s.'),
+    describe: TAKING_WORK,
+    submit: TAKING_WORK,
   },
   stage: {
     id: STAGE_KEY,
@@ -252,10 +361,41 @@ export const FIELDS: FieldCatalogue = {
       'The record says items can be sent on or sent automatically. That the choice is set per item, and its two values, are this mock’s.',
     ),
     advanceable: assumed('D-24', 'Nothing records when an item may be advanced. This field carries the mock’s rule so the UI holds none.'),
+    agent: assumed('D-51', 'Advancing is imagined to spawn an agent in a tmux pane. Showing which pane, and only while the item moves, is this mock’s.'),
+    answers: interpreted(
+      USER_GAVE_VS_LAYER_PRODUCED,
+      'D-56',
+      'The captain raised separating what the user gave from what a layer produced, and did not rule on it. Keeping every answer on its item with who its words came from is this mock’s.',
+    ),
+    pullRequest: interpreted(
+      FLOW_UNTIL_PR,
+      'D-61',
+      'The record ends the flow at the final pull request. Carrying it on the item, and keeping it once the item lands, are this mock’s.',
+    ),
   },
   stop: {
     category: STOP_REASONS,
     detail: assumed('D-19', 'A single sentence as the whole of what a stop tells the user is this mock’s.'),
+    handover: interpreted(
+      PROMOTION_ASKS_USER,
+      'D-52',
+      'The record has the orchestrator ask the user what to do. That the board answers that by handing over an invocation of an MCP Entail exposes, for the user to give an agent, is this mock’s.',
+    ),
+  },
+  handover: {
+    pending: PENDING_ID,
+    tool: assumed('D-52', 'Nothing records an MCP. Naming the tool the invocation calls is this mock’s.'),
+    text: HANDOVER,
+  },
+  answer: {
+    pending: assumed('D-55', 'An answer names what it answers, so it can be refused if that is not what the item waits on.'),
+    asked: assumed('D-57', 'Keeping what was asked beside the answer, as it was asked, is this mock’s.'),
+    answer: assumed('D-55', 'The answer’s words, as the agent passed them to the imagined MCP.'),
+    origin: interpreted(
+      USER_GAVE_VS_LAYER_PRODUCED,
+      'D-56',
+      'The captain raised separating what the user gave from what was produced for them. Telling an answer the user stated from one an agent composed and the user agreed to is this mock’s reading of that.',
+    ),
   },
   refusal: {
     reason: assumed('D-24', 'That an action can be refused, and says why in a sentence, follows from this mock’s advance rule.'),

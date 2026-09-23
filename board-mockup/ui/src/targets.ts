@@ -5,12 +5,14 @@
 // A target has several parts because one thing on screen can answer several
 // "where did this come from" questions at once: the value, why its field
 // exists, and the words used to show it. A target is marked set-by-you when
-// its value was set by the user; otherwise it takes the weakest provenance
-// among its parts, so it can show as recorded only if every part is recorded
-// (DECISIONS.md D-50).
+// its value was set by the user, and agreed-by-you when its value was composed
+// by an agent and agreed to; otherwise it takes the weakest provenance among
+// its parts, so it can show as recorded only if every part is recorded
+// (DECISIONS.md D-50, D-56).
 
 import type {
   AdvanceMode,
+  AnswerOrigin,
   Board,
   Catalogue,
   Item,
@@ -41,7 +43,7 @@ export type Target = {
 export type Targets = ReadonlyMap<string, Target>
 
 export const motionWord = (labels: Labels, motion: Motion): Sourced<string> =>
-  motion === 'moving' ? labels.moving : labels.stopped
+  motion === 'moving' ? labels.moving : motion === 'stopped' ? labels.stopped : labels.landed
 
 export const stopWord = (labels: Labels, category: StopCategory): Sourced<string> =>
   category === 'stage-complete'
@@ -53,13 +55,18 @@ export const stopWord = (labels: Labels, category: StopCategory): Sourced<string
 export const modeWord = (labels: Labels, mode: AdvanceMode): Sourced<string> =>
   mode === 'automatic' ? labels.automatic : labels.stopForUser
 
-/** Strongest first. user-input is not on it; see kindOf. */
+export const originWord = (labels: Labels, origin: AnswerOrigin): Sourced<string> =>
+  origin === 'stated-by-user' ? labels.statedByUser : labels.composedByAgent
+
+/** Strongest first. user-input and agent-composed are not on it; see kindOf. */
 const LADDER: readonly ProvenanceKind[] = ['recorded', 'interpreted', 'assumed', 'placeholder']
 
-function kindOf(parts: readonly Part[]): ProvenanceKind {
-  if (parts.some((p) => p.isValue && p.provenance.kind === 'user-input')) return 'user-input'
+function kindOf(parts: readonly [Part, ...Part[]]): ProvenanceKind {
+  for (const offLadder of ['user-input', 'agent-composed'] as const) {
+    if (parts.some((p) => p.isValue && p.provenance.kind === offLadder)) return offLadder
+  }
   const ranks = parts.map((p) => LADDER.indexOf(p.provenance.kind)).filter((rank) => rank >= 0)
-  return ranks.length === 0 ? 'user-input' : LADDER[Math.max(...ranks)]!
+  return ranks.length === 0 ? parts[0].provenance.kind : LADDER[Math.max(...ranks)]!
 }
 
 export const ADVANCE_MODES: readonly AdvanceMode[] = ['automatic', 'stop-for-user']
@@ -106,6 +113,13 @@ export function buildTargets({ value: board, provenance: boardProvenance }: Sour
     )
   }
 
+  const labelOf = (key: string, name: string, label: Sourced<string>, why: Provenance): void =>
+    add(key, name, label, { heading: 'Why the board shows this', provenance: why }, words(label))
+  labelOf('describe', 'Starting work', labels.describe, fields.labels.describe)
+  labelOf('submit', 'Starting work', labels.submit, fields.labels.submit)
+  labelOf('landed-heading', 'Landed work', labels.landedHeading, fields.labels.landedHeading)
+
+  const lastStage = board.stages.value.at(-1)?.value.id.value
   const stageName = new Map(board.stages.value.map(({ value: s }) => [s.id.value, s.name]))
   for (const { value: item, provenance: itemProvenance } of board.items.value) {
     const id = item.id.value
@@ -174,7 +188,77 @@ export function buildTargets({ value: board, provenance: boardProvenance }: Sour
         add(`${id}:mode:${mode}`, `Other setting ${of}`, word, { heading: 'The words of this option', provenance: word.provenance }, field)
       }
     }
-    const action = item.advanceable.value ? labels.advance : labels.cannotAdvance
+    if (item.agent.value !== null) {
+      labelOf(`${id}:label:agent`, `What advancing started, ${of}`, labels.agent, fields.labels.agent)
+      add(
+        `${id}:agent`,
+        `The agent’s pane, ${of}`,
+        item.agent.value,
+        value(item.agent.provenance),
+        { heading: 'Why a moving item shows a pane', provenance: fields.item.agent },
+      )
+    }
+    const handover = stop?.handover.value
+    if (stop !== null && stop !== undefined && handover !== null && handover !== undefined) {
+      labelOf(`${id}:label:handover`, `Answering what it asks, ${of}`, labels.handover, fields.labels.handover)
+      add(
+        `${id}:handover`,
+        `What the board hands over, ${of}`,
+        handover.text,
+        value(handover.text.provenance, 'These words'),
+        { heading: 'Why a stop hands something over', provenance: fields.stop.handover },
+        { heading: 'The tool it names', provenance: handover.tool.provenance },
+        { heading: 'What names the thing to resolve', provenance: handover.pending.provenance },
+        { heading: 'This stop', provenance: stop.handover.provenance },
+      )
+      labelOf(`${id}:copy`, `Copying what the board hands over, ${of}`, labels.copy, fields.labels.copy)
+    }
+    if (item.answers.value.length > 0) {
+      labelOf(`${id}:label:answers`, `What it asked and was answered, ${of}`, labels.answers, fields.labels.answers)
+    } else if (item.motion.value === 'landed') {
+      labelOf(`${id}:no-answers`, `What it asked and was answered, ${of}`, labels.noAnswers, fields.labels.noAnswers)
+    }
+    item.answers.value.forEach(({ value: answer, provenance: answerProvenance }, i) => {
+      const key = `${id}:answer:${i}`
+      add(
+        `${key}:asked`,
+        `What it asked, ${of}`,
+        answer.asked,
+        value(answer.asked.provenance),
+        { heading: 'Why an answer keeps what was asked', provenance: fields.answer.asked },
+      )
+      add(
+        key,
+        `An answer, ${of}`,
+        answer.answer,
+        value(answer.answer.provenance, 'These words'),
+        { heading: 'Why items keep their answers', provenance: fields.item.answers },
+        { heading: 'What it answers', provenance: answer.pending.provenance },
+        { heading: 'All of this item’s answers', provenance: item.answers.provenance },
+      )
+      const word = originWord(labels, answer.origin.value)
+      add(
+        `${key}:origin`,
+        `Who the words came from, ${of}`,
+        word,
+        value(answer.origin.provenance),
+        { heading: 'Why an answer says who its words came from', provenance: fields.answer.origin },
+        { heading: 'This answer', provenance: answerProvenance },
+        words(word),
+      )
+    })
+    if (item.pullRequest.value !== null) {
+      labelOf(`${id}:label:pullRequest`, `What it leaves behind, ${of}`, labels.pullRequest, fields.labels.pullRequest)
+      add(
+        `${id}:pullRequest`,
+        `Pull request ${of}`,
+        item.pullRequest.value,
+        value(item.pullRequest.provenance),
+        { heading: 'Why items carry a pull request', provenance: fields.item.pullRequest },
+      )
+    }
+    const landing = item.stage.value === lastStage
+    const action = item.advanceable.value ? (landing ? labels.land : labels.advance) : labels.cannotAdvance
     add(
       `${id}:advance`,
       `Sending on ${of}`,
@@ -182,6 +266,9 @@ export function buildTargets({ value: board, provenance: boardProvenance }: Sour
       value(item.advanceable.provenance, item.advanceable.value ? 'Why it can be sent on now' : 'Why it cannot be sent on now'),
       { heading: 'Why the board knows this', provenance: fields.item.advanceable },
       words(action),
+      ...(landing && item.advanceable.value
+        ? [{ heading: 'Why sending it on here lands it', provenance: fields.labels.land }]
+        : []),
     )
   }
   return targets
