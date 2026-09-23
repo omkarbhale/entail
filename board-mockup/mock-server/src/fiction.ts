@@ -12,7 +12,6 @@ import type {
   AnswerOrigin,
   Board,
   FieldCatalogue,
-  Handover,
   Item,
   Labels,
   ListOf,
@@ -23,7 +22,7 @@ import type {
 } from './contract.ts'
 import { assumed, interpreted, placeholder, recorded, sourced } from './mark.ts'
 import type { Citation, Provenance, Sourced } from './provenance.ts'
-import { advanceability, agentPane } from './rules.ts'
+import { advanceability, agentPane, handover, HANDOVER, PENDING_ID } from './rules.ts'
 import {
   BOARD_IS_WANTED,
   BOARD_STATEMENT,
@@ -75,13 +74,6 @@ const SAMPLE_ANSWERS = placeholder('Sample answers on a sample item.')
 const NO_SAMPLE_PR = placeholder('This sample item has no pull request yet.')
 const IDLE = placeholder('This sample item is not moving, so no agent is imagined at work on it.')
 
-/** The imagined MCP tool (D-52). No such tool exists. */
-const TOOL = sourced('entail_resolve', assumed('D-52', 'Nothing records an MCP or its tools. The name is this mock’s.'))
-const PENDING_ID = assumed('D-53', 'Names the one thing to be resolved, so the agent need not reconstruct it. Its form is this mock’s.')
-const HANDOVER = assumed(
-  'D-53',
-  'What the board hands over is only what points at the thing: the task, where it stopped, and what it asks. The MCP is imagined to give the agent the rest.',
-)
 
 type SampleAnswer = { readonly asked: string; readonly answer: string; readonly origin: AnswerOrigin }
 
@@ -98,14 +90,8 @@ type Seed = {
 
 const STAGE_NAME = new Map(STAGES.map(({ value: s }) => [s.id.value, s.name.value]))
 
-const handover = (seed: Seed, detail: string): Sourced<Handover> => {
-  const pending = `${seed.id}/q1`
-  const text =
-    `Ask Entail’s MCP (${TOOL.value}) about ${pending} and do what it tells you. ` +
-    `Task: ${seed.id}, “${seed.title}”, stopped at ${STAGE_NAME.get(seed.stage) ?? seed.stage}. ` +
-    `It asks: ${detail}`
-  return sourced({ pending: sourced(pending, PENDING_ID), tool: TOOL, text: sourced(text, HANDOVER) }, HANDOVER)
-}
+/** A stage's short name, for what the board hands over. */
+export const stageName = (id: string): string => STAGE_NAME.get(id) ?? id
 
 const sampleAnswer = (seed: Seed, a: SampleAnswer, i: number): Sourced<Answer> =>
   sourced(
@@ -128,7 +114,9 @@ const item = (seed: Seed): Sourced<Item> => {
             category: sourced(seed.stop.category, SAMPLE),
             detail: sourced(seed.stop.detail, SAMPLE),
             handover:
-              seed.stop.category === 'stage-complete' ? sourced(null, NOTHING_ASKED) : handover(seed, seed.stop.detail),
+              seed.stop.category === 'stage-complete'
+                ? sourced(null, NOTHING_ASKED)
+                : handover(seed.id, seed.title, stageName(seed.stage), (seed.answers?.length ?? 0) + 1, seed.stop.detail),
           },
           SAMPLE,
         )

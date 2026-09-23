@@ -14,8 +14,8 @@ here runs a stage, derives an artifact or evaluates anything.
   API contract.
 - [`ui/`](ui/) is the React and TypeScript board. It holds no state of its
   own: everything on the board arrives from the mock server. Only the text
-  around the board (banner, legend, inspector, agent stand-in) is the UI's
-  own (D-41).
+  around the board (banner, legend, inspector and the two stand-ins) is the
+  UI's own (D-41).
 
 TypeScript was chosen for these two packages only. It says nothing about
 where Entail's orchestrator runs or what it is written in (DECISIONS.md D-33
@@ -61,9 +61,15 @@ DECISIONS.md.
 - **Answer what an item raises** through an agent. An item that has something
   to raise, or needs you, shows what it asks and a ready-made invocation of
   the MCP Entail is imagined to expose (D-52, D-53). The board does not take
-  the answer. The dashed panel under the board is the mockup playing that
+  the answer. The second dashed panel under the board is the mockup playing that
   agent: it is the only way an answer enters, through one stand-in route
   (D-55). No MCP exists and nothing can call one.
+- **Play a stage finishing**, in the first dashed panel under the board.
+  Nothing in the mock runs a stage, so a moving item stays moving until this
+  panel, which is the mockup's frame and not the board, ends its stage: either
+  done and waiting to be sent on, or stopped with something to raise or
+  needing you, asking what you type. That is how work you describe gets
+  through every stage to landing. What really ends a stage is open (D-65).
 
 ## Reading the board
 

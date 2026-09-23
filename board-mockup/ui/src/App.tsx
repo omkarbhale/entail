@@ -1,4 +1,4 @@
-// The mockup's frame: banner, legend, inspector, the agent stand-in and errors. This text
+// The mockup's frame: banner, legend, inspector, the stand-ins and errors. This text
 // describes the mockup and is not served; everything that depicts the board is
 // (DECISIONS.md D-41). The frame is drawn apart from the board so the two
 // cannot be confused.
@@ -9,6 +9,7 @@ import { AgentStandIn } from './AgentStandIn.tsx'
 import * as api from './api.ts'
 import { BoardView } from './BoardView.tsx'
 import { Inspector } from './Inspector.tsx'
+import { StageEndingStandIn } from './StageEndingStandIn.tsx'
 import { InspectionContext, type Inspection } from './Mark.tsx'
 import { buildTargets } from './targets.ts'
 
@@ -64,8 +65,9 @@ export function App() {
       <header className="frame">
         <p className="banner">
           <strong>Mockup of Entail’s board.</strong> Everything inside the board below comes from the mock server, and
-          almost all of it is invented. Nothing runs here: a moving item stays moving, and no agent, tmux pane or MCP
-          exists. The panel under the board plays the agent, so an answer can be seen arriving. Every question this drawing had
+          almost all of it is invented. Nothing runs here: a moving item stays moving until the first panel under the
+          board plays its stage finishing (D-65), and no agent, tmux pane or MCP exists. The second panel plays the
+          agent, so an answer can be seen arriving. Every question this drawing had
           to answer is listed, unanswered, in <code>board-mockup/DECISIONS.md</code>.
         </p>
         <ul className="legend" aria-label="Legend">
@@ -111,6 +113,11 @@ export function App() {
                 onDescribe={(description) => act(() => api.describeWork(description))}
                 onAdvance={(id) => void act(() => api.advance(id))}
                 onSetMode={(id: string, mode: AdvanceMode) => void act(() => api.setAdvanceMode(id, mode))}
+              />
+              <StageEndingStandIn
+                board={loaded.board}
+                busy={busy}
+                onEndStage={(ending) => act(() => api.endStageAsStandIn(ending))}
               />
               <AgentStandIn
                 board={loaded.board}

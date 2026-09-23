@@ -187,6 +187,90 @@ describe('HTTP', () => {
     assert.equal((await call('POST', '/api/resolutions', { ...wrong, origin: 'someone' }))[0], 400)
   })
 
+  it('refuses to set the advance mode of a landed item', async () => {
+    const before = await itemOf('item-6')
+    const [status, refusal] = await call<Sourced<Refusal>>('PUT', '/api/items/item-6/advance-mode', { mode: 'automatic' })
+    assert.equal(status, 409)
+    assert.equal(refusal.value.reason.provenance.kind, 'assumed')
+    assert.equal(refusal.value.reason.provenance.kind === 'assumed' && refusal.value.reason.provenance.decision, 'D-60')
+    assert.deepEqual(await itemOf('item-6'), before)
+  })
+
+  it('takes described work through a raised stop, an answer and every stage to landing, with the frame playing each stage ending', async () => {
+    const [, created] = await call<Sourced<Item>>('POST', '/api/items', { description: 'Archive old projects' })
+    const id = created.value.id.value
+    const endStage = (body: object) => call<Sourced<Item>>('POST', '/api/stage-endings', { item: id, ...body })
+
+    const [raisedStatus, raised] = await endStage({ category: 'has-something-to-raise', asks: 'Archive after how long?' })
+    assert.equal(raisedStatus, 200)
+    assert.equal(raised.value.motion.value, 'stopped')
+    assert.equal(raised.value.agent.value, null)
+    assert.equal(raised.value.advanceable.value, false)
+    assert.equal(raised.value.stop.value?.detail.value, 'Archive after how long?')
+    assert.equal(raised.value.stop.value?.detail.provenance.kind, 'assumed')
+    assert.equal(raised.value.motion.provenance.kind === 'assumed' && raised.value.motion.provenance.decision, 'D-65')
+    const handover = raised.value.stop.value?.handover.value
+    assert.ok(handover)
+    assert.equal(handover.pending.value, `${id}/q1`)
+    assert.equal(handover.tool.value, 'entail_resolve')
+    assert.equal(
+      handover.text.value,
+      `Ask Entail’s MCP (entail_resolve) about ${id}/q1 and do what it tells you. ` +
+        `Task: ${id}, “Archive old projects”, stopped at Vision. It asks: Archive after how long?`,
+    )
+    assert.equal((await call('POST', `/api/items/${id}/advance`))[0], 409)
+
+    const answer = { item: id, pending: `${id}/q1`, answer: 'A year.', origin: 'stated-by-user' }
+    const [answeredStatus, answered] = await call<Sourced<Item>>('POST', '/api/resolutions', answer)
+    assert.equal(answeredStatus, 200)
+    assert.equal(answered.value.motion.value, 'moving')
+
+    const [, needs] = await endStage({ category: 'needs-user', asks: 'Which projects count as old?' })
+    assert.equal(needs.value.stop.value?.handover.value?.pending.value, `${id}/q2`)
+    await call('POST', '/api/resolutions', { ...answer, pending: `${id}/q2`, answer: 'Untouched for a year.' })
+
+    for (const next of ['decisions', 'architecture', 'development', 'testing', 'pull-request']) {
+      const [, done] = await endStage({ category: 'stage-complete' })
+      assert.equal(done.value.stop.value?.category.value, 'stage-complete')
+      assert.equal(done.value.stop.value?.handover.value, null)
+      assert.equal(done.value.pullRequest.value, null)
+      assert.equal(done.value.advanceable.value, true)
+      const [status, advanced] = await call<Sourced<Item>>('POST', `/api/items/${id}/advance`)
+      assert.equal(status, 200)
+      assert.equal(advanced.value.stage.value, next)
+      assert.equal(advanced.value.motion.value, 'moving')
+    }
+
+    const [, last] = await endStage({ category: 'stage-complete' })
+    assert.equal(last.value.pullRequest.value, `#pr-${id}`)
+    assert.equal(last.value.pullRequest.provenance.kind, 'assumed')
+    const [landStatus, landed] = await call<Sourced<Item>>('POST', `/api/items/${id}/advance`)
+    assert.equal(landStatus, 200)
+    assert.equal(landed.value.motion.value, 'landed')
+    assert.equal(landed.value.pullRequest.value, `#pr-${id}`)
+    assert.deepEqual(
+      landed.value.answers.value.map((a) => a.value.answer.value),
+      ['A year.', 'Untouched for a year.'],
+    )
+  })
+
+  it('refuses to play a stage ending for an item that is not moving, or a malformed one', async () => {
+    const [, created] = await call<Sourced<Item>>('POST', '/api/items', { description: 'Stop once' })
+    const stopped = created.value.id.value
+    assert.equal((await call('POST', '/api/stage-endings', { item: stopped, category: 'stage-complete' }))[0], 200)
+    for (const id of [stopped, 'item-6']) {
+      const [status, refusal] = await call<Sourced<Refusal>>('POST', '/api/stage-endings', { item: id, category: 'needs-user', asks: 'x' })
+      assert.equal(status, 409)
+      assert.equal(refusal.value.reason.provenance.kind === 'assumed' && refusal.value.reason.provenance.decision, 'D-65')
+    }
+    assert.equal((await itemOf(stopped)).stop.value?.category.value, 'stage-complete')
+    assert.equal((await itemOf('item-6')).motion.value, 'landed')
+    assert.equal((await call('POST', '/api/stage-endings', { item: 'nope', category: 'stage-complete' }))[0], 404)
+    assert.equal((await call('POST', '/api/stage-endings', { item: 'item-4', category: 'needs-user' }))[0], 400)
+    assert.equal((await call('POST', '/api/stage-endings', { item: 'item-4', category: 'done' }))[0], 400)
+    assert.equal((await itemOf('item-4')).motion.value, 'moving')
+  })
+
   it('refuses a malformed mode, an unknown item and an unknown route', async () => {
     assert.equal((await call('PUT', '/api/items/item-4/advance-mode', { mode: 'sometimes' }))[0], 400)
     assert.equal((await call('POST', '/api/items/nope/advance'))[0], 404)

@@ -318,7 +318,7 @@ td.stop .handover {
   border-bottom: 1px solid var(--rule);
 }
 
-/* ---- The agent stand-in: frame, not board ---- */
+/* ---- The stand-ins: frame, not board ---- */
 
 .column {
   display: grid;

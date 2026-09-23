@@ -195,16 +195,22 @@ export type Catalogue = {
  * POST /api/items                        -> 201 Sourced<Item> | 400 Sourced<Refusal>
  *        body: CreateItemRequest
  * POST /api/items/:id/advance            -> 200 Sourced<Item> | 404/409 Sourced<Refusal>
- * PUT  /api/items/:id/advance-mode       -> 200 Sourced<Item> | 400/404 Sourced<Refusal>
+ * PUT  /api/items/:id/advance-mode       -> 200 Sourced<Item> | 400/404/409 Sourced<Refusal>
  *        body: SetAdvanceModeRequest
  * POST /api/resolutions                  -> 200 Sourced<Item> | 400/404/409 Sourced<Refusal>
  *        body: ResolveRequest
+ * POST /api/stage-endings                -> 200 Sourced<Item> | 400/404/409 Sourced<Refusal>
+ *        body: StageEndingRequest
  *
  * Any other path -> 404 Sourced<Refusal>.
  *
  * /api/resolutions stands in for the one write the imagined MCP tool would
  * make, and is the only way an answer enters (D-55). The board never calls
  * it; only the mockup's frame does, playing the agent.
+ *
+ * /api/stage-endings stands in for whatever ends a moving item's stage, which
+ * does not exist (D-65). The board never calls it either; only the mockup's
+ * frame does, playing a stage finishing.
  */
 export type CreateItemRequest = {
   /** The task or feature, in the user's own words. */
@@ -222,6 +228,16 @@ export type ResolveRequest = {
   readonly answer: string
   readonly origin: AnswerOrigin
 }
+
+/** How the frame's stand-in plays a moving item's stage ending (D-65). */
+export type StageEndingRequest =
+  | { readonly item: string; readonly category: 'stage-complete' }
+  | {
+      readonly item: string
+      readonly category: Exclude<StopCategory, 'stage-complete'>
+      /** What the stage asks, as the stand-in typed it. */
+      readonly asks: string
+    }
 
 export type ApiResponseBody = Sourced<Board> | Sourced<Item> | Sourced<Refusal> | Catalogue
 

@@ -1,6 +1,6 @@
 // The mock's assumed behaviour: when an item may be advanced, what advancing,
-// landing, setting the advance mode, describing new work and answering what an
-// item asked do to it. None of this is recorded; each rule is a stand-in
+// landing, setting the advance mode, describing new work, answering what an
+// item asked and the frame's stand-in for a stage finishing do to it. None of this is recorded; each rule is a stand-in
 // answer to an open question in ../DECISIONS.md, and the provenance it stamps
 // on the values it produces says which.
 //
@@ -8,7 +8,17 @@
 // on its own. An item only changes when someone calls one of the actions. Where
 // a value depicts an agent in a tmux pane, that pane is a name and nothing more.
 
-import type { AdvanceMode, Answer, AnswerOrigin, Item, Refusal, ResolveRequest } from './contract.ts'
+import type {
+  AdvanceMode,
+  Answer,
+  AnswerOrigin,
+  Handover,
+  Item,
+  Refusal,
+  ResolveRequest,
+  StageEndingRequest,
+  Stop,
+} from './contract.ts'
 import { agentComposed, assumed, placeholder, sourced, userInput } from './mark.ts'
 import type { Provenance, Sourced } from './provenance.ts'
 
@@ -34,7 +44,7 @@ const ADVANCEABLE = {
 
 const AFTER_ADVANCE_MOTION = assumed(
   'D-26',
-  'After an advance this mock puts the item in motion in its new stage. Nothing runs in this mock, so it stays moving until the server restarts.',
+  'After an advance this mock puts the item in motion in its new stage. Nothing runs in this mock, so it stays moving until the mockup’s frame plays its stage finishing (D-65).',
 )
 
 const AFTER_ADVANCE_STOP = assumed('D-26', 'Cleared by the advance: a moving item has no stop.')
@@ -70,7 +80,7 @@ const DESCRIBED = userInput('describe', 'You described this. Your words are its 
 const NEW_STAGE = assumed('D-58', 'New work enters at the first stage of the assumed stage list.')
 const NEW_MOTION = assumed(
   'D-58',
-  'New work is put in motion at once. Nothing runs in this mock, so it stays moving until the server restarts.',
+  'New work is put in motion at once. Nothing runs in this mock, so it stays moving until the mockup’s frame plays its stage finishing (D-65).',
 )
 const NEW_STOP = assumed('D-58', 'New work is moving, and a moving item has no stop.')
 const NEW_MODE = assumed(
@@ -79,6 +89,16 @@ const NEW_MODE = assumed(
 )
 const NEW_ANSWERS = assumed('D-58', 'New work has asked nothing yet.')
 const NO_PULL_REQUEST = assumed('D-61', 'No pull request exists before the last stage.')
+
+// ---- Handing over what an item asks -----------------------------------------
+
+/** The imagined MCP tool (D-52). No such tool exists. */
+const TOOL = sourced('entail_resolve', assumed('D-52', 'Nothing records an MCP or its tools. The name is this mock’s.'))
+export const PENDING_ID = assumed('D-53', 'Names the one thing to be resolved, so the agent need not reconstruct it. Its form is this mock’s.')
+export const HANDOVER = assumed(
+  'D-53',
+  'What the board hands over is only what points at the thing: the task, where it stopped, and what it asks. The MCP is imagined to give the agent the rest.',
+)
 
 // ---- Answering what an item asked -------------------------------------------
 
@@ -111,6 +131,27 @@ const RESOLVE_REFUSED = {
   ),
 } as const
 
+// ---- A stage finishing, played by the mockup's frame ------------------------
+
+const STAGE_ENDING = 'The mockup’s frame played this stage finishing, standing in for machinery that does not exist. It is not a claim about how Entail completes work.'
+const ENDED_MOTION = assumed('D-65', STAGE_ENDING)
+const ENDED_AGENT = assumed('D-65', `${STAGE_ENDING} No agent is imagined at work on a stopped item.`)
+const ENDED_STOP = assumed('D-65', STAGE_ENDING)
+const ENDED_DONE = assumed(
+  'D-65',
+  `${STAGE_ENDING} This sentence is the mock’s. The stage is done and the item waits to be sent on, whatever its advance mode says.`,
+)
+const ENDED_NOTHING_ASKED = assumed('D-65', `${STAGE_ENDING} A stage that finished asks nothing, so nothing is handed over.`)
+const ENDED_ASKS = assumed(
+  'D-65',
+  `${STAGE_ENDING} Whoever played it typed what the stage asks. Nobody asked it, and it is not set by you.`,
+)
+const ENDED_PULL_REQUEST = assumed(
+  'D-65',
+  `${STAGE_ENDING} The last stage finishing leaves this placeholder pull request. None was opened.`,
+)
+const STAGE_ENDING_REFUSED = assumed('D-65', 'Refused: this item is not moving, so it has no stage running to finish.')
+
 export const PROTOCOL = placeholder(
   'Protocol message of this mock server. It carries no design meaning.',
 )
@@ -139,6 +180,17 @@ export const RULE_PROVENANCE: readonly Provenance[] = [
   AFTER_ANSWER_STOP,
   ANSWERS_KEPT,
   ...Object.values(RESOLVE_REFUSED),
+  TOOL.provenance,
+  PENDING_ID,
+  HANDOVER,
+  ENDED_MOTION,
+  ENDED_AGENT,
+  ENDED_STOP,
+  ENDED_DONE,
+  ENDED_NOTHING_ASKED,
+  ENDED_ASKS,
+  ENDED_PULL_REQUEST,
+  STAGE_ENDING_REFUSED,
   PROTOCOL,
 ]
 
@@ -193,8 +245,22 @@ export function advance(item: Item, stageIds: readonly string[]): Outcome {
   return { ok: true, item: { ...item, ...moved, advanceable: advanceability(moved, stageIds) } }
 }
 
-export function setAdvanceMode(item: Item, mode: AdvanceMode): Item {
-  return { ...item, advanceMode: sourced(mode, MODE_SET) }
+export function setAdvanceMode(item: Item, mode: AdvanceMode): Outcome {
+  if (item.motion.value === 'landed') return refused(ADVANCEABLE.landed)
+  return { ok: true, item: { ...item, advanceMode: sourced(mode, MODE_SET) } }
+}
+
+/**
+ * What the board hands over for the stop of item `id` that asks something
+ * (D-53). `n` counts what the item has been asked, this included.
+ */
+export function handover(id: string, title: string, stageName: string, n: number, asks: string): Sourced<Handover> {
+  const pending = `${id}/q${n}`
+  const text =
+    `Ask Entail’s MCP (${TOOL.value}) about ${pending} and do what it tells you. ` +
+    `Task: ${id}, “${title}”, stopped at ${stageName}. ` +
+    `It asks: ${asks}`
+  return sourced({ pending: sourced(pending, PENDING_ID), tool: TOOL, text: sourced(text, HANDOVER) }, HANDOVER)
 }
 
 /** New work, from the words the user described it in (D-58). */
@@ -253,6 +319,45 @@ export function resolve(item: Item, request: ResolveRequest, stageIds: readonly 
       agent: agentPane(item.id.value, item.stage.value),
       advanceable: advanceability({ ...item, ...resumed }, stageIds),
       answers: sourced([...item.answers.value, answer], ANSWERS_KEPT),
+    },
+  }
+}
+
+/**
+ * The frame's stand-in for a moving item's stage finishing (D-65): it stops,
+ * either done or asking what the request says. Decides and derives nothing;
+ * the board never calls it.
+ */
+export function endStage(
+  item: Item,
+  request: StageEndingRequest,
+  stageIds: readonly string[],
+  stageName: string,
+): Outcome {
+  if (item.motion.value !== 'moving') return refused(STAGE_ENDING_REFUSED)
+  const stop: Stop =
+    request.category === 'stage-complete'
+      ? {
+          category: sourced(request.category, ENDED_STOP),
+          detail: sourced('The stage is finished and waiting for you to send it on.', ENDED_DONE),
+          handover: sourced(null, ENDED_NOTHING_ASKED),
+        }
+      : {
+          category: sourced(request.category, ENDED_STOP),
+          detail: sourced(request.asks, ENDED_ASKS),
+          handover: handover(item.id.value, item.title.value, stageName, item.answers.value.length + 1, request.asks),
+        }
+  const stopped = { motion: sourced('stopped' as const, ENDED_MOTION), stop: sourced(stop, ENDED_STOP) }
+  const leavesPullRequest =
+    request.category === 'stage-complete' && isLast(item, stageIds) && item.pullRequest.value === null
+  return {
+    ok: true,
+    item: {
+      ...item,
+      ...stopped,
+      agent: sourced(null, ENDED_AGENT),
+      advanceable: advanceability({ ...item, ...stopped }, stageIds),
+      pullRequest: leavesPullRequest ? sourced(`#pr-${item.id.value}`, ENDED_PULL_REQUEST) : item.pullRequest,
     },
   }
 }

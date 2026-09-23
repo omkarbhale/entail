@@ -273,7 +273,8 @@ D-52.
 
 **Assumed to proceed (not an answer):** no. It shows no progress, no current
 run, no clarification retries between layers and no elapsed time. The mock
-also has nothing to show: nothing runs, so a moving item never changes.
+also has nothing to show: nothing runs, so a moving item changes only when
+the mockup's frame plays its stage finishing (D-65).
 
 **Bears on it:** design record, point 6 (retries between layers);
 [open questions B2](../unfiled/2026-09-20-open-questions.md#b2-the-loopback-retry-count).
@@ -334,8 +335,8 @@ about");
 ### D-26. What state is an item in right after it is advanced?
 
 **Assumed to proceed (not an answer):** moving, in its new stage, with no
-stop. Nothing runs in the mock, so it then stays moving until the server
-restarts.
+stop. Nothing runs in the mock, so it then stays moving until the mockup's
+frame plays its stage finishing (D-65).
 
 **Where the mock depends on it:** the advance action in
 `mock-server/src/rules.ts`.
@@ -696,8 +697,9 @@ mock's. Whether the handover is words for a person to paste, a structured
 call, a link or something else is open. So is whether an item can have more
 than one thing pending at once; in the mock it cannot.
 
-**Where the mock depends on it:** the `handover` record, built in
-`mock-server/src/fiction.ts`.
+**Where the mock depends on it:** the `handover` record, built by `handover`
+in `mock-server/src/rules.ts` for the sample items and for a stop the frame
+plays (D-65).
 
 ### D-54. Does exposing an MCP mean Entail's orchestrator is a long-running process?
 
@@ -788,7 +790,8 @@ title, trimmed and otherwise unchanged, which answers D-03 for new work only.
 A description is refused if it is empty or longer than 2000 characters, a
 limit that is the mock's. The new item starts at the first stage, already
 moving, with an agent imagined in a pane for that stage (D-51), nothing
-asked yet and no pull request.
+asked yet and no pull request. It stays moving until the mockup's frame plays
+its stage finishing (D-65).
 
 Nothing else is asked when work is created: no kind (D-02), no project
 (D-05), no choice of validations, no priority. The design record makes some
@@ -830,7 +833,8 @@ the question does not come up there (D-32).
 
 **Bears on it:** design record §1, "And so on, until the final pull request."
 
-**Where the mock depends on it:** the advance rule and the `landed` state in
+**Where the mock depends on it:** the advance rule, the refusal to set the
+advance mode of a landed item, and the `landed` state in
 `mock-server/src/rules.ts`, and the `land` and `landed` labels.
 
 ### D-61. What is left behind when an item lands?
@@ -884,3 +888,38 @@ it, or a count of what is pending. Each is left out because the flow does not
 need it to be drawn. D-49 still holds for everything else.
 
 **Nowhere in the mock**, which is the assumption.
+
+### D-65. What moves an item out of *moving*, and what says a stage is done?
+
+**Not assumed.** Nobody has answered it. Advancing is imagined to spawn an
+agent for the stage (D-51), but nothing records what ends a stage, what
+decides that it is done rather than stopped on something, or whether the
+stage's agent, Entail, or something else says so.
+
+**What the mock does instead, so the flow can be drawn:** nothing runs in the
+mock, so without help a moving item would stay moving, and work described on
+the board (D-58) or answered (D-57) could never land. The mockup's frame
+therefore has a second stand-in, drawn outside the board beside the agent
+stand-in (D-55), that plays a moving item's stage ending. It sends one call to
+`POST /api/stage-endings`, which stands in for machinery that does not exist,
+and offers only these endings:
+
+- the stage finishes: the item stops at a completed stage, waiting to be sent
+  on, whatever its advance mode says (D-30). At the last stage it is given a
+  placeholder pull request, so landing it leaves one behind (D-61);
+- the stage stops with something to raise, or because the user is needed:
+  the item stops asking what the person playing the stand-in typed, and the
+  board hands it over exactly as it does for the sample items (D-53), with the
+  pending id numbered after the answers the item already has. It is answered
+  the only way anything is, through the agent stand-in (D-55).
+
+The route refuses an item that is not moving. Every value it stamps is marked
+as the mock standing in, not as a claim about how Entail completes work; the
+words a stage asks are marked as invented, not as set by the user, because in
+Entail the user would not write them. The stand-in decides nothing, derives
+nothing, runs no agent, spawns no tmux pane and calls no MCP. The board never
+calls the route.
+
+**Where the mock depends on it:** `POST /api/stage-endings` in
+`mock-server/src/server.ts`, `endStage` in `mock-server/src/rules.ts`, and
+the panel in `ui/src/StageEndingStandIn.tsx`.

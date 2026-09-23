@@ -10,15 +10,18 @@ import type {
   Item,
   ListOf,
   ResolveRequest,
+  StageEndingRequest,
+  StopCategory,
 } from './contract.ts'
-import { board, FIELDS, STAGE_IDS } from './fiction.ts'
+import { board, FIELDS, STAGE_IDS, stageName } from './fiction.ts'
 import { sourced } from './mark.ts'
-import { advance, describe, PROTOCOL, refusal, resolve, setAdvanceMode, type Outcome } from './rules.ts'
+import { advance, describe, endStage, PROTOCOL, refusal, resolve, setAdvanceMode, type Outcome } from './rules.ts'
 import type { Sourced } from './provenance.ts'
 
 const ITEM_ROUTE = /^\/api\/items\/([^/]+)\/(advance|advance-mode)$/
 const ADVANCE_MODES: readonly AdvanceMode[] = ['automatic', 'stop-for-user']
 const ORIGINS: readonly AnswerOrigin[] = ['stated-by-user', 'composed-by-agent']
+const STOP_CATEGORIES: readonly StopCategory[] = ['stage-complete', 'has-something-to-raise', 'needs-user']
 /** Long enough for a paragraph; the limit is the mock's (D-58). */
 const MAX_TEXT = 2000
 
@@ -69,6 +72,19 @@ export function boardServer(initialItems: ListOf<Item>, catalogue: Omit<Catalogu
       return apply(current, resolve(current.value, request, STAGE_IDS))
     }
 
+    // Stands in for whatever ends a moving item's stage (D-65). The board never calls it.
+    if (req.method === 'POST' && path === '/api/stage-endings') {
+      const request = stageEndingRequest(await readJson(req))
+      if (request === undefined) {
+        return bad(
+          `Body must be {"item": "...", "category": ${STOP_CATEGORIES.map((c) => `"${c}"`).join(' | ')}}, with "asks": "..." unless the category is "stage-complete".`,
+        )
+      }
+      const current = find(request.item)
+      if (current === undefined) return missing(`No item "${request.item}".`)
+      return apply(current, endStage(current.value, request, STAGE_IDS, stageName(current.value.stage.value)))
+    }
+
     const match = ITEM_ROUTE.exec(path)
     const expected = match?.[2] === 'advance' ? 'POST' : 'PUT'
     if (match?.[1] === undefined || req.method !== expected) return missing(`No route for ${req.method} ${path}.`)
@@ -81,7 +97,7 @@ export function boardServer(initialItems: ListOf<Item>, catalogue: Omit<Catalogu
     const body = await readJson(req)
     const mode = ADVANCE_MODES.find((m) => field(body, 'mode') === m)
     if (mode === undefined) return bad(`Body must be {"mode": ${ADVANCE_MODES.map((m) => `"${m}"`).join(' | ')}}.`)
-    return apply(current, { ok: true, item: setAdvanceMode(current.value, mode) })
+    return apply(current, setAdvanceMode(current.value, mode))
   }
 
   return createServer((req, res) => {
@@ -122,6 +138,15 @@ function resolveRequest(body: unknown): ResolveRequest | undefined {
   const origin = ORIGINS.find((o) => field(body, 'origin') === o)
   if (item === undefined || pending === undefined || answer === undefined || origin === undefined) return undefined
   return { item, pending, answer, origin }
+}
+
+function stageEndingRequest(body: unknown): StageEndingRequest | undefined {
+  const item = text(body, 'item')
+  const category = STOP_CATEGORIES.find((c) => field(body, 'category') === c)
+  if (item === undefined || category === undefined) return undefined
+  if (category === 'stage-complete') return { item, category }
+  const asks = text(body, 'asks')
+  return asks === undefined ? undefined : { item, category, asks }
 }
 
 function send(res: ServerResponse, status: number, body: ApiResponseBody): void {

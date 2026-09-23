@@ -11,6 +11,7 @@ import type {
   ResolveRequest,
   SetAdvanceModeRequest,
   Sourced,
+  StageEndingRequest,
 } from '../../mock-server/src/contract.ts'
 
 export async function loadBoard(): Promise<{ board: Sourced<Board>; catalogue: Catalogue }> {
@@ -36,6 +37,13 @@ export const describeWork = (description: string): Promise<Sourced<Item>> =>
  */
 export const resolveAsAgent = (resolution: ResolveRequest): Promise<Sourced<Item>> =>
   request('POST', '/api/resolutions', resolution)
+
+/**
+ * Stands in for whatever ends a moving item's stage (DECISIONS.md D-65). Only
+ * the mockup's frame calls it, playing a stage finishing; the board never does.
+ */
+export const endStageAsStandIn = (ending: StageEndingRequest): Promise<Sourced<Item>> =>
+  request('POST', '/api/stage-endings', ending)
 
 /** Thrown when the mock server answers with a refusal; carries its served reason. */
 export class Refused extends Error {}
