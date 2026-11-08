@@ -4,6 +4,8 @@ import { Mirror } from "../src/mirror.ts";
 import { enrollmentSettings } from "../src/repo-settings.ts";
 import {
   CHECK_PATH,
+  criterionField,
+  ENROLL_ACTIONS,
   ENROLL_FIELDS,
   ENROLL_PATH,
   REPO_SETTINGS_PATH,
@@ -113,7 +115,7 @@ test("checking a repo shows the review screen with the preselected origin, merge
   assert.match(html, /<li>Shadow: off<\/li>/);
   assert.match(html, /<li>Who counts as an executor: anyone<\/li>/);
   assert.match(html, /<li>Pins: VISION\.md only, which is always pinned<\/li>/);
-  assert.match(html, /Generic criteria<\/h2>\n<p class="muted">None\. The list starts empty\./);
+  assert.match(html, /Generic criteria<\/h2>\n<p class="hint">Proposed from the repo's CI files and build scripts\./);
   assert.match(html, /Issues already open are not taken in/);
   assert.equal(inputValue(html, TOKEN_FIELD), served.server.info.token);
   assert.ok(inputValue(html, ENROLL_FIELDS.review), "the review is held for the confirmation");
@@ -312,4 +314,171 @@ test("the state rule puts the owner's pause before a vanished vision", () => {
   assert.equal(repoState(false, false, false), "no vision");
   assert.equal(repoState(true, true, false), "pausing");
   assert.equal(repoState(true, false, false), "paused");
+});
+
+/** The review's held id and every field of its form as shown, as a browser would post them unchanged. */
+function formOf(html: string): Record<string, string | string[]> {
+  const fields: Record<string, string | string[]> = {};
+  const add = (name: string, value: string) => {
+    const seen = fields[name];
+    fields[name] = seen === undefined ? value : Array.isArray(seen) ? [...seen, value] : [seen, value];
+  };
+  const form = html.slice(html.indexOf(`<form method="post" action="${ENROLL_PATH}">`));
+  for (const [tag] of form.matchAll(/<input [^>]*>/g)) {
+    const name = tag.match(/name="([^"]*)"/)?.[1];
+    if (name === undefined) continue;
+    const type = tag.match(/type="([^"]*)"/)?.[1];
+    if ((type === "radio" || type === "checkbox") && !/ checked/.test(tag)) continue;
+    add(name, unescape(tag.match(/value="([^"]*)"/)?.[1] ?? ""));
+  }
+  for (const [, name, options] of form.matchAll(/<select id="[^"]*" name="([^"]*)">([\s\S]*?)<\/select>/g)) {
+    add(name!, options!.match(/<option value="([^"]*)" selected>/)?.[1] ?? "");
+  }
+  return fields;
+}
+
+function unescape(value: string): string {
+  return value.replaceAll("&quot;", '"').replaceAll("&#39;", "'").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+}
+
+async function postReview(served: Served, fields: Record<string, string | string[]>) {
+  const { port, token } = served.server.info;
+  const body = new URLSearchParams();
+  for (const [name, value] of Object.entries({ ...fields, [TOKEN_FIELD]: token })) {
+    for (const one of Array.isArray(value) ? value : [value]) body.append(name, one);
+  }
+  return send(port, {
+    method: "POST",
+    path: ENROLL_PATH,
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Origin: `http://127.0.0.1:${port}` },
+    body: body.toString(),
+  });
+}
+
+function genericCriteriaOf(served: Served): unknown {
+  const [repo] = served.store.listRepos();
+  assert.ok(repo, "the repo is enrolled");
+  return (served.store.latestSettings(repo.id)?.settings as { genericCriteria: unknown }).genericCriteria;
+}
+
+test("the review shows each proposed generic criterion with its sentence, mechanical check and source file", async (t) => {
+  const served = await serveRepos(t);
+  const html = (await check(served, GITHUB)).body;
+  assert.match(html, /<legend>G1<\/legend>/);
+  assert.equal(inputValue(html, criterionField(0, "sentence")), "The check `test` passes.");
+  assert.match(html, new RegExp(`name="${criterionField(0, "check_kind")}">[\\s\\S]*?<option value="check_passes" selected>`));
+  assert.equal(inputValue(html, criterionField(0, "check_argument")), "test");
+  assert.match(html, /Mechanical check: the check <code>test<\/code> passes\./);
+  assert.match(html, /Inferred from <code>\.github\/workflows\/ci\.yml<\/code>\./);
+  assert.match(html, /<legend>G2<\/legend>/);
+  assert.equal(inputValue(html, criterionField(1, "sentence")), "The check `lint` passes.");
+  assert.match(html, /Mechanical check: the check <code>lint<\/code> passes\./);
+  assert.match(html, /<legend>New row<\/legend>/, "an empty row to add one");
+  assert.match(html, /Checks that reported on the default branch's recent commits: <code>lint<\/code>, <code>test<\/code>\./);
+  assert.doesNotMatch(html, /data-warning="unseen-check"/, "test reported, so no warning");
+});
+
+test("a proposed criterion naming a check that has not reported on recent default-branch commits is warned about", async (t) => {
+  const served = await serveRepos(t, {
+    proposals: [
+      {
+        output: {
+          criteria: [{ sentence: "The check `build` passes.", check: { kind: "check_passes", argument: "build" }, source_file: "Makefile" }],
+          reason: "r",
+        },
+      },
+    ],
+  });
+  const html = (await check(served, GITHUB)).body;
+  assert.match(html, /data-warning="unseen-check">The check <code>build<\/code> has not reported on the default branch's recent commits\./);
+  // Enrolling as shown keeps the row: the owner has seen its warning.
+  const enrolled = await postReview(served, { ...formOf(html), [ENROLL_FIELDS.visionOrigin]: "owner-stated" });
+  assert.equal(enrolled.status, 303);
+  assert.deepEqual(genericCriteriaOf(served), [
+    { id: "G1", sentence: "The check `build` passes.", check: { kind: "check_passes", argument: "build" }, source: "Makefile" },
+  ]);
+});
+
+test("rows can be edited, removed and added before enrolling", async (t) => {
+  const served = await serveRepos(t);
+  const fields = formOf((await check(served, GITHUB)).body);
+  fields[criterionField(0, "sentence")] = "The check `lint` passes.";
+  fields[criterionField(0, "check_argument")] = "lint";
+  fields[criterionField(1, "remove")] = "1";
+  fields[criterionField(2, "sentence")] = "The PR leaves VISION.md alone.";
+  fields[criterionField(2, "check_kind")] = "leaves_path";
+  fields[criterionField(2, "check_argument")] = "VISION.md";
+  const enrolled = await postReview(served, fields);
+  assert.equal(enrolled.status, 303);
+  assert.deepEqual(genericCriteriaOf(served), [
+    { id: "G1", sentence: "The check `lint` passes.", check: { kind: "check_passes", argument: "lint" }, source: ".github/workflows/ci.yml" },
+    { id: "G2", sentence: "The PR leaves VISION.md alone.", check: { kind: "leaves_path", argument: "VISION.md" }, source: null },
+  ]);
+});
+
+test("every row can be removed, and the empty list is accepted", async (t) => {
+  const served = await serveRepos(t);
+  const fields = formOf((await check(served, GITHUB)).body);
+  fields[criterionField(0, "remove")] = "1";
+  fields[criterionField(1, "remove")] = "1";
+  assert.equal((await postReview(served, fields)).status, 303);
+  assert.deepEqual(genericCriteriaOf(served), []);
+});
+
+test("adding a row shows the review again with the edits kept and one more empty row, and enrolls nothing", async (t) => {
+  const served = await serveRepos(t);
+  const fields = formOf((await check(served, GITHUB)).body);
+  fields[criterionField(1, "remove")] = "1";
+  fields[criterionField(2, "sentence")] = "The PR updates the changelog.";
+  fields[criterionField(2, "check_kind")] = "changes_path";
+  fields[criterionField(2, "check_argument")] = "CHANGELOG.md";
+  const added = await postReview(served, { ...fields, [ENROLL_FIELDS.action]: ENROLL_ACTIONS.addRow });
+  assert.equal(added.status, 200);
+  assert.deepEqual(served.store.listRepos(), []);
+  const html = added.body;
+  assert.equal(inputValue(html, criterionField(0, "sentence")), "The check `test` passes.");
+  assert.equal(inputValue(html, criterionField(1, "sentence")), "The PR updates the changelog.", "the removed row is gone");
+  assert.match(html, /<legend>G2<\/legend>/);
+  assert.match(html, /Added by you\./);
+  assert.equal(inputValue(html, ENROLL_FIELDS.criteriaCount), "3");
+  assert.equal(inputValue(html, criterionField(2, "sentence")), "", "one more empty row");
+  assert.equal((await postReview(served, formOf(html))).status, 303, "the review is still open");
+  assert.equal((genericCriteriaOf(served) as unknown[]).length, 2);
+});
+
+test("a check the owner names that has not reported is warned about before it is enrolled", async (t) => {
+  const served = await serveRepos(t);
+  const fields = formOf((await check(served, GITHUB)).body);
+  fields[criterionField(0, "check_argument")] = "tset";
+  const warned = await postReview(served, fields);
+  assert.equal(warned.status, 200, "shown again, not refused");
+  assert.match(warned.body, /enroll again to keep it/);
+  assert.match(warned.body, /The check <code>tset<\/code> has not reported on the default branch's recent commits\./);
+  assert.deepEqual(served.store.listRepos(), []);
+  assert.equal((await postReview(served, formOf(warned.body))).status, 303, "enrolling again keeps it");
+  assert.deepEqual((genericCriteriaOf(served) as { check: unknown }[])[0]!.check, { kind: "check_passes", argument: "tset" });
+});
+
+test("a row that cannot be kept shows the review again and enrolls nothing", async (t) => {
+  const served = await serveRepos(t);
+  const fields = formOf((await check(served, GITHUB)).body);
+  fields[criterionField(0, "sentence")] = "/close";
+  fields[criterionField(1, "check_kind")] = "changes_path";
+  fields[criterionField(1, "check_argument")] = "";
+  const refused = await postReview(served, fields);
+  assert.equal(refused.status, 400);
+  assert.match(refused.body, /Generic criterion G1: Its sentence cannot start with \//);
+  assert.match(refused.body, /Generic criterion G2: Its mechanical check needs a path glob\./);
+  assert.deepEqual(served.store.listRepos(), []);
+});
+
+test("a machine failure of the proposal is explained, leaves an empty list and does not block enrolling", async (t) => {
+  const served = await serveRepos(t, { proposals: [{ failure: { kind: "usage-limit", message: "the usage limit was reached" } }] });
+  const review = await check(served, GITHUB);
+  assert.equal(review.status, 200);
+  assert.match(review.body, /entail could not propose generic criteria: the usage limit was reached \(usage-limit\)\. The list starts empty/);
+  assert.doesNotMatch(review.body, /<legend>G1<\/legend>/);
+  assert.match(review.body, /<legend>New row<\/legend>/);
+  assert.equal((await postReview(served, formOf(review.body))).status, 303);
+  assert.deepEqual(genericCriteriaOf(served), []);
 });

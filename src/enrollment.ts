@@ -11,8 +11,20 @@ import {
   RateLimitedError,
 } from "./forge/forge.ts";
 import { TransportError } from "./forge/transport.ts";
+import {
+  ciFilesAndBuildScripts,
+  type GenericCriteriaProposal,
+  type GenericCriterionRow,
+  normalizeRow,
+  numberGenericCriteria,
+  proposeGenericCriteria,
+  RECENT_DEFAULT_BRANCH_COMMITS,
+  reportedCheckNames,
+  rowProblems,
+} from "./generic-criteria.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import { forgeRemote, Mirror, type MirrorRemote } from "./mirror.ts";
+import type { ModelRunner } from "./model-runner.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import { enrollmentSettings, preselectedMergeMethod } from "./repo-settings.ts";
 import type { EnrollmentRecord, RepoRecord, SettingsVersionRecord, Store, VisionOrigin } from "./store.ts";
@@ -66,6 +78,22 @@ export interface EnrollmentReview {
   preselectedMergeMethod: MergeMethod | null;
   /** Warnings that do not stop enrollment, such as a possible lack of permission to merge. */
   warnings: string[];
+  /** The generic criteria entail proposed, for the owner to edit, remove, add to or empty. */
+  genericCriteria: GenericCriteriaReview;
+}
+
+/** The generic criteria part of the review screen (spec §15 step 4). */
+export interface GenericCriteriaReview {
+  proposal: GenericCriteriaProposal;
+  /**
+   * The checks that reported on the default branch's recent commits, against
+   * which a row's named check is warned about; null when they could not be read.
+   */
+  seenChecks: string[] | null;
+  /** Why the recent checks could not be read, when they could not. */
+  seenChecksProblem: string | null;
+  /** The CI files and build scripts at the vision's commit that the run was pointed to. */
+  files: string[];
 }
 
 export type CheckResult = { ok: true; review: EnrollmentReview } | { ok: false; refusals: Refusal[] };
@@ -75,6 +103,8 @@ export interface EnrollmentChoices {
   visionOrigin: VisionOrigin;
   /** Required on GitHub, null on GitLab. */
   mergeMethod: MergeMethod | null;
+  /** The generic criteria rows the owner kept, edited or added, in order; none when omitted. */
+  genericCriteria?: GenericCriterionRow[];
 }
 
 export type ConfirmResult =
@@ -84,6 +114,8 @@ export type ConfirmResult =
 export interface EnrollerOptions {
   store: Store;
   dataDirectory: string;
+  /** Makes the generic criteria proposal run. */
+  runner: ModelRunner;
   log?: OperationalLog;
   /** The forge adapter for a forge setting; the owner's own CLI by default. */
   createForge?: (setting: ForgeSetting) => Forge;
@@ -103,6 +135,7 @@ const NO_VISION_HINT = "Write one with /vision, commit it to the default branch,
 export class Enroller {
   readonly #store: Store;
   readonly #dataDirectory: string;
+  readonly #runner: ModelRunner;
   readonly #log: OperationalLog | undefined;
   readonly #createForge: (setting: ForgeSetting) => Forge;
   readonly #remoteFor: (setting: ForgeSetting, project: Project) => MirrorRemote;
@@ -110,6 +143,7 @@ export class Enroller {
   constructor(options: EnrollerOptions) {
     this.#store = options.store;
     this.#dataDirectory = options.dataDirectory;
+    this.#runner = options.runner;
     this.#log = options.log;
     this.#createForge = options.createForge ?? ((setting) => createForgeAdapter(setting));
     this.#remoteFor = options.remoteFor ?? ((setting) => forgeRemote(setting.forge, setting.host, setting.path));
@@ -123,6 +157,11 @@ export class Enroller {
    * account cannot add labels and comment, GitLab is older than 15.6, or the
    * default branch has no VISION.md or an empty one. A possible lack of
    * permission to merge is a warning only.
+   *
+   * A repo that passes then gets its generic criteria proposed: entail reads
+   * which checks reported on the default branch's recent commits and makes
+   * one read-only model run over the mirror's CI files and build scripts.
+   * Neither failing refuses the repo; the review shows an empty list instead.
    */
   async check(stated: StatedForge): Promise<CheckResult> {
     const refuseAll = (refusals: Refusal[]): CheckResult => {
@@ -196,8 +235,9 @@ export class Enroller {
     // The mirror is set up before the review, and VISION.md is read from it (ADR-0015).
     let vision: VisionAtCommit;
     let defaultBranch: string;
+    let mirror: Mirror;
     try {
-      const mirror = await Mirror.open({
+      mirror = await Mirror.open({
         dataDirectory: this.#dataDirectory,
         key: { forge: setting.forge, host: setting.host, projectId: project.id },
         remote: this.#remoteFor(setting, project),
@@ -221,6 +261,7 @@ export class Enroller {
         `${VISION_PATH} on the default branch \`${defaultBranch}\` is empty: it states nothing, so it would contradict no ticket. ${NO_VISION_HINT}`,
       );
     }
+    const genericCriteria = await this.#proposeGenericCriteria(forge, mirror, defaultBranch, vision.commit, setting);
 
     return {
       ok: true,
@@ -234,8 +275,54 @@ export class Enroller {
         mergeMethods,
         preselectedMergeMethod: mergeMethods === null ? null : preselectedMergeMethod(mergeMethods),
         warnings,
+        genericCriteria,
       },
     };
+  }
+
+  /**
+   * The generic criteria proposal of spec §15 step 4: the checks seen on the
+   * default branch's recent commits, then one read-only model run, with no
+   * challenge, over the CI files and build scripts at the vision's commit.
+   */
+  async #proposeGenericCriteria(
+    forge: Forge,
+    mirror: Mirror,
+    defaultBranch: string,
+    commit: string,
+    setting: ForgeSetting,
+  ): Promise<GenericCriteriaReview> {
+    const where = { forge: setting.forge, host: setting.host, path: setting.path };
+    let seenChecks: string[] | null = null;
+    let seenChecksProblem: string | null = null;
+    try {
+      seenChecks = reportedCheckNames(await forge.recentDefaultBranchChecks(RECENT_DEFAULT_BRANCH_COMMITS));
+    } catch (error) {
+      seenChecksProblem = messageOf(error);
+      this.#log?.warn("recent-checks-unread", { ...where, error: seenChecksProblem });
+    }
+
+    let files: string[] = [];
+    let proposal: GenericCriteriaProposal;
+    try {
+      files = await ciFilesAndBuildScripts(mirror.git, commit);
+      const checkout = await mirror.checkout(commit);
+      proposal = await proposeGenericCriteria({
+        runner: this.#runner,
+        model: readGlobalSettings(this.#store).settings.model,
+        defaultBranch,
+        checkout,
+        files,
+        seenChecks,
+      });
+    } catch (error) {
+      proposal = { rows: [], failure: { kind: "error", message: messageOf(error) }, run: null };
+    }
+    if (proposal.failure !== null) {
+      // A machine failure: logged, never on the board, and never a refusal (ADR-0017).
+      this.#log?.warn("generic-criteria-proposal-failed", { ...where, kind: proposal.failure.kind, error: proposal.failure.message });
+    }
+    return { proposal, seenChecks, seenChecksProblem, files };
   }
 
   /**
@@ -252,6 +339,9 @@ export class Enroller {
     if ((review.mergeMethods === null) !== (choices.mergeMethod === null)) {
       throw new Error(review.mergeMethods === null ? "GitLab has no merge method setting" : "a GitHub repo needs a merge method");
     }
+    const rows = (choices.genericCriteria ?? []).map(normalizeRow);
+    const problems = rows.flatMap((row, index) => rowProblems(row).map((problem) => `generic criterion ${index + 1}: ${problem}`));
+    if (problems.length > 0) throw new Error(problems.join(" "));
 
     let openIssueNumbers: number[];
     try {
@@ -276,12 +366,13 @@ export class Enroller {
             ownerAccountId: owner.id,
             ownerLogin: owner.username,
           },
-          settings: enrollmentSettings(choices.visionOrigin, choices.mergeMethod),
+          settings: enrollmentSettings(choices.visionOrigin, choices.mergeMethod, numberGenericCriteria(rows)),
           savedBy: ownerName,
           visionSha: review.visionSha,
           visionLines: review.visionLines,
           visionOrigin: choices.visionOrigin,
           openIssueNumbers,
+          modelRuns: review.genericCriteria.proposal.run === null ? [] : [review.genericCriteria.proposal.run],
         });
       });
     } catch (error) {
@@ -297,6 +388,7 @@ export class Enroller {
       projectId: project.id,
       path: setting.path,
       openIssuesLeftAlone: openIssueNumbers.length,
+      genericCriteria: rows.length,
     });
     return { ok: true, ...recorded };
   }

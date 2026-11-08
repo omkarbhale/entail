@@ -3,12 +3,13 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Enroller, parseStatedForge, type CheckResult, type RefusalReason } from "../src/enrollment.ts";
+import { GENERIC_CRITERIA_PROPOSAL_PROMPT_VERSION, genericCriteriaProposalSchema } from "../src/generic-criteria.ts";
 import { ForgeLoggedOutError, ForgeRequestError } from "../src/forge/forge.ts";
 import { TransportError } from "../src/forge/transport.ts";
 import { Mirror } from "../src/mirror.ts";
 import { preselectedMergeMethod } from "../src/repo-settings.ts";
 import { Store } from "../src/store.ts";
-import { enrollmentSetup, FakeForge } from "./enrollment-fixture.ts";
+import { enrollmentSetup, FakeForge, PROPOSAL } from "./enrollment-fixture.ts";
 import { git, tempDirectory } from "./git-fixture.ts";
 
 const GITHUB = { forge: "github", host: "github.com", path: "acme/tally" };
@@ -165,6 +166,7 @@ test("a project git cannot fetch is refused", async (t) => {
   const enroller = new Enroller({
     store: setup.store,
     dataDirectory: setup.dataDirectory,
+    runner: setup.runner,
     createForge: (setting) => new FakeForge(setting, setup.world),
     remoteFor: () => ({ url: tempDirectory(t, "nowhere"), credentialHelper: null }),
   });
@@ -262,9 +264,140 @@ test("the stated forge, host and path are checked before any forge is asked", as
   });
 
   // The real adapters refuse a GitHub host other than github.com before running any CLI.
-  const { store, dataDirectory } = enrollmentSetup(t);
-  const enroller = new Enroller({ store, dataDirectory });
+  const { store, dataDirectory, runner } = enrollmentSetup(t);
+  const enroller = new Enroller({ store, dataDirectory, runner });
   const result = await enroller.check({ forge: "github", host: "github.example.com", path: "acme/tally" });
   assert.deepEqual(refusedFor(result), ["invalid-forge-setting"]);
   assert.ok(!result.ok && /GitHub Enterprise Server is not supported/.test(result.refusals[0]!.message));
+});
+
+test("the generic criteria proposal is one read-only model run over the CI files and build scripts, with no challenge", async (t) => {
+  const { enroller, runner, repo, store } = enrollmentSetup(t);
+  store.saveGlobalSettings({ ownerDisplayName: "Ada", model: "claude-test-model" }, "Ada");
+  const result = await enroller.check(GITHUB);
+  assert.ok(result.ok);
+  assert.equal(runner.requests.length, 1, "one run, and no challenge");
+  const [request] = runner.requests;
+  assert.equal(request!.kind, "generic-criteria-proposal");
+  assert.equal(request!.ticket, null);
+  assert.equal(request!.schema, genericCriteriaProposalSchema, "its own schema");
+  assert.equal(request!.promptVersion, GENERIC_CRITERIA_PROPOSAL_PROMPT_VERSION);
+  assert.equal(request!.model, "claude-test-model", "the model from the global settings");
+  assert.equal(request!.sha, repo.head());
+  assert.ok(existsSync(join(request!.checkout, ".github", "workflows", "ci.yml")), "it reads a checkout at the vision's commit");
+  assert.match(request!.prompt, /- \.github\/workflows\/ci\.yml\n- package\.json/);
+  assert.match(request!.prompt, /- lint\n- test/, "it is told the checks seen on recent default-branch commits");
+
+  const { genericCriteria } = result.review;
+  assert.deepEqual(genericCriteria.files, [".github/workflows/ci.yml", "package.json"]);
+  assert.deepEqual(genericCriteria.seenChecks, ["lint", "test"]);
+  assert.equal(genericCriteria.proposal.failure, null);
+  assert.deepEqual(genericCriteria.proposal.rows, [
+    { sentence: "The check `test` passes.", check: { kind: "check_passes", argument: "test" }, sourceFile: ".github/workflows/ci.yml" },
+    { sentence: "The check `lint` passes.", check: { kind: "check_passes", argument: "lint" }, sourceFile: ".github/workflows/ci.yml" },
+  ]);
+});
+
+test("the confirmed generic criteria are numbered G1…Gn in the settings version, and the proposal is recorded with its full model run", async (t) => {
+  const { enroller, store } = enrollmentSetup(t);
+  const result = await enroller.check(GITHUB);
+  assert.ok(result.ok);
+  const [proposed] = result.review.genericCriteria.proposal.rows;
+  const confirmed = await enroller.confirm(result.review, {
+    visionOrigin: "owner-stated",
+    mergeMethod: "squash",
+    genericCriteria: [
+      { ...proposed!, sentence: "  The check `test`\n passes on the PR's head. " },
+      { sentence: "The PR leaves the lockfile alone.", check: { kind: "leaves_path", argument: "package-lock.json" }, sourceFile: null },
+    ],
+  });
+  assert.ok(confirmed.ok);
+  assert.deepEqual((store.latestSettings(confirmed.repo.id)?.settings as { genericCriteria: unknown }).genericCriteria, [
+    {
+      id: "G1",
+      sentence: "The check `test` passes on the PR's head.",
+      check: { kind: "check_passes", argument: "test" },
+      source: ".github/workflows/ci.yml",
+    },
+    { id: "G2", sentence: "The PR leaves the lockfile alone.", check: { kind: "leaves_path", argument: "package-lock.json" }, source: null },
+  ]);
+
+  const [run, ...others] = store.enrollmentModelRuns(confirmed.enrollment.id);
+  assert.deepEqual(others, []);
+  assert.equal(run!.purpose, "generic-criteria-proposal");
+  assert.equal(run!.promptVersion, GENERIC_CRITERIA_PROPOSAL_PROMPT_VERSION);
+  assert.equal(run!.model, "claude-opus-5-5");
+  assert.equal(run!.sessionId, "scripted-1");
+  assert.deepEqual(JSON.parse(run!.output!), PROPOSAL, "the full output");
+  assert.equal(run!.failure, null);
+  const input = JSON.parse(run!.input) as { prompt: string; sha: string; schema: unknown };
+  assert.match(input.prompt, /generic criteria/);
+  assert.equal(input.sha, confirmed.enrollment.visionSha);
+  assert.deepEqual(input.schema, genericCriteriaProposalSchema.json);
+});
+
+test("an empty generic criteria list is accepted", async (t) => {
+  const { enroller, store } = enrollmentSetup(t);
+  const result = await enroller.check(GITHUB);
+  assert.ok(result.ok);
+  const confirmed = await enroller.confirm(result.review, { visionOrigin: "owner-stated", mergeMethod: "squash", genericCriteria: [] });
+  assert.ok(confirmed.ok);
+  assert.deepEqual((store.latestSettings(confirmed.repo.id)?.settings as { genericCriteria: unknown }).genericCriteria, []);
+});
+
+test("a row that cannot be kept is refused at the confirmation, and nothing is enrolled", async (t) => {
+  const { enroller, store } = enrollmentSetup(t);
+  const result = await enroller.check(GITHUB);
+  assert.ok(result.ok);
+  await assert.rejects(
+    enroller.confirm(result.review, {
+      visionOrigin: "owner-stated",
+      mergeMethod: "squash",
+      genericCriteria: [{ sentence: "/close", check: null, sourceFile: null }],
+    }),
+    /cannot start with \//,
+  );
+  assertNothingEnrolled(store);
+});
+
+for (const [name, outcome] of [
+  ["a timeout", { failure: { kind: "timeout", message: "the run took longer than 10 minutes" } }],
+  ["output outside the schema", { output: { criteria: [{ sentence: "x" }], reason: "r" } }],
+] as const) {
+  test(`a machine failure of the proposal (${name}) leaves an empty, editable list and never blocks enrollment`, async (t) => {
+    const { enroller, store, runner } = enrollmentSetup(t, { proposals: [outcome] });
+    const result = await enroller.check(GITHUB);
+    assert.ok(result.ok, "the repo is not refused");
+    const { proposal } = result.review.genericCriteria;
+    assert.deepEqual(proposal.rows, []);
+    assert.ok(proposal.failure);
+    assert.equal(runner.requests.length, 1, "not retried");
+    const confirmed = await enroller.confirm(result.review, {
+      visionOrigin: "owner-stated",
+      mergeMethod: "squash",
+      genericCriteria: [{ sentence: "The check `test` passes.", check: { kind: "check_passes", argument: "test" }, sourceFile: null }],
+    });
+    assert.ok(confirmed.ok);
+    const [run] = store.enrollmentModelRuns(confirmed.enrollment.id);
+    assert.equal(run!.output, null, "the failed run is recorded with its failure");
+    assert.equal((run!.failure as { kind: string }).kind, proposal.failure.kind);
+  });
+}
+
+test("a runner that throws is a machine failure too", async (t) => {
+  const { enroller } = enrollmentSetup(t, { proposals: [] });
+  const result = await enroller.check(GITHUB);
+  assert.ok(result.ok);
+  assert.equal(result.review.genericCriteria.proposal.failure?.kind, "error");
+  assert.match(result.review.genericCriteria.proposal.failure!.message, /no scripted outcome/);
+});
+
+test("checks that cannot be read do not refuse the repo, and the proposal is told so", async (t) => {
+  const { enroller, world, runner } = enrollmentSetup(t);
+  world.recentChecks = new Error("pipelines are disabled");
+  const result = await enroller.check(GITHUB);
+  assert.ok(result.ok);
+  assert.equal(result.review.genericCriteria.seenChecks, null);
+  assert.match(result.review.genericCriteria.seenChecksProblem!, /pipelines are disabled/);
+  assert.match(runner.requests[0]!.prompt, /could not be read/);
 });

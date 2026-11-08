@@ -66,6 +66,35 @@ export interface NewEnrollment {
   visionOrigin: VisionOrigin;
   /** The issues open at enrollment, which are not taken in. */
   openIssueNumbers: readonly number[];
+  /** The model runs enrolling made: the generic criteria proposal, when one was run. */
+  modelRuns?: readonly NewEnrollmentModelRun[];
+}
+
+/**
+ * A model run enrolling made, which belongs to no ticket and so to no call
+ * (spec §15 step 4). A failed run keeps its failure in place of an output.
+ */
+export interface NewEnrollmentModelRun {
+  /** The run's kind, such as `generic-criteria-proposal`. */
+  purpose: string;
+  model: string;
+  promptVersion: string;
+  sessionId: string | null;
+  /** The run's full input. */
+  input: string;
+  /** The run's full structured output, or null when it failed. */
+  output: string | null;
+  /** The machine failure, or null when the run produced an output. */
+  failure: unknown;
+  startedAt: string;
+  durationMs: number;
+  /** null when the run reported no cost. */
+  estimatedCostUsd: number | null;
+}
+
+export interface EnrollmentModelRunRecord extends NewEnrollmentModelRun {
+  id: number;
+  enrollmentId: number;
 }
 
 export interface EnrollmentRecord {
@@ -434,6 +463,24 @@ export class Store {
         settings.id,
         JSON.stringify([...new Set(enrollment.openIssueNumbers)].sort((a, b) => a - b)),
       );
+      for (const run of enrollment.modelRuns ?? []) {
+        this.#insert(
+          `INSERT INTO enrollment_model_runs (enrollment_id, purpose, model, prompt_version, session_id, input, output, failure,
+             started_at, duration_ms, estimated_cost_usd)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          id,
+          run.purpose,
+          run.model,
+          run.promptVersion,
+          run.sessionId,
+          run.input,
+          run.output,
+          run.failure === null || run.failure === undefined ? null : JSON.stringify(run.failure),
+          run.startedAt,
+          run.durationMs,
+          run.estimatedCostUsd,
+        );
+      }
       return { repo, settings, enrollment: mapOrNull(this.#get("SELECT * FROM enrollments WHERE id = ?", id), toEnrollment)! };
     });
   }
@@ -441,6 +488,11 @@ export class Store {
   /** The repo's latest enrollment. */
   latestEnrollment(repoId: number): EnrollmentRecord | null {
     return mapOrNull(this.#get("SELECT * FROM enrollments WHERE repo_id = ? ORDER BY id DESC LIMIT 1", repoId), toEnrollment);
+  }
+
+  /** The model runs an enrollment made, oldest first. */
+  enrollmentModelRuns(enrollmentId: number): EnrollmentModelRunRecord[] {
+    return this.#all("SELECT * FROM enrollment_model_runs WHERE enrollment_id = ? ORDER BY id", enrollmentId).map(toEnrollmentModelRun);
   }
 
   /** Whether an issue was open when the repo was last enrolled, so it is not taken in on its own (ADR-0018). */
@@ -945,6 +997,23 @@ function toEnrollment(row: Row): EnrollmentRecord {
     visionSha: str(row.vision_sha),
     settingsVersionId: num(row.settings_version_id),
     openIssueNumbers: parse(row.open_issue_numbers) as number[],
+  };
+}
+
+function toEnrollmentModelRun(row: Row): EnrollmentModelRunRecord {
+  return {
+    id: num(row.id),
+    enrollmentId: num(row.enrollment_id),
+    purpose: str(row.purpose),
+    model: str(row.model),
+    promptVersion: str(row.prompt_version),
+    sessionId: strOrNull(row.session_id),
+    input: str(row.input),
+    output: strOrNull(row.output),
+    failure: parse(row.failure),
+    startedAt: str(row.started_at),
+    durationMs: num(row.duration_ms),
+    estimatedCostUsd: numOrNull(row.estimated_cost_usd),
   };
 }
 

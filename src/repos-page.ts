@@ -3,9 +3,18 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Enroller, type EnrollmentReview, type Refusal, type StatedForge } from "./enrollment.ts";
 import { MERGE_METHODS, type Forge, type ForgeSetting, type MergeMethod } from "./forge/forge.ts";
+import {
+  describeCheck,
+  type GenericCriterionRow,
+  type MechanicalCheckKind,
+  normalizeRow,
+  rowProblems,
+  unseenCheck,
+} from "./generic-criteria.ts";
 import { Git } from "./git.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import { mirrorPaths } from "./mirror.ts";
+import { MECHANICAL_CHECK_KINDS } from "./model-schemas.ts";
 import { escapeHtml, renderPage, timeHtml } from "./page.ts";
 import { isMergeMethod, MERGE_METHOD_LABELS, PRESELECTED_VISION_ORIGIN, readRepoSettings } from "./repo-settings.ts";
 import { REPO_SETTINGS_PATH, repoSettingsPage } from "./repo-settings-page.ts";
@@ -28,7 +37,31 @@ export const ENROLL_FIELDS = {
   review: "review",
   visionOrigin: "vision_origin",
   mergeMethod: "merge_method",
+  /** Which button was pressed: {@link ENROLL_ACTIONS}. */
+  action: "action",
+  /** How many generic criteria rows the form holds. */
+  criteriaCount: "gc_count",
+  /** A check name whose warning the owner has been shown; one field per name. */
+  warnedCheck: "gc_warned",
 } as const;
+
+/** The buttons of the review screen: enroll, or show the review again with one more empty row. */
+export const ENROLL_ACTIONS = { enroll: "enroll", addRow: "add-row" } as const;
+
+/** The field of one part of the generic criteria row at `index` (from 0). */
+export function criterionField(index: number, part: "sentence" | "check_kind" | "check_argument" | "source" | "remove"): string {
+  return `gc_${index}_${part}`;
+}
+
+/** How each mechanical check kind is offered on the review screen. */
+const CHECK_KIND_LABELS: Readonly<Record<MechanicalCheckKind, string>> = {
+  check_passes: "A named check passes",
+  changes_path: "The PR changes a path",
+  leaves_path: "The PR leaves a path alone",
+};
+
+/** At most this many generic criteria rows are read from one form. */
+const MAX_CRITERIA_ROWS = 100;
 
 /** A repo's state on the Repos page (spec §15). A paused repo is the owner's setting; no vision is a halt. */
 export type RepoState = "active" | "pausing" | "paused" | "no vision";
@@ -110,7 +143,14 @@ export function reposPages(options: ReposPageOptions): Page[] {
         const stated = statedOf(request.form);
         const result = await enroller.check(stated);
         if (!result.ok) return reposView(request, options, stated, result.refusals, null, 422);
-        return reviewView(request, result.review, holdReview(result.review), PRESELECTED_VISION_ORIGIN, result.review.preselectedMergeMethod, null, 200);
+        const { review } = result;
+        return reviewView(request, review, holdReview(review), {
+          origin: PRESELECTED_VISION_ORIGIN,
+          mergeMethod: review.preselectedMergeMethod,
+          criteria: review.genericCriteria.proposal.rows,
+          errors: null,
+          status: 200,
+        });
       },
     },
     {
@@ -125,24 +165,40 @@ export function reposPages(options: ReposPageOptions): Page[] {
         const origin = request.form.get(ENROLL_FIELDS.visionOrigin) ?? "";
         const method = request.form.get(ENROLL_FIELDS.mergeMethod) ?? "";
         const offered = offeredMergeMethods(review);
+        const criteria = criteriaOf(request.form);
+        const shown = {
+          origin: (VISION_ORIGINS as readonly string[]).includes(origin) ? (origin as VisionOrigin) : PRESELECTED_VISION_ORIGIN,
+          mergeMethod: isMergeMethod(method) ? method : review.preselectedMergeMethod,
+          criteria,
+        };
+        if (request.form.get(ENROLL_FIELDS.action) === ENROLL_ACTIONS.addRow) {
+          return reviewView(request, review, id!, { ...shown, blankRows: 1, errors: null, status: 200 });
+        }
         const errors: string[] = [];
         if (!(VISION_ORIGINS as readonly string[]).includes(origin)) errors.push("Pick the origin of the existing VISION.md.");
         if (offered !== null && !(isMergeMethod(method) && offered.includes(method))) errors.push("Pick the merge method.");
-        if (errors.length > 0) {
-          return reviewView(
-            request,
-            review,
-            id!,
-            (VISION_ORIGINS as readonly string[]).includes(origin) ? (origin as VisionOrigin) : PRESELECTED_VISION_ORIGIN,
-            isMergeMethod(method) ? method : review.preselectedMergeMethod,
-            errors,
-            400,
-          );
+        criteria.forEach((row, index) => {
+          for (const problem of rowProblems(row)) errors.push(`Generic criterion G${index + 1}: ${problem}`);
+        });
+        if (errors.length > 0) return reviewView(request, review, id!, { ...shown, errors, status: 400 });
+        // A check the owner named after the screen was shown has not been warned about yet.
+        const warned = new Set(request.form.getAll(ENROLL_FIELDS.warnedCheck));
+        const unwarned = criteria
+          .map((row) => unseenCheck(row, review.genericCriteria.seenChecks))
+          .filter((name) => name !== null && !warned.has(name));
+        if (unwarned.length > 0) {
+          return reviewView(request, review, id!, {
+            ...shown,
+            errors: null,
+            notice: "A generic criterion names a check that has not reported on the default branch's recent commits. Read its warning, then enroll again to keep it.",
+            status: 200,
+          });
         }
         pending.delete(id!);
         const result = await enroller.confirm(review, {
           visionOrigin: origin as VisionOrigin,
           mergeMethod: offered === null ? null : (method as MergeMethod),
+          genericCriteria: criteria,
         });
         if (!result.ok) return reposView(request, options, statedFrom(review), result.refusals, null, 422);
         return { redirect: `${REPOS_PATH}?enrolled=${result.repo.id}` };
@@ -243,7 +299,7 @@ ${(["github", "gitlab"] as const).map((f) => `<option value="${f}"${stated.forge
 <label for="f-path">Path</label>
 <input type="text" id="f-path" name="${ENROLL_FIELDS.path}" value="${escapeHtml(stated.path)}" placeholder="owner/name" required spellcheck="false">
 </div>
-<p class="hint">entail checks the repo through your own <code>gh</code> or <code>glab</code> login and shows what it found before anything is enrolled.</p>
+<p class="hint">entail checks the repo through your own <code>gh</code> or <code>glab</code> login and shows what it found before anything is enrolled. Checking ends with one model run that proposes the repo's generic criteria, so it can take a few minutes.</p>
 <button type="submit">Check the repo</button>
 </form>`
     : `<p class="notice">Enrolling waits until your display name is set: every comment and answer carries it. <a href="${SETTINGS_PATH}">Set it in the global settings</a>.</p>`;
@@ -258,22 +314,29 @@ ${form}
   return { status, html: renderPage(request, { title: "Repos", body }) };
 }
 
-function reviewView(
-  request: PageRequest,
-  review: EnrollmentReview,
-  reviewId: string,
-  origin: VisionOrigin,
-  mergeMethod: MergeMethod | null,
-  errors: readonly string[] | null,
-  status: number,
-): Reply {
+interface ReviewState {
+  origin: VisionOrigin;
+  mergeMethod: MergeMethod | null;
+  /** The generic criteria rows as the owner left them, or as proposed. */
+  criteria: readonly GenericCriterionRow[];
+  /** Empty rows to show after them, for the owner to add one; one by default. */
+  blankRows?: number;
+  errors: readonly string[] | null;
+  /** A note shown above the form, such as asking to enroll again after a warning. */
+  notice?: string;
+  status: number;
+}
+
+function reviewView(request: PageRequest, review: EnrollmentReview, reviewId: string, state: ReviewState): Reply {
   const { setting, project, owner } = review;
+  const { origin, mergeMethod, errors } = state;
   const offered = offeredMergeMethods(review);
   const warnings = review.warnings.map((w) => `<p class="notice" role="status">${codeHtml(w)}</p>`).join("\n");
   const refused =
     errors === null || errors.length === 0
       ? ""
       : `<div class="error" role="alert"><p>Nothing was enrolled.</p><ul>${errors.map((e) => `<li>${escapeHtml(e)}</li>`).join("")}</ul></div>`;
+  const notice = state.notice === undefined ? "" : `<p class="notice" role="status">${escapeHtml(state.notice)}</p>`;
 
   const originField = `<fieldset class="field">
 <legend>Origin of the existing VISION.md</legend>
@@ -306,6 +369,7 @@ ${offered
 
   const body = `<h1>Review and enroll ${escapeHtml(setting.path)}</h1>
 ${refused}
+${notice}
 ${warnings}
 <dl>
 <dt>Forge</dt><dd>${forgeName(setting.forge)}</dd>
@@ -316,12 +380,12 @@ ${warnings}
 <dt>VISION.md</dt><dd>on <code>${escapeHtml(review.defaultBranch)}</code> at <code>${escapeHtml(review.visionSha.slice(0, 12))}</code></dd>
 </dl>
 <form method="post" action="${ENROLL_PATH}">
+<button type="submit" name="${ENROLL_FIELDS.action}" value="${ENROLL_ACTIONS.enroll}" tabindex="-1" aria-hidden="true" style="position:absolute;left:-10000px">Enroll</button>
 <input type="hidden" name="${TOKEN_FIELD}" value="${escapeHtml(request.server.token)}">
 <input type="hidden" name="${ENROLL_FIELDS.review}" value="${escapeHtml(reviewId)}">
 ${originField}
 ${mergeField}
-<h2>Generic criteria</h2>
-<p class="muted">None. The list starts empty.</p>
+${genericCriteriaSection(review, state.criteria, state.blankRows ?? 1)}
 <h2>Defaults</h2>
 <ul>
 <li>Shadow: off</li>
@@ -329,9 +393,105 @@ ${mergeField}
 <li>Pins: VISION.md only, which is always pinned</li>
 </ul>
 <p>Issues already open are not taken in. Pull any of them in with an <code>/entail</code> comment.</p>
-<button type="submit">Enroll</button> <a href="${REPOS_PATH}">Cancel</a>
+<button type="submit" name="${ENROLL_FIELDS.action}" value="${ENROLL_ACTIONS.enroll}">Enroll</button> <a href="${REPOS_PATH}">Cancel</a>
 </form>`;
-  return { status, html: renderPage(request, { title: `Enroll ${setting.path}`, body }) };
+  return { status: state.status, html: renderPage(request, { title: `Enroll ${setting.path}`, body }) };
+}
+
+/**
+ * The generic criteria rows G1…Gn of the review screen (spec §15 step 4):
+ * each with its sentence, its mechanical check and the file it was inferred
+ * from, editable and removable, then empty rows to add one. A row naming a
+ * check that has not reported on recent default-branch commits is warned about.
+ */
+function genericCriteriaSection(review: EnrollmentReview, rows: readonly GenericCriterionRow[], blankRows: number): string {
+  const { proposal, seenChecks, seenChecksProblem } = review.genericCriteria;
+  const intro =
+    proposal.failure !== null
+      ? `<p class="notice" role="status">entail could not propose generic criteria: ${escapeHtml(proposal.failure.message)} (${escapeHtml(proposal.failure.kind)}). The list starts empty: add rows yourself, or leave it empty.</p>`
+      : proposal.rows.length === 0
+        ? `<p class="muted">entail found nothing in the CI files and build scripts that every PR must meet, so it proposes none. Add rows yourself, or leave the list empty.</p>`
+        : `<p class="hint">Proposed from the repo's CI files and build scripts. Edit, remove or add rows; the list may be empty.</p>`;
+  const seen =
+    seenChecks === null
+      ? `<p class="notice" role="status">entail could not read which checks reported on the default branch's recent commits: ${escapeHtml(seenChecksProblem ?? "")}. A check a criterion names cannot be confirmed.</p>`
+      : seenChecks.length === 0
+        ? `<p class="hint">No check reported on the default branch's recent commits.</p>`
+        : `<p class="hint">Checks that reported on the default branch's recent commits: ${seenChecks.map((name) => `<code>${escapeHtml(name)}</code>`).join(", ")}.</p>`;
+
+  const warned = new Set<string>();
+  const rowHtml = (row: GenericCriterionRow | null, index: number): string => {
+    const unseen = row === null ? null : unseenCheck(row, seenChecks);
+    if (unseen !== null) warned.add(unseen);
+    const kind = row?.check?.kind ?? "";
+    const legend = row === null ? "New row" : `G${index + 1}`;
+    const source =
+      row === null
+        ? ""
+        : row.sourceFile === null
+          ? `<p class="hint">Added by you.</p>`
+          : `<p class="hint">Inferred from <code>${escapeHtml(row.sourceFile)}</code>.</p>
+<input type="hidden" name="${criterionField(index, "source")}" value="${escapeHtml(row.sourceFile)}">`;
+    const warning =
+      unseen === null
+        ? ""
+        : `<p class="notice" role="status" data-warning="unseen-check">${
+            seenChecks === null
+              ? `entail could not confirm that the check <code>${escapeHtml(unseen)}</code> reports on the default branch.`
+              : `The check <code>${escapeHtml(unseen)}</code> has not reported on the default branch's recent commits.`
+          } A check that never reports stays pending, so no PR could merge while this criterion names it.</p>`;
+    return `<fieldset class="field criterion">
+<legend>${legend}</legend>
+<label for="${criterionField(index, "sentence")}">Sentence</label>
+<input type="text" id="${criterionField(index, "sentence")}" name="${criterionField(index, "sentence")}" value="${escapeHtml(row?.sentence ?? "")}" spellcheck="true">
+<label for="${criterionField(index, "check_kind")}">Mechanical check</label>
+<select id="${criterionField(index, "check_kind")}" name="${criterionField(index, "check_kind")}">
+<option value=""${kind === "" ? " selected" : ""}>None</option>
+${MECHANICAL_CHECK_KINDS.map((k) => `<option value="${k}"${kind === k ? " selected" : ""}>${escapeHtml(CHECK_KIND_LABELS[k])}</option>`).join("\n")}
+</select>
+<label for="${criterionField(index, "check_argument")}">Check name or path glob</label>
+<input type="text" id="${criterionField(index, "check_argument")}" name="${criterionField(index, "check_argument")}" value="${escapeHtml(row?.check?.argument ?? "")}" spellcheck="false">
+${row === null ? "" : `<p class="hint">Mechanical check: ${codeHtml(describeCheck(row.check))}.</p>`}
+${source}
+${warning}
+${row === null ? "" : `<label class="choice"><input type="checkbox" name="${criterionField(index, "remove")}" value="1"> Remove this row</label>`}
+</fieldset>`;
+  };
+  const shown = [...rows.map((row, index) => rowHtml(row, index)), ...Array.from({ length: blankRows }, (_, i) => rowHtml(null, rows.length + i))];
+
+  return `<h2>Generic criteria</h2>
+${intro}
+${seen}
+<input type="hidden" name="${ENROLL_FIELDS.criteriaCount}" value="${rows.length + blankRows}">
+${[...warned].map((name) => `<input type="hidden" name="${ENROLL_FIELDS.warnedCheck}" value="${escapeHtml(name)}">`).join("\n")}
+${shown.join("\n")}
+<p class="hint">An empty row is left out. Every PR must meet each generic criterion besides its ticket's own criteria, and the forge's checks must all pass whatever the list holds.</p>
+<button type="submit" name="${ENROLL_FIELDS.action}" value="${ENROLL_ACTIONS.addRow}">Add a row</button>`;
+}
+
+/**
+ * The generic criteria rows as posted, in order: without the rows marked
+ * for removal and the empty ones.
+ */
+function criteriaOf(form: URLSearchParams): GenericCriterionRow[] {
+  const count = Math.min(Number.parseInt(form.get(ENROLL_FIELDS.criteriaCount) ?? "0", 10) || 0, MAX_CRITERIA_ROWS);
+  const rows: GenericCriterionRow[] = [];
+  for (let index = 0; index < count; index++) {
+    if (form.get(criterionField(index, "remove")) !== null) continue;
+    const kind = form.get(criterionField(index, "check_kind")) ?? "";
+    const row = normalizeRow({
+      sentence: form.get(criterionField(index, "sentence")) ?? "",
+      check:
+        (MECHANICAL_CHECK_KINDS as readonly string[]).includes(kind)
+          ? { kind: kind as MechanicalCheckKind, argument: form.get(criterionField(index, "check_argument")) ?? "" }
+          : null,
+      sourceFile: form.get(criterionField(index, "source")),
+    });
+    // A row with nothing typed is an unused empty row.
+    if (row.sentence === "" && (row.check === null || row.check.argument === "") && row.sourceFile === null) continue;
+    rows.push(row);
+  }
+  return rows;
 }
 
 /** The merge methods the owner picks from on GitHub: those allowed, or all when GitHub did not say; null on GitLab. */

@@ -1,7 +1,7 @@
 import { FINAL_STATES, INITIAL_STATE, TICKET_STATES, TICKET_TRANSITIONS } from "./ticket-states.ts";
 
 /** Bumped whenever the schema below changes; a store from a newer entail is refused. */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /**
  * Every table of the store except `ticket_states`. The store itself refuses
@@ -20,6 +20,7 @@ export const APPEND_ONLY_TABLES = [
   "vision_line_origins",
   "vision_changes",
   "enrollments",
+  "enrollment_model_runs",
   "forge_write_intents",
   "forge_write_confirmations",
 ] as const;
@@ -63,6 +64,7 @@ const KEYS: Readonly<Record<(typeof APPEND_ONLY_TABLES)[number] | "ticket_states
   vision_line_origins: [["id"]],
   vision_changes: [["id"]],
   enrollments: [["id"]],
+  enrollment_model_runs: [["id"]],
   forge_write_intents: [["id"]],
   forge_write_confirmations: [["intent_id"]],
 };
@@ -113,6 +115,28 @@ CREATE TABLE enrollments (
   open_issue_numbers TEXT NOT NULL ${jsonArray("open_issue_numbers")}
 ) STRICT;
 CREATE INDEX enrollments_by_repo ON enrollments (repo_id, id);
+`;
+
+// The model runs enrolling made, which belong to no ticket and so to no
+// call: the generic criteria proposal (spec §15 step 4). A run that failed
+// keeps its failure in place of an output.
+const ENROLLMENT_MODEL_RUNS_TABLE = `
+CREATE TABLE enrollment_model_runs (
+  id INTEGER PRIMARY KEY,
+  enrollment_id INTEGER NOT NULL REFERENCES enrollments(id),
+  purpose TEXT NOT NULL CHECK (purpose <> ''),
+  model TEXT NOT NULL,
+  prompt_version TEXT NOT NULL,
+  session_id TEXT,
+  input TEXT NOT NULL,
+  output TEXT,
+  failure TEXT ${json("failure")},
+  started_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
+  estimated_cost_usd REAL CHECK (estimated_cost_usd IS NULL OR estimated_cost_usd >= 0),
+  CHECK ((output IS NULL) <> (failure IS NULL))
+) STRICT;
+CREATE INDEX enrollment_model_runs_by_enrollment ON enrollment_model_runs (enrollment_id, id);
 `;
 
 const ENROLLMENTS_SETTINGS_OF_REPO = `
@@ -281,6 +305,7 @@ CREATE TABLE vision_changes (
 ) STRICT;
 
 ${ENROLLMENTS_TABLE}
+${ENROLLMENT_MODEL_RUNS_TABLE}
 -- A forge write recorded before it is sent; confirmed by a row in
 -- forge_write_confirmations once sent or settled on start (ADR-0017).
 CREATE TABLE forge_write_intents (
@@ -437,4 +462,10 @@ export const MIGRATIONS: Readonly<Record<number, string>> = {
   ].join(""),
   // 2 -> 3: enrollments.
   2: [ENROLLMENTS_TABLE, appendOnly("enrollments"), ENROLLMENTS_SETTINGS_OF_REPO, noReplace(["enrollments", KEYS.enrollments])].join(""),
+  // 3 -> 4: the model runs enrolling made.
+  3: [
+    ENROLLMENT_MODEL_RUNS_TABLE,
+    appendOnly("enrollment_model_runs"),
+    noReplace(["enrollment_model_runs", KEYS.enrollment_model_runs]),
+  ].join(""),
 };
