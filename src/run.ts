@@ -107,9 +107,10 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
 
   // The port is read once: a running server keeps the port its links were posted with.
   const port = readGlobalSettings(store).settings.boardPort;
+  const runner = options.modelRunner ?? new ClaudeRunner();
   let server: LocalServer;
   try {
-    const enroller = new Enroller({ store, dataDirectory: options.dataDirectory, log });
+    const enroller = new Enroller({ store, dataDirectory: options.dataDirectory, runner, log });
     const pages = [...reposPages({ store, enroller, dataDirectory: options.dataDirectory }), globalSettingsPage(store)];
     server = await startServer({ port, pages, log });
   } catch (error) {
@@ -132,7 +133,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
   });
 
   const modelRuns = new ModelRuns({
-    runner: options.modelRunner ?? new ClaudeRunner(),
+    runner,
     log,
     limit: () => readGlobalSettings(store).settings.modelRunLimit,
   });

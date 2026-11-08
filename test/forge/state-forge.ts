@@ -4,6 +4,7 @@ import {
   type Actor,
   type ChangeBatch,
   type CloseReason,
+  type CommitChecks,
   type Forge,
   type ForgeComment,
   type ForgeInstance,
@@ -183,7 +184,7 @@ export class StateForge implements Forge {
   async checks(): Promise<never> {
     throw new Error("not supported");
   }
-  async recentDefaultBranchChecks(): Promise<never> {
+  async recentDefaultBranchChecks(): Promise<CommitChecks[]> {
     throw new Error("not supported");
   }
 

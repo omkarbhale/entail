@@ -5,6 +5,7 @@ import { Enroller } from "../src/enrollment.ts";
 import type {
   Actor,
   ChangeBatch,
+  CommitChecks,
   Forge,
   ForgeInstance,
   ForgeSetting,
@@ -12,6 +13,7 @@ import type {
   Project,
   RepoAccess,
 } from "../src/forge/forge.ts";
+import { ScriptedRunner, type ScriptedOutcome } from "../src/scripted-runner.ts";
 import { Store } from "../src/store.ts";
 import { StateForge } from "./forge/state-forge.ts";
 import { FixtureRepo, tempDirectory } from "./git-fixture.ts";
@@ -27,6 +29,8 @@ export interface FakeForgeWorld {
   openIssues: number[] | Error;
   /** The accounts on the host by username; a lookup that is an Error is thrown instead. */
   users: Record<string, number> | Error;
+  /** The checks on the default branch's recent commits, newest first. */
+  recentChecks: CommitChecks[] | Error;
 }
 
 export function worldFor(forge: "github" | "gitlab", host: string): FakeForgeWorld {
@@ -38,6 +42,10 @@ export function worldFor(forge: "github" | "gitlab", host: string): FakeForgeWor
     mergeMethods: forge === "github" ? ["squash", "merge", "rebase"] : null,
     openIssues: [3, 1],
     users: { owner: 1001, executor: 1003, "second-executor": 1004 },
+    recentChecks: [
+      { sha: "c".repeat(40), checks: [{ name: "test", status: "passed", reported: true, url: null }] },
+      { sha: "b".repeat(40), checks: [{ name: "lint", status: "failed", reported: true, url: null }] },
+    ],
   };
 }
 
@@ -83,6 +91,10 @@ export class FakeForge extends StateForge {
     return answer(this.#world.openIssues);
   }
 
+  override async recentDefaultBranchChecks(): Promise<CommitChecks[]> {
+    return answer(this.#world.recentChecks);
+  }
+
   override async changesSince(): Promise<ChangeBatch> {
     throw new Error("enrollment reads no changes");
   }
@@ -93,6 +105,23 @@ function answer<T>(value: T | Error): T {
   return value;
 }
 
+/** The generic criteria proposal the scripted runner returns by default. */
+export const PROPOSAL = {
+  criteria: [
+    {
+      sentence: "The check `test` passes.",
+      check: { kind: "check_passes", argument: "test" },
+      source_file: ".github/workflows/ci.yml",
+    },
+    {
+      sentence: "The check `lint` passes.",
+      check: { kind: "check_passes", argument: "lint" },
+      source_file: ".github/workflows/ci.yml",
+    },
+  ],
+  reason: "ci.yml runs npm test as the job test.",
+};
+
 export const VISION = "# Tally\n\nTally counts words in text.\nTally   reads standard input.\n";
 
 export interface EnrollmentSetup {
@@ -101,6 +130,8 @@ export interface EnrollmentSetup {
   repo: FixtureRepo;
   world: FakeForgeWorld;
   enroller: Enroller;
+  /** Answers the generic criteria proposal; scripted with {@link PROPOSAL} once unless told otherwise. */
+  runner: ScriptedRunner;
   /** The settings each forge adapter was created for. */
   created: ForgeSetting[];
 }
@@ -111,7 +142,14 @@ export interface EnrollmentSetup {
  */
 export function enrollmentSetup(
   t: TestContext,
-  options: { forge?: "github" | "gitlab"; host?: string; vision?: string | null; displayName?: string | null } = {},
+  options: {
+    forge?: "github" | "gitlab";
+    host?: string;
+    vision?: string | null;
+    displayName?: string | null;
+    /** The proposal runs' outcomes, in order. */
+    proposals?: ScriptedOutcome[];
+  } = {},
 ): EnrollmentSetup {
   const forge = options.forge ?? "github";
   const host = options.host ?? (forge === "github" ? "github.com" : "gitlab.example.org");
@@ -125,19 +163,24 @@ export function enrollmentSetup(
   const repo = new FixtureRepo(t);
   const vision = options.vision === undefined ? VISION : options.vision;
   if (vision !== null) repo.write("VISION.md", vision);
-  repo.write("README.md", "tally\n").commit("start");
+  repo.write("README.md", "tally\n");
+  repo.write("package.json", '{ "scripts": { "test": "node --test" } }\n');
+  repo.write(".github/workflows/ci.yml", "jobs:\n  test:\n    steps:\n      - run: npm test\n");
+  repo.commit("start");
   repo.push();
 
   const world = worldFor(forge, host);
   const created: ForgeSetting[] = [];
+  const runner = new ScriptedRunner().script("generic-criteria-proposal", null, ...(options.proposals ?? [{ output: PROPOSAL }]));
   const enroller = new Enroller({
     store,
     dataDirectory,
+    runner,
     createForge: (setting) => {
       created.push(setting);
       return new FakeForge(setting, world);
     },
     remoteFor: () => ({ url: repo.remote, credentialHelper: null }),
   });
-  return { store, dataDirectory, repo, world, enroller, created };
+  return { store, dataDirectory, repo, world, enroller, runner, created };
 }

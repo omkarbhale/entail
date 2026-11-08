@@ -90,15 +90,19 @@ export interface RepoSettings {
 export const PRESELECTED_VISION_ORIGIN: VisionOrigin = "agent-proposed-owner-approved";
 
 /**
- * The settings a repo is enrolled with: the owner's confirmed origin and
- * merge method, an empty generic criteria list, and the defaults: shadow off,
- * who counts set to anyone, and no pins beyond VISION.md (ADR-0018).
+ * The settings a repo is enrolled with: the owner's confirmed origin, merge
+ * method and generic criteria, and the defaults: shadow off, who counts set
+ * to anyone, and no pins beyond VISION.md (ADR-0018).
  */
-export function enrollmentSettings(visionOrigin: VisionOrigin, mergeMethod: MergeMethod | null): RepoSettings {
+export function enrollmentSettings(
+  visionOrigin: VisionOrigin,
+  mergeMethod: MergeMethod | null,
+  genericCriteria: GenericCriterion[] = [],
+): RepoSettings {
   return {
     visionOrigin,
     mergeMethod,
-    genericCriteria: [],
+    genericCriteria,
     shadow: false,
     whoCounts: "anyone",
     executors: [],

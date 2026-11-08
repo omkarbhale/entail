@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test, type TestContext } from "node:test";
 import { APPEND_ONLY_TABLES, SCHEMA_VERSION } from "../src/store-schema.ts";
-import { STORE_FILE, Store, StoreOpenError, type NewModelRun, type RepoRecord, type TicketRecord } from "../src/store.ts";
+import { STORE_FILE, Store, StoreOpenError, type NewEnrollmentModelRun, type NewModelRun, type RepoRecord, type TicketRecord } from "../src/store.ts";
 import { TICKET_STATES, TICKET_TRANSITIONS, TransitionError, type TicketState } from "../src/ticket-states.ts";
 
 function tempDirectory(t: TestContext): string {
@@ -45,6 +45,19 @@ const RUN: NewModelRun = {
   estimatedCostUsd: 0.12,
 };
 
+const PROPOSAL_RUN: NewEnrollmentModelRun = {
+  purpose: "generic-criteria-proposal",
+  model: "claude-opus-5-5",
+  promptVersion: "generic-criteria-proposal/1",
+  sessionId: "session-0",
+  input: "the full prompt",
+  output: '{"criteria":[],"reason":"none"}',
+  failure: null,
+  startedAt: "2026-11-08T11:58:00.000Z",
+  durationMs: 900,
+  estimatedCostUsd: 0.05,
+};
+
 /** Moves a ticket with one call per step, as entail would. */
 function move(store: Store, ticket: TicketRecord, ...states: TicketState[]): void {
   for (const stateTo of states) {
@@ -70,6 +83,7 @@ function fullStore(t: TestContext): Store {
     visionLines: ["Tally counts words."],
     visionOrigin: "agent-proposed-owner-approved",
     openIssueNumbers: [3],
+    modelRuns: [PROPOSAL_RUN],
   });
   store.saveGlobalSettings({ ownerDisplayName: "Owner" }, "Owner");
   const ticket = store.takeIn({ repoId: repo.id, issueNumber: 1 });
@@ -144,9 +158,9 @@ test("a store from schema 1 is migrated to the current schema and keeps its reco
   const first = Store.openIn(dir);
   const repo = enroll(first);
   first.close();
-  // Take the store back to schema 1, which had no global settings and no enrollments.
+  // Take the store back to schema 1, which had no global settings, no enrollments and no enrollment model runs.
   const db = new DatabaseSync(join(dir, STORE_FILE));
-  for (const table of ["global_settings_versions", "enrollments"]) {
+  for (const table of ["global_settings_versions", "enrollment_model_runs", "enrollments"]) {
     for (const { type, name } of db
       .prepare("SELECT type, name FROM sqlite_schema WHERE tbl_name = ? AND type IN ('trigger', 'index')")
       .all(table) as { type: string; name: string }[]) {
@@ -169,6 +183,59 @@ test("a store from schema 1 is migrated to the current schema and keeps its reco
   assert.deepEqual(
     triggers.map((row) => row.name).sort(),
     ["enrollments_no_delete", "enrollments_no_replace", "enrollments_no_update", "enrollments_settings_of_repo"],
+  );
+  const runTriggers = raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = 'enrollment_model_runs'").all();
+  assert.deepEqual(
+    runTriggers.map((row) => row.name).sort(),
+    ["enrollment_model_runs_no_delete", "enrollment_model_runs_no_replace", "enrollment_model_runs_no_update"],
+  );
+});
+
+test("an enrollment keeps its model runs whole, an output or a failure, and nothing else", (t) => {
+  const store = openStore(t);
+  const failed: NewEnrollmentModelRun = {
+    ...PROPOSAL_RUN,
+    sessionId: null,
+    output: null,
+    failure: { kind: "timeout", message: "the run took too long" },
+    estimatedCostUsd: null,
+  };
+  const { enrollment } = store.enroll({
+    repo: { forge: "gitlab", host: "gitlab.com", projectId: 7, path: "g/tally", ownerAccountId: 1, ownerLogin: "o" },
+    settings: {},
+    savedBy: "Owner",
+    visionSha: "v1",
+    visionLines: ["A line."],
+    visionOrigin: "owner-stated",
+    openIssueNumbers: [],
+    modelRuns: [PROPOSAL_RUN, failed],
+  });
+  const runs = store.enrollmentModelRuns(enrollment.id);
+  assert.deepEqual(
+    runs.map(({ id: _id, enrollmentId, ...run }) => ({ enrollmentId, ...run })),
+    [
+      { enrollmentId: enrollment.id, ...PROPOSAL_RUN },
+      { enrollmentId: enrollment.id, ...failed },
+    ],
+  );
+  const db = rawConnection(t, store);
+  assert.throws(
+    () =>
+      db.exec(
+        `INSERT INTO enrollment_model_runs (enrollment_id, purpose, model, prompt_version, input, output, failure, started_at, duration_ms)
+         VALUES (${enrollment.id}, 'p', 'm', 'v', 'i', 'o', '{}', 't', 0)`,
+      ),
+    /CHECK constraint/,
+    "a run has an output or a failure, not both",
+  );
+  assert.throws(
+    () =>
+      db.exec(
+        `INSERT INTO enrollment_model_runs (enrollment_id, purpose, model, prompt_version, input, started_at, duration_ms)
+         VALUES (${enrollment.id}, 'p', 'm', 'v', 'i', 't', 0)`,
+      ),
+    /CHECK constraint/,
+    "a run has an output or a failure",
   );
 });
 
