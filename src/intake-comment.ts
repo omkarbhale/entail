@@ -107,14 +107,19 @@ function quotable(text: string): string {
 export function visionCheckSection(check: VisionCheck): string {
   const at = `\`${shortSha(check.commit)}\``;
   const lines = ["### Vision check", ""];
+  const notFound =
+    check.unquotable.length === 0
+      ? undefined
+      : `Lines the decider quoted could not be found word for word in ${VISION_PATH} at ${at}, so they are not quoted.`;
   if (check.lines.length === 0) {
-    lines.push(`No line of ${VISION_PATH} at ${at} bears on this issue.`);
+    lines.push(notFound ?? `No line of ${VISION_PATH} at ${at} bears on this issue.`);
     return lines.join("\n");
   }
   lines.push(`Only the lines of ${VISION_PATH} that bear on this issue are listed, quoted from ${VISION_PATH} at ${at}.`);
   for (const line of check.lines) {
     lines.push("", `> ${quotable(line.text)}`, "", `${MARK_WORDS[line.mark]} · [${VISION_PATH} line ${line.lineNumber} at ${at}](${line.permalink})`);
   }
+  if (notFound) lines.push("", notFound);
   return lines.join("\n");
 }
 

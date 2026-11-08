@@ -333,6 +333,15 @@ test("a touched pin is named, whether the model judged it touched or entail's pa
   assert.doesNotMatch(body, /Only the lines/);
 });
 
+test("when the only quoted line is not in VISION.md the check does not claim that no line bears", async (t) => {
+  const h = await harness(t);
+  await raised(h, 8, needsTheOwner({ vision_check: [{ line: "tally never talks to the internet.", mark: "contradicts" }] }));
+  const body = h.forge.state.comments["issue:8"]![0]!.body;
+  assert.match(body, /could not be found word for word in VISION\.md/);
+  assert.doesNotMatch(body, /No line of VISION\.md/);
+  assert.doesNotMatch(body, /talks to the internet/);
+});
+
 test("a quoted line that is not word for word in VISION.md is left out of the check and kept on the call", async (t) => {
   const h = await harness(t);
   const ticket = await raised(
@@ -349,6 +358,7 @@ test("a quoted line that is not word for word in VISION.md is left out of the ch
   assert.deepEqual((raise.detail as { unquotable: unknown }).unquotable, [{ line: "tally never talks to the internet.", mark: "contradicts" }]);
   const body = h.forge.state.comments["issue:7"]![0]!.body;
   assert.doesNotMatch(body, /talks to the internet/);
+  assert.match(body, /Lines the decider quoted could not be found word for word in VISION\.md at `[0-9a-f]{7}`, so they are not quoted\./);
   const snapshot = h.setup.store.openBoardItem(ticket.id)!.snapshot as BoardItemSnapshot;
   assert.equal(snapshot.visionCheck.lines.length, 1);
   assert.match(snapshot.why.text, /also quoted “tally never talks to the internet\.”, which is not word for word in VISION\.md/);
