@@ -1,0 +1,190 @@
+{
+  "host": "github.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/labels/entail%3Acleared"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "message": "Not Found",
+          "documentation_url": "https://docs.github.com/rest",
+          "status": "404"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "repos/acme/tally/labels",
+        "body": {
+          "name": "entail:cleared",
+          "color": "5319e7",
+          "description": "Set by entail: see its latest comment on the issue"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "id": 6001,
+          "node_id": "LA_6001",
+          "url": "https://api.github.com/repos/acme/tally/labels/entail%3Acleared",
+          "name": "entail:cleared",
+          "color": "5319e7",
+          "default": false,
+          "description": "Set by entail: see its latest comment on the issue"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "repos/acme/tally/issues/2/labels",
+        "body": {
+          "labels": [
+            "entail:cleared"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": [
+          {
+            "id": 6001,
+            "node_id": "LA_6001",
+            "url": "https://api.github.com/repos/acme/tally/labels/entail%3Acleared",
+            "name": "entail:cleared",
+            "color": "5319e7",
+            "default": false,
+            "description": "Set by entail: see its latest comment on the issue"
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/labels/entail%3Acleared"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "id": 6001,
+          "node_id": "LA_6001",
+          "url": "https://api.github.com/repos/acme/tally/labels/entail%3Acleared",
+          "name": "entail:cleared",
+          "color": "5319e7",
+          "default": false,
+          "description": "Set by entail: see its latest comment on the issue"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "repos/acme/tally/issues/3/labels",
+        "body": {
+          "labels": [
+            "entail:cleared"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": [
+          {
+            "id": 6001,
+            "node_id": "LA_6001",
+            "url": "https://api.github.com/repos/acme/tally/labels/entail%3Acleared",
+            "name": "entail:cleared",
+            "color": "5319e7",
+            "default": false,
+            "description": "Set by entail: see its latest comment on the issue"
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "repos/acme/tally/issues/2/labels/entail%3Acleared"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": []
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "repos/acme/tally/issues/2/labels/entail%3Ainvestigate"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "message": "Label does not exist",
+          "documentation_url": "https://docs.github.com/rest/issues/labels#remove-a-label-from-an-issue",
+          "status": "404"
+        }
+      }
+    }
+  ]
+}

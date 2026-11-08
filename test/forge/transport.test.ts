@@ -28,8 +28,14 @@ test("output without a status line is no response", () => {
   assert.equal(parseIncludedResponse("error connecting to api.github.com\n"), null);
 });
 
-/** A stand-in for `gh` that records its arguments, prints `stdout` and `stderr`, and exits with `code`. */
-function fakeCli(t: TestContext, stdout: string, code: number, stderr = "", delaySeconds = 0): { path: string; args: () => string[] } {
+/** A stand-in for `gh` that records its arguments and input, prints `stdout` and `stderr`, and exits with `code`. */
+function fakeCli(
+  t: TestContext,
+  stdout: string,
+  code: number,
+  stderr = "",
+  delaySeconds = 0,
+): { path: string; args: () => string[]; input: () => string } {
   const dir = mkdtempSync(join(tmpdir(), "entail-cli-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, "stdout"), stdout);
@@ -40,6 +46,7 @@ function fakeCli(t: TestContext, stdout: string, code: number, stderr = "", dela
     [
       "#!/bin/sh",
       `for arg in "$@"; do printf '%s\\0' "$arg"; done > "${dir}/args"`,
+      `cat > "${dir}/input"`,
       delaySeconds ? `sleep ${delaySeconds}` : "",
       `cat "${dir}/stdout"`,
       `cat "${dir}/stderr" >&2`,
@@ -48,7 +55,11 @@ function fakeCli(t: TestContext, stdout: string, code: number, stderr = "", dela
     ].join("\n"),
   );
   chmodSync(path, 0o755);
-  return { path, args: () => readFileSync(join(dir, "args"), "utf8").split("\0").slice(0, -1) };
+  return {
+    path,
+    args: () => readFileSync(join(dir, "args"), "utf8").split("\0").slice(0, -1),
+    input: () => readFileSync(join(dir, "input"), "utf8"),
+  };
 }
 
 test("a 304 that gh exits 1 on is a response, read from the HTTP status", async (t) => {
@@ -72,6 +83,39 @@ test("a 304 that gh exits 1 on is a response, read from the HTTP status", async 
     'If-None-Match: W/"abc"',
     "repos/acme/tally/issues?state=all",
   ]);
+});
+
+test("a write sends its JSON body on standard input, never as typed fields", async (t) => {
+  const cli = fakeCli(t, 'HTTP/2.0 201 Created\nContent-Type: application/json\n\n{"id":8001}', 0);
+  const body = { body: "Speaking from Omkar's entail:\n\nC1: `--input` is not a flag here.\n\n<!-- entail ticket 42 -->" };
+  const response = await new CliTransport("gh", { executable: cli.path }).request({
+    host: "github.com",
+    method: "POST",
+    path: "repos/acme/tally/issues/2/comments",
+    body,
+  });
+  assert.equal(response.status, 201);
+  assert.deepEqual(cli.args(), [
+    "api",
+    "--hostname",
+    "github.com",
+    "--include",
+    "--method",
+    "POST",
+    "--header",
+    "Content-Type: application/json",
+    "--input",
+    "-",
+    "repos/acme/tally/issues/2/comments",
+  ]);
+  assert.deepEqual(JSON.parse(cli.input()), body);
+});
+
+test("a read sends no body", async (t) => {
+  const cli = fakeCli(t, OK, 0);
+  await new CliTransport("glab", { executable: cli.path }).request({ host: "gitlab.com", method: "GET", path: "user" });
+  assert.equal(cli.input(), "");
+  assert.ok(!cli.args().includes("--input"));
 });
 
 test("an error status is a response too", async (t) => {

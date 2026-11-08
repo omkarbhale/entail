@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import { createForge } from "../../src/forge/create-forge.ts";
-import { ForgeLoggedOutError, ForgeRequestError, RateLimitedError } from "../../src/forge/forge.ts";
+import { ForgeLoggedOutError, ForgeRequestError, MergePendingError, RateLimitedError } from "../../src/forge/forge.ts";
 import { GitHubForge } from "../../src/forge/github.ts";
 import { GitLabForge } from "../../src/forge/gitlab.ts";
 import { type Exchange, RecordedTransport } from "./recorded-transport.ts";
@@ -164,3 +164,25 @@ for (const [name, cursor] of [
     assert.deepEqual(batch.changes, []);
   });
 }
+
+test("a merge still pending after the wait is no outcome: merge() throws the pending error instead of refusing", async (t) => {
+  const sha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+  const uuid = "6f1c2a9e-3b7d-4c55-9a1e-0d2f8b7c4e10";
+  const pending = { status: "pending", details: { message: "The merge request has been accepted and is being processed.", uuid } };
+  const transport = new RecordedTransport({
+    host: "github.com",
+    exchanges: [
+      {
+        request: {
+          method: "PUT",
+          path: "repos/acme/tally/pulls/4/merge-async",
+          body: { sha, merge_action: "direct_merge", bypass_rules: false },
+        },
+        response: { status: 202, body: pending },
+      },
+    ],
+  });
+  t.after(() => transport.assertDone());
+  const forge = new GitHubForge(SETTING, transport, { mergePollIntervalMs: 0, mergeWaitMs: 0 });
+  await assert.rejects(forge.merge(4, sha), (error: unknown) => error instanceof MergePendingError && error.prNumber === 4);
+});

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import type { ForgeRequest, ForgeResponse, Transport } from "../../src/forge/transport.ts";
+import type { ForgeMethod, ForgeRequest, ForgeResponse, Transport } from "../../src/forge/transport.ts";
 import { TransportError } from "../../src/forge/transport.ts";
 
 /**
@@ -8,7 +8,8 @@ import { TransportError } from "../../src/forge/transport.ts";
  * failure where no HTTP response came back (such as a logged-out CLI).
  */
 export interface Exchange {
-  request: { method: "GET"; path: string; headers?: Record<string, string> };
+  /** A write's request records its JSON body; a read has none. */
+  request: { method: ForgeMethod; path: string; headers?: Record<string, string>; body?: unknown };
   response?: { status: number; headers?: Record<string, string>; body?: unknown };
   error?: { message: string; loggedOut: boolean };
 }
@@ -25,8 +26,8 @@ export function loadRecording(url: URL): Recording {
 
 /**
  * The transport seam replaced by recorded responses. It expects exactly the
- * recorded requests in the recorded order, headers included, and answers each
- * with its recorded response.
+ * recorded requests in the recorded order, headers and bodies included, and
+ * answers each with its recorded response.
  */
 export class RecordedTransport implements Transport {
   readonly #host: string;
@@ -43,8 +44,8 @@ export class RecordedTransport implements Transport {
     const next = this.#exchanges.shift();
     assert.ok(next, `unexpected request: ${request.method} ${request.path}`);
     assert.deepEqual(
-      { host: request.host, method: request.method, path: request.path, headers: request.headers ?? {} },
-      { host: this.#host, method: next.request.method, path: next.request.path, headers: next.request.headers ?? {} },
+      { host: request.host, method: request.method, path: request.path, headers: request.headers ?? {}, body: request.body },
+      { host: this.#host, method: next.request.method, path: next.request.path, headers: next.request.headers ?? {}, body: next.request.body },
       "the request is the next one recorded",
     );
     if (next.error) throw new TransportError(next.error.message, next.error.loggedOut);

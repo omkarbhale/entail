@@ -1,0 +1,89 @@
+{
+  "host": "github.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "PATCH",
+        "path": "repos/acme/tally/issues/7",
+        "body": {
+          "state": "closed",
+          "state_reason": "not_planned"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "url": "https://api.github.com/repos/acme/tally/issues/7",
+          "html_url": "https://github.com/acme/tally/issues/7",
+          "id": 9007,
+          "number": 7,
+          "title": "Count the words of a web page given its URL",
+          "user": {
+            "login": "reporter",
+            "id": 1002,
+            "node_id": "U_1002",
+            "type": "User",
+            "site_admin": false
+          },
+          "labels": [],
+          "state": "closed",
+          "state_reason": "not_planned",
+          "created_at": "2026-11-01T10:00:00Z",
+          "updated_at": "2026-11-08T10:00:00Z",
+          "closed_at": "2026-11-08T10:00:00Z",
+          "body": "x"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PATCH",
+        "path": "repos/acme/tally/issues/2",
+        "body": {
+          "state": "closed",
+          "state_reason": "completed"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "url": "https://api.github.com/repos/acme/tally/issues/2",
+          "html_url": "https://github.com/acme/tally/issues/2",
+          "id": 9002,
+          "number": 2,
+          "title": "Count the words of a web page given its URL",
+          "user": {
+            "login": "reporter",
+            "id": 1002,
+            "node_id": "U_1002",
+            "type": "User",
+            "site_admin": false
+          },
+          "labels": [],
+          "state": "closed",
+          "state_reason": "completed",
+          "created_at": "2026-11-01T10:00:00Z",
+          "updated_at": "2026-11-08T10:00:00Z",
+          "closed_at": "2026-11-08T10:00:00Z",
+          "body": "x"
+        }
+      }
+    }
+  ]
+}

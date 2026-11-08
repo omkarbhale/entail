@@ -124,9 +124,77 @@ export interface ChangeBatch {
   cursor: ChangeCursor;
 }
 
+/** What a write or a comment read is on: an issue or a PR, by its number. */
+export type ForgeTarget = "issue" | "pr";
+
+/** A comment as the forge reports it, on an issue or a PR. */
+export interface ForgeComment {
+  /** The forge's numeric id for the comment. */
+  id: number;
+  body: string;
+  author: Actor;
+  /** ISO time. */
+  createdAt: string;
+  url: string;
+}
+
+/** A comment the forge accepted. */
+export interface PostedComment {
+  id: number;
+  url: string;
+}
+
+/**
+ * Why an issue is closed. GitHub records the reason, and closes as not
+ * planned where asked; GitLab has no reason to record.
+ */
+export type CloseReason = "completed" | "not-planned";
+
+/** How GitHub merges a PR: the method set at enrollment. GitLab uses the project's own. */
+export type MergeMethod = "merge" | "squash" | "rebase";
+
+/**
+ * What a merge came to. Anything other than merged is a refusal, with the
+ * forge's reason (ADR-0014, ADR-0015).
+ */
+export type MergeOutcome = { merged: true; mergeCommitSha: string | null } | { merged: false; refusal: string };
+
+/** A PR's state as read to settle a merge: open, closed without merging, or merged. */
+export interface PullRequestState {
+  state: "open" | "closed" | "merged";
+  headSha: string;
+  /** The commit the merge made, when merged and the forge reports one. */
+  mergeCommitSha: string | null;
+}
+
+/** Words entail's comments use that differ by forge. */
+export interface ForgeWording {
+  /** "pull request" on GitHub, "merge request" on GitLab. */
+  pullRequest: string;
+}
+
+/** Every label entail writes starts with this, and it writes no other label (ADR-0013). */
+export const ENTAIL_LABEL_PREFIX = "entail:";
+
+/** The colour a missing `entail:` label is created with, as six hex digits. */
+export const ENTAIL_LABEL_COLOR = "5319e7";
+
+/** The description a missing `entail:` label is created with. */
+export const ENTAIL_LABEL_DESCRIPTION = "Set by entail: see its latest comment on the issue";
+
+/** Throws unless `label` is an `entail:` label entail may write. */
+export function assertEntailLabel(label: string): void {
+  if (!label.startsWith(ENTAIL_LABEL_PREFIX) || label.length === ENTAIL_LABEL_PREFIX.length || /[,\s]/.test(label)) {
+    throw new Error(`entail writes only its own labels, such as entail:cleared, not ${JSON.stringify(label)}`);
+  }
+}
+
 /** One forge's social layer for one enrolled repo (ADR-0015). */
 export interface Forge {
   readonly setting: ForgeSetting;
+
+  /** Words for entail's comments on this forge, such as "merge request" on GitLab. */
+  readonly wording: ForgeWording;
 
   /**
    * The account the owner's CLI is logged in as for this host, or null when
@@ -148,6 +216,42 @@ export interface Forge {
    * @throws {ForgeLoggedOutError} when the host's CLI is not logged in.
    */
   changesSince(cursor: ChangeCursor | null): Promise<ChangeBatch>;
+
+  // The four writes (ADR-0015). They go out only through entail's forge
+  // writer, which records each as an intent first and enforces the comment
+  // rules; nothing else calls them.
+
+  /** Posts a comment on an issue or PR, exactly as given. */
+  postComment(target: ForgeTarget, number: number, body: string): Promise<PostedComment>;
+
+  /** Adds an `entail:` label to an issue, creating the label in the repo first if it is missing. */
+  addLabel(issueNumber: number, label: string): Promise<void>;
+
+  /** Removes an `entail:` label from an issue. A label the issue does not carry is already removed. */
+  removeLabel(issueNumber: number, label: string): Promise<void>;
+
+  /** Closes an issue; on GitHub, with the reason given. An issue already closed stays closed. */
+  closeIssue(issueNumber: number, reason: CloseReason): Promise<void>;
+
+  /**
+   * Merges a PR only at `sha`, never bypassing rules and never through the
+   * forge's auto-merge. Every definitive outcome but merged is returned as a
+   * refusal.
+   *
+   * @throws {MergePendingError} when the forge is still running the merge
+   *   after the wait. That is no outcome yet: the writer leaves the intent
+   *   unconfirmed, and asking again or settling on start reads the PR's state.
+   * @throws {RateLimitedError} or {@link ForgeLoggedOutError} when the merge was not asked for at all.
+   */
+  merge(prNumber: number, sha: string, method?: MergeMethod): Promise<MergeOutcome>;
+
+  // Reads that settle unconfirmed writes on start (ADR-0017).
+
+  /** Every comment by people on an issue or PR, oldest first. */
+  comments(target: ForgeTarget, number: number): Promise<ForgeComment[]>;
+
+  /** A PR's state, to learn whether a merge went through. */
+  pullRequestState(prNumber: number): Promise<PullRequestState>;
 }
 
 /**
@@ -163,6 +267,19 @@ export class RateLimitedError extends Error {
     this.name = "RateLimitedError";
     this.host = host;
     this.resetAt = resetAt;
+  }
+}
+
+/** The forge was still running a merge when the wait for it ended, so the merge has no outcome yet. */
+export class MergePendingError extends Error {
+  readonly host: string;
+  readonly prNumber: number;
+
+  constructor(host: string, prNumber: number, waitedMs: number) {
+    super(`${host} had not finished merging #${prNumber} after ${Math.round(waitedMs / 1000)} seconds`);
+    this.name = "MergePendingError";
+    this.host = host;
+    this.prNumber = prNumber;
   }
 }
 

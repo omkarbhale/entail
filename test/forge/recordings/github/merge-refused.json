@@ -1,0 +1,88 @@
+{
+  "host": "github.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "PUT",
+        "path": "repos/acme/tally/pulls/5/merge-async",
+        "body": {
+          "sha": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+          "merge_action": "direct_merge",
+          "bypass_rules": false
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "status": "pending",
+          "details": {
+            "message": "The merge request has been accepted and is being processed.",
+            "uuid": "0a9b8c7d-6e5f-4a3b-2c1d-0e9f8a7b6c5d",
+            "merge_method": "default",
+            "merge_action": "direct_merge",
+            "expected_head_sha": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+            "bypass_rules": false
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/pulls/5/merge-async/0a9b8c7d-6e5f-4a3b-2c1d-0e9f8a7b6c5d"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "status": "failed",
+          "details": {
+            "message": "Head branch was modified. Review and try the merge again."
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "repos/acme/tally/pulls/6/merge-async",
+        "body": {
+          "sha": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+          "merge_action": "direct_merge",
+          "bypass_rules": false
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "message": "Pull request is in draft state",
+          "documentation_url": "https://docs.github.com/rest/pulls/pulls#merge-a-pull-request-asynchronously",
+          "status": "400"
+        }
+      }
+    }
+  ]
+}

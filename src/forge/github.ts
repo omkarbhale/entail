@@ -1,19 +1,32 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   type Actor,
+  assertEntailLabel,
   type Change,
   type ChangeBatch,
   type ChangeCursor,
+  type CloseReason,
+  ENTAIL_LABEL_COLOR,
+  ENTAIL_LABEL_DESCRIPTION,
   type Forge,
+  type ForgeComment,
   type ForgeInstance,
   ForgeLoggedOutError,
   ForgeRequestError,
+  MergePendingError,
   type ForgeSetting,
+  type ForgeTarget,
+  type ForgeWording,
   type Issue,
   type IssueComment,
+  type MergeMethod,
+  type MergeOutcome,
+  type PostedComment,
   type Project,
+  type PullRequestState,
   RateLimitedError,
 } from "./forge.ts";
-import { type ForgeResponse, type Transport, TransportError } from "./transport.ts";
+import { type ForgeMethod, type ForgeResponse, type Transport, TransportError } from "./transport.ts";
 
 /** The only GitHub host in MVP-1; GitHub Enterprise Server is out of it (ADR-0015). */
 export const GITHUB_HOST = "github.com";
@@ -22,6 +35,17 @@ const PAGE_SIZE = 100;
 /** GitHub asks clients to wait at least a minute when it gives no reset time. */
 const DEFAULT_RATE_LIMIT_WAIT_MS = 60_000;
 const REPO_PATH = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+/** How often a merge GitHub is still running in the background is read again. */
+const MERGE_POLL_INTERVAL_MS = 2_000;
+/** How long to wait for a background merge before it counts as still pending. */
+const MERGE_WAIT_MS = 120_000;
+
+export interface GitHubForgeOptions {
+  /** How often a background merge is read again; tests set 0. */
+  mergePollIntervalMs?: number;
+  /** How long a background merge is waited for. */
+  mergeWaitMs?: number;
+}
 
 /** Where one ETag-conditional list read got to. */
 interface ListCursor {
@@ -45,9 +69,12 @@ interface GitHubCursor {
  */
 export class GitHubForge implements Forge {
   readonly setting: ForgeSetting;
+  readonly wording: ForgeWording = { pullRequest: "pull request" };
   readonly #transport: Transport;
+  readonly #mergePollIntervalMs: number;
+  readonly #mergeWaitMs: number;
 
-  constructor(setting: ForgeSetting, transport: Transport) {
+  constructor(setting: ForgeSetting, transport: Transport, options: GitHubForgeOptions = {}) {
     if (setting.forge !== "github") {
       throw new Error(`the GitHub adapter cannot serve a ${setting.forge} repo`);
     }
@@ -59,6 +86,8 @@ export class GitHubForge implements Forge {
     }
     this.setting = setting;
     this.#transport = transport;
+    this.#mergePollIntervalMs = options.mergePollIntervalMs ?? MERGE_POLL_INTERVAL_MS;
+    this.#mergeWaitMs = options.mergeWaitMs ?? MERGE_WAIT_MS;
   }
 
   async currentActor(): Promise<Actor | null> {
@@ -133,8 +162,8 @@ export class GitHubForge implements Forge {
     let page: ForgeResponse = response;
     let path = first;
     for (;;) {
-      this.#ensureOk(page, path);
-      const body = parseJson(page, this.setting.host, path);
+      this.#ensureOk(page, path, "GET");
+      const body = parseJson(page, this.setting.host, path, "GET");
       if (!Array.isArray(body)) throw this.#malformed(page.status, path, "expected a list");
       items.push(...body);
       const next = nextPagePath(page.headers.link);
@@ -153,15 +182,161 @@ export class GitHubForge implements Forge {
     return { items, cursor: { since, etag } };
   }
 
-  async #getJson(path: string): Promise<unknown> {
-    const response = await this.#get(path, {});
-    this.#ensureOk(response, path);
-    return parseJson(response, this.setting.host, path);
+
+  // Writes
+
+  /** Issues and PRs share GitHub's issue comments, so both post there. */
+  async postComment(_target: ForgeTarget, number: number, body: string): Promise<PostedComment> {
+    const path = `repos/${this.setting.path}/issues/${number}/comments`;
+    const comment = await this.#sendJson("POST", path, { body });
+    return { id: field(comment, "id", "number", path), url: field(comment, "html_url", "string", path) };
   }
 
-  async #get(path: string, headers: Record<string, string>): Promise<ForgeResponse> {
+  async addLabel(issueNumber: number, label: string): Promise<void> {
+    assertEntailLabel(label);
+    await this.#ensureLabel(label);
+    const path = `repos/${this.setting.path}/issues/${issueNumber}/labels`;
+    await this.#sendJson("POST", path, { labels: [label] });
+  }
+
+  async removeLabel(issueNumber: number, label: string): Promise<void> {
+    assertEntailLabel(label);
+    const path = `repos/${this.setting.path}/issues/${issueNumber}/labels/${encodeURIComponent(label)}`;
+    const response = await this.#send("DELETE", path);
+    // GitHub answers 404 when the issue does not carry the label: it is already removed.
+    if (response.status === 404) return;
+    this.#ensureOk(response, path, "DELETE");
+  }
+
+  async closeIssue(issueNumber: number, reason: CloseReason): Promise<void> {
+    const path = `repos/${this.setting.path}/issues/${issueNumber}`;
+    await this.#sendJson("PATCH", path, { state: "closed", state_reason: reason === "not-planned" ? "not_planned" : "completed" });
+  }
+
+  /**
+   * Merges through `merge-async`, pinned to `sha`, as a direct merge that
+   * bypasses no rules. GitHub may run the merge in the background, so a
+   * pending merge is read again until it merges or fails, or until
+   * {@link MERGE_WAIT_MS} has passed, which throws {@link MergePendingError}.
+   */
+  async merge(prNumber: number, sha: string, method?: MergeMethod): Promise<MergeOutcome> {
+    const path = `repos/${this.setting.path}/pulls/${prNumber}/merge-async`;
+    const body: Record<string, unknown> = { sha, merge_action: "direct_merge", bypass_rules: false };
+    if (method) body.merge_method = method;
+    const started = await this.#send("PUT", path, body);
+    const refusal = this.#refusal(started, path, "PUT");
+    if (refusal !== null) return { merged: false, refusal };
+
+    const deadline = Date.now() + this.#mergeWaitMs;
+    let result = parseJson(started, this.setting.host, path, "PUT");
+    for (;;) {
+      const status = isObject(result) ? result.status : undefined;
+      const details = isObject(result) && isObject(result.details) ? result.details : {};
+      const message = typeof details.message === "string" ? details.message : null;
+      if (status === "merged") {
+        return { merged: true, mergeCommitSha: typeof details.sha === "string" ? details.sha : null };
+      }
+      if (status === "failed") return { merged: false, refusal: message ?? "GitHub reported that the merge failed" };
+      if (status === "enqueued") return { merged: false, refusal: "GitHub put the pull request in a merge queue instead of merging it" };
+      if (status !== "pending" || typeof details.uuid !== "string") {
+        throw new ForgeRequestError(this.setting.host, started.status, "PUT", path, `unexpected merge status ${String(status)}`);
+      }
+      if (Date.now() >= deadline) {
+        throw new MergePendingError(this.setting.host, prNumber, this.#mergeWaitMs);
+      }
+      if (this.#mergePollIntervalMs > 0) await sleep(this.#mergePollIntervalMs);
+      result = await this.#getJson(`${path}/${encodeURIComponent(details.uuid)}`);
+    }
+  }
+
+  // Reads that settle writes
+
+  async comments(_target: ForgeTarget, number: number): Promise<ForgeComment[]> {
+    const items = await this.#readAll(`repos/${this.setting.path}/issues/${number}/comments?per_page=${PAGE_SIZE}`);
+    return items.map((raw) => {
+      const { issueNumber: _issueNumber, updatedAt: _updatedAt, ...comment } = this.#comment(raw);
+      return comment;
+    });
+  }
+
+  async pullRequestState(prNumber: number): Promise<PullRequestState> {
+    const path = `repos/${this.setting.path}/pulls/${prNumber}`;
+    const pr = await this.#getJson(path);
+    const merged = isObject(pr) && pr.merged === true;
+    const state = field(pr, "state", "string", path);
+    const head = isObject(pr) ? pr.head : undefined;
+    return {
+      state: merged ? "merged" : state === "open" ? "open" : "closed",
+      headSha: field(head, "sha", "string", `${path} head`),
+      mergeCommitSha: merged && isObject(pr) && typeof pr.merge_commit_sha === "string" ? pr.merge_commit_sha : null,
+    };
+  }
+
+  /** Creates `label` in the repo unless it is there already. */
+  async #ensureLabel(label: string): Promise<void> {
+    const path = `repos/${this.setting.path}/labels/${encodeURIComponent(label)}`;
+    const found = await this.#send("GET", path);
+    if (found.status !== 404) {
+      this.#ensureOk(found, path, "GET");
+      return;
+    }
+    const create = `repos/${this.setting.path}/labels`;
+    const created = await this.#send("POST", create, { name: label, color: ENTAIL_LABEL_COLOR, description: ENTAIL_LABEL_DESCRIPTION });
+    // 422 is GitHub's answer when the label was created meanwhile.
+    if (created.status === 422 && /already_exists/.test(created.body)) return;
+    this.#ensureOk(created, create, "POST");
+  }
+
+  /**
+   * Why GitHub refused a merge, or null when it accepted it. A rate limit
+   * or a refused login is thrown, as nothing was asked; any other 4xx is the
+   * forge's refusal; a 5xx is thrown, as the merge's fate is unknown.
+   */
+  #refusal(response: ForgeResponse, path: string, method: ForgeMethod): string | null {
+    const { status } = response;
+    if (status >= 200 && status < 300) return null;
+    if (status >= 500 || rateLimitReset(response) || status === 401) this.#ensureOk(response, path, method);
+    return `GitHub refused the merge (HTTP ${status}): ${errorDetail(response)}`;
+  }
+
+  /** Every item of a list, following its `Link` pages. */
+  async #readAll(first: string): Promise<unknown[]> {
+    const items: unknown[] = [];
+    let path: string | null = first;
+    while (path !== null) {
+      const page = await this.#send("GET", path);
+      this.#ensureOk(page, path, "GET");
+      const body = parseJson(page, this.setting.host, path, "GET");
+      if (!Array.isArray(body)) throw this.#malformed(page.status, path, "expected a list");
+      items.push(...body);
+      path = nextPagePath(page.headers.link);
+    }
+    return items;
+  }
+
+  async #sendJson(method: ForgeMethod, path: string, body: unknown): Promise<unknown> {
+    const response = await this.#send(method, path, body);
+    this.#ensureOk(response, path, method);
+    return response.body.trim() === "" ? null : parseJson(response, this.setting.host, path, method);
+  }
+
+  async #getJson(path: string): Promise<unknown> {
+    const response = await this.#get(path, {});
+    this.#ensureOk(response, path, "GET");
+    return parseJson(response, this.setting.host, path, "GET");
+  }
+
+  #get(path: string, headers: Record<string, string>): Promise<ForgeResponse> {
+    return this.#request({ host: this.setting.host, method: "GET", path, headers });
+  }
+
+  #send(method: ForgeMethod, path: string, body?: unknown): Promise<ForgeResponse> {
+    return this.#request({ host: this.setting.host, method, path, ...(body === undefined ? {} : { body }) });
+  }
+
+  async #request(request: Parameters<Transport["request"]>[0]): Promise<ForgeResponse> {
     try {
-      return await this.#transport.request({ host: this.setting.host, method: "GET", path, headers });
+      return await this.#transport.request(request);
     } catch (error) {
       if (error instanceof TransportError && error.loggedOut) {
         throw new ForgeLoggedOutError(this.setting.host, error.message);
@@ -171,20 +346,13 @@ export class GitHubForge implements Forge {
   }
 
   /** Throws for anything but a 2xx: a rate limit with its reset time, a refused login, or a request error. */
-  #ensureOk(response: ForgeResponse, path: string): void {
+  #ensureOk(response: ForgeResponse, path: string, method: ForgeMethod): void {
     const { status } = response;
     if (status >= 200 && status < 300) return;
     const resetAt = rateLimitReset(response);
     if (resetAt) throw new RateLimitedError(this.setting.host, resetAt);
-    if (status === 401) throw new ForgeLoggedOutError(this.setting.host, `GET ${path} answered HTTP 401`);
-    let detail = response.body.slice(0, 200);
-    try {
-      const body: unknown = JSON.parse(response.body);
-      if (isObject(body) && typeof body.message === "string") detail = body.message;
-    } catch {
-      // Not JSON; the start of the body is the detail.
-    }
-    throw new ForgeRequestError(this.setting.host, status, "GET", path, detail);
+    if (status === 401) throw new ForgeLoggedOutError(this.setting.host, `${method} ${path} answered HTTP 401`);
+    throw new ForgeRequestError(this.setting.host, status, method, path, errorDetail(response));
   }
 
   #actor(raw: unknown, where: string): Actor {
@@ -293,12 +461,23 @@ function nextPagePath(link: string | undefined): string | null {
   return null;
 }
 
-function parseJson(response: ForgeResponse, host: string, path: string): unknown {
+function parseJson(response: ForgeResponse, host: string, path: string, method: ForgeMethod): unknown {
   try {
     return JSON.parse(response.body);
   } catch {
-    throw new ForgeRequestError(host, response.status, "GET", path, "the response body is not JSON");
+    throw new ForgeRequestError(host, response.status, method, path, "the response body is not JSON");
   }
+}
+
+/** GitHub's own message for an error response, or the start of its body. */
+function errorDetail(response: ForgeResponse): string {
+  try {
+    const body: unknown = JSON.parse(response.body);
+    if (isObject(body) && typeof body.message === "string") return body.message;
+  } catch {
+    // Not JSON; the start of the body is the detail.
+  }
+  return response.body.slice(0, 200);
 }
 
 function field<K extends "string" | "number">(

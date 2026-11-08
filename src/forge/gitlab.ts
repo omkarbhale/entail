@@ -1,19 +1,30 @@
 import {
   type Actor,
+  assertEntailLabel,
   type Change,
   type ChangeBatch,
   type ChangeCursor,
+  type CloseReason,
+  ENTAIL_LABEL_COLOR,
+  ENTAIL_LABEL_DESCRIPTION,
   type Forge,
+  type ForgeComment,
   type ForgeInstance,
   ForgeLoggedOutError,
   ForgeRequestError,
   type ForgeSetting,
+  type ForgeTarget,
+  type ForgeWording,
   type Issue,
   type IssueComment,
+  type MergeMethod,
+  type MergeOutcome,
+  type PostedComment,
   type Project,
+  type PullRequestState,
   RateLimitedError,
 } from "./forge.ts";
-import { type ForgeResponse, type Transport, TransportError } from "./transport.ts";
+import { type ForgeMethod, type ForgeRequest, type ForgeResponse, type Transport, TransportError } from "./transport.ts";
 
 /**
  * The oldest GitLab entail serves: 15.6 is the first version with a merge
@@ -56,6 +67,7 @@ interface GitLabCursor {
  */
 export class GitLabForge implements Forge {
   readonly setting: ForgeSetting;
+  readonly wording: ForgeWording = { pullRequest: "merge request" };
   readonly #transport: Transport;
   /** The project as GitLab's API names it: its path, URL-encoded into one segment. */
   readonly #projectRef: string;
@@ -159,8 +171,8 @@ export class GitLabForge implements Forge {
     let path = `${base}?${params}`;
     for (;;) {
       const response = await this.#get(path);
-      this.#ensureOk(response, path);
-      const body = parseJson(response, this.setting.host, path);
+      this.#ensureOk(response, path, "GET");
+      const body = parseJson(response, this.setting.host, path, "GET");
       if (!Array.isArray(body)) throw this.#malformed(response.status, path, "expected a list");
       for (const item of body) {
         if (stop(item)) return items;
@@ -174,15 +186,134 @@ export class GitLabForge implements Forge {
     }
   }
 
-  async #getJson(path: string): Promise<unknown> {
-    const response = await this.#get(path);
-    this.#ensureOk(response, path);
-    return parseJson(response, this.setting.host, path);
+
+  // Writes
+
+  async postComment(target: ForgeTarget, number: number, body: string): Promise<PostedComment> {
+    const path = `${this.#projectRef}/${noteableSegment(target)}/${number}/notes`;
+    const note = await this.#sendJson("POST", path, { body });
+    const id = this.#field(note, "id", "number", path);
+    return { id, url: this.#noteUrl(target, number, id) };
   }
 
-  async #get(path: string): Promise<ForgeResponse> {
+  async addLabel(issueNumber: number, label: string): Promise<void> {
+    assertEntailLabel(label);
+    await this.#ensureLabel(label);
+    await this.#sendJson("PUT", `${this.#projectRef}/issues/${issueNumber}`, { add_labels: label });
+  }
+
+  /** GitLab ignores removing a label the issue does not carry, so it is already removed. */
+  async removeLabel(issueNumber: number, label: string): Promise<void> {
+    assertEntailLabel(label);
+    await this.#sendJson("PUT", `${this.#projectRef}/issues/${issueNumber}`, { remove_labels: label });
+  }
+
+  /** GitLab records no close reason, so every close is the same. */
+  async closeIssue(issueNumber: number, _reason: CloseReason): Promise<void> {
+    await this.#sendJson("PUT", `${this.#projectRef}/issues/${issueNumber}`, { state_event: "close" });
+  }
+
+  /**
+   * Merges through `merge` pinned to `sha`, with the project's own merge
+   * method and without `auto_merge`, so GitLab merges now or refuses.
+   */
+  async merge(prNumber: number, sha: string, _method?: MergeMethod): Promise<MergeOutcome> {
+    const path = `${this.#projectRef}/merge_requests/${prNumber}/merge`;
+    const response = await this.#send("PUT", path, { sha });
+    const { status } = response;
+    if (status >= 500 || status === 401 || status === 429) this.#ensureOk(response, path, "PUT");
+    if (status < 200 || status >= 300) {
+      return { merged: false, refusal: `GitLab refused the merge (HTTP ${status}): ${errorDetail(response)}` };
+    }
+    const mr = parseJson(response, this.setting.host, path, "PUT");
+    const state = this.#field(mr, "state", "string", path);
+    if (state !== "merged") return { merged: false, refusal: `GitLab left the merge request ${state} instead of merging it` };
+    return { merged: true, mergeCommitSha: mergeCommitOf(mr) };
+  }
+
+  // Reads that settle writes
+
+  async comments(target: ForgeTarget, number: number): Promise<ForgeComment[]> {
+    const params = new URLSearchParams({ order_by: "created_at", sort: "asc", per_page: String(PAGE_SIZE) });
+    const notes = await this.#readPages(`${this.#projectRef}/${noteableSegment(target)}/${number}/notes`, params, () => false);
+    return notes
+      .filter((raw) => !(isObject(raw) && raw.system === true))
+      .map((raw) => {
+        const where = "note";
+        const id = this.#field(raw, "id", "number", where);
+        return {
+          id,
+          body: isObject(raw) && typeof raw.body === "string" ? raw.body : "",
+          author: this.#actor(isObject(raw) ? raw.author : undefined, `${where} author`),
+          createdAt: isoTime(this.#field(raw, "created_at", "string", where)),
+          url: this.#noteUrl(target, number, id),
+        };
+      });
+  }
+
+  async pullRequestState(prNumber: number): Promise<PullRequestState> {
+    const path = `${this.#projectRef}/merge_requests/${prNumber}`;
+    const mr = await this.#getJson(path);
+    const state = this.#field(mr, "state", "string", path);
+    const merged = state === "merged";
+    return {
+      // A locked merge request is one GitLab is merging right now: still open.
+      state: merged ? "merged" : state === "closed" ? "closed" : "open",
+      headSha: this.#field(mr, "sha", "string", path),
+      mergeCommitSha: merged ? mergeCommitOf(mr) : null,
+    };
+  }
+
+  /** Creates `label` in the project unless it is there already. */
+  async #ensureLabel(label: string): Promise<void> {
+    const path = `${this.#projectRef}/labels/${encodeURIComponent(label)}`;
+    const found = await this.#send("GET", path);
+    if (found.status !== 404) {
+      this.#ensureOk(found, path, "GET");
+      return;
+    }
+    const create = `${this.#projectRef}/labels`;
+    const created = await this.#send("POST", create, {
+      name: label,
+      color: `#${ENTAIL_LABEL_COLOR}`,
+      description: ENTAIL_LABEL_DESCRIPTION,
+    });
+    // 409 is GitLab's answer when the label was created meanwhile.
+    if (created.status === 409) return;
+    this.#ensureOk(created, create, "POST");
+  }
+
+  /**
+   * A note's web URL. The notes API gives none, so it is built from the host
+   * and path the owner's `glab` reaches, anchored at the note.
+   */
+  #noteUrl(target: ForgeTarget, number: number, id: number): string {
+    return `https://${this.setting.host}/${this.setting.path}/-/${noteableSegment(target)}/${number}#note_${id}`;
+  }
+
+  async #sendJson(method: ForgeMethod, path: string, body: unknown): Promise<unknown> {
+    const response = await this.#send(method, path, body);
+    this.#ensureOk(response, path, method);
+    return response.body.trim() === "" ? null : parseJson(response, this.setting.host, path, method);
+  }
+
+  async #getJson(path: string): Promise<unknown> {
+    const response = await this.#get(path);
+    this.#ensureOk(response, path, "GET");
+    return parseJson(response, this.setting.host, path, "GET");
+  }
+
+  #get(path: string): Promise<ForgeResponse> {
+    return this.#request({ host: this.setting.host, method: "GET", path });
+  }
+
+  #send(method: ForgeMethod, path: string, body?: unknown): Promise<ForgeResponse> {
+    return this.#request({ host: this.setting.host, method, path, ...(body === undefined ? {} : { body }) });
+  }
+
+  async #request(request: ForgeRequest): Promise<ForgeResponse> {
     try {
-      return await this.#transport.request({ host: this.setting.host, method: "GET", path });
+      return await this.#transport.request(request);
     } catch (error) {
       if (error instanceof TransportError && error.loggedOut) {
         throw new ForgeLoggedOutError(this.setting.host, error.message);
@@ -192,22 +323,14 @@ export class GitLabForge implements Forge {
   }
 
   /** Throws for anything but a 2xx: a rate limit with its reset time, a refused login, or a request error. */
-  #ensureOk(response: ForgeResponse, path: string): void {
+  #ensureOk(response: ForgeResponse, path: string, method: ForgeMethod): void {
     const { status } = response;
     if (status >= 200 && status < 300) return;
     if (status === 429) throw new RateLimitedError(this.setting.host, rateLimitReset(response));
     // glab sends no token for a host it has none for, and an expired or revoked
     // token is refused the same way.
-    if (status === 401) throw new ForgeLoggedOutError(this.setting.host, `GET ${path} answered HTTP 401`);
-    let detail = response.body.slice(0, 200);
-    try {
-      const body: unknown = JSON.parse(response.body);
-      if (isObject(body) && typeof body.message === "string") detail = body.message;
-      else if (isObject(body) && typeof body.error === "string") detail = body.error;
-    } catch {
-      // Not JSON; the start of the body is the detail.
-    }
-    throw new ForgeRequestError(this.setting.host, status, "GET", path, detail);
+    if (status === 401) throw new ForgeLoggedOutError(this.setting.host, `${method} ${path} answered HTTP 401`);
+    throw new ForgeRequestError(this.setting.host, status, method, path, errorDetail(response));
   }
 
   #actor(raw: unknown, where: string): Actor {
@@ -310,12 +433,37 @@ function rateLimitReset(response: ForgeResponse): Date {
   return new Date(Date.now() + DEFAULT_RATE_LIMIT_WAIT_MS);
 }
 
-function parseJson(response: ForgeResponse, host: string, path: string): unknown {
+function parseJson(response: ForgeResponse, host: string, path: string, method: ForgeMethod): unknown {
   try {
     return JSON.parse(response.body);
   } catch {
-    throw new ForgeRequestError(host, response.status, "GET", path, "the response body is not JSON");
+    throw new ForgeRequestError(host, response.status, method, path, "the response body is not JSON");
   }
+}
+
+/** GitLab's own message for an error response, or the start of its body. */
+function errorDetail(response: ForgeResponse): string {
+  try {
+    const body: unknown = JSON.parse(response.body);
+    if (isObject(body) && typeof body.message === "string") return body.message;
+    if (isObject(body) && typeof body.error === "string") return body.error;
+  } catch {
+    // Not JSON; the start of the body is the detail.
+  }
+  return response.body.slice(0, 200);
+}
+
+/** Where GitLab's API keeps a target's notes. */
+function noteableSegment(target: ForgeTarget): "issues" | "merge_requests" {
+  return target === "issue" ? "issues" : "merge_requests";
+}
+
+/** The commit a merged merge request made: the merge commit, or the squash commit when it was squashed alone. */
+function mergeCommitOf(mr: unknown): string | null {
+  if (!isObject(mr)) return null;
+  if (typeof mr.merge_commit_sha === "string") return mr.merge_commit_sha;
+  if (typeof mr.squash_commit_sha === "string") return mr.squash_commit_sha;
+  return null;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

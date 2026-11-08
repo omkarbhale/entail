@@ -1,13 +1,18 @@
 import { execFile } from "node:child_process";
 
+/** The HTTP methods the adapters use: GET for reads, the others for the four writes. */
+export type ForgeMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
 /** One API request an adapter makes to its host. */
 export interface ForgeRequest {
   host: string;
-  method: "GET";
+  method: ForgeMethod;
   /** The API path relative to the host's API root, with its query, such as `repos/acme/tally/issues?state=all`. */
   path: string;
   /** Extra request headers, such as `If-None-Match`. */
   headers?: Record<string, string>;
+  /** A JSON request body, sent as `application/json`. Only writes have one. */
+  body?: unknown;
 }
 
 /** The HTTP response to a {@link ForgeRequest}, whatever its status. */
@@ -84,13 +89,18 @@ export class CliTransport implements Transport {
 
   request(request: ForgeRequest): Promise<ForgeResponse> {
     const args = ["api", "--hostname", request.host, "--include", "--method", request.method];
-    for (const [name, value] of Object.entries(request.headers ?? {})) {
+    const headers = { ...request.headers };
+    if (request.body !== undefined) headers["Content-Type"] = "application/json";
+    for (const [name, value] of Object.entries(headers)) {
       args.push("--header", `${name}: ${value}`);
     }
+    // A body goes through standard input as raw JSON, so the CLI never reads
+    // it as typed fields or a file name.
+    if (request.body !== undefined) args.push("--input", "-");
     args.push(request.path);
 
     return new Promise((resolve, reject) => {
-      execFile(
+      const child = execFile(
         this.#executable,
         args,
         {
@@ -122,6 +132,9 @@ export class CliTransport implements Transport {
           reject(new TransportError(`${this.#cli} api ${request.method} ${request.path} on ${request.host}: ${detail}`, loggedOut));
         },
       );
+      // A CLI that exits before reading its input closes the pipe; its exit is what counts.
+      child.stdin?.on("error", () => {});
+      child.stdin?.end(request.body === undefined ? undefined : JSON.stringify(request.body));
     });
   }
 }

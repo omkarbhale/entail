@@ -676,6 +676,17 @@ export class Store {
     ).map(toIntent);
   }
 
+  /** The forge ids of the comments already confirmed for a repo's issue or PR, so settling never claims one twice. */
+  confirmedCommentIds(repoId: number, target: "issue" | "pr", number: number): string[] {
+    return this.#all(
+      `SELECT c.comment_id FROM forge_write_intents i JOIN forge_write_confirmations c ON c.intent_id = i.id
+       WHERE i.repo_id = ? AND i.target = ? AND i.number = ? AND c.comment_id IS NOT NULL ORDER BY i.id`,
+      repoId,
+      target,
+      number,
+    ).map((r) => str(r.comment_id));
+  }
+
   // Internals
 
   #time(): string {
