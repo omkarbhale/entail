@@ -11,6 +11,7 @@ import { takeInIfNew } from "./intake.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import { ModelRuns } from "./model-runs.ts";
 import type { OperationalLog } from "./operational-log.ts";
+import { pullInOnComment } from "./pull-in.ts";
 import type { RecordsCheck, RecordsStanding } from "./records-check.ts";
 import type { RepoSettings } from "./repo-settings.ts";
 import type { RepoRecord, SettingsVersionRecord, Store, TicketRecord } from "./store.ts";
@@ -119,8 +120,9 @@ export function repoForge(repo: RepoRecord, limiter: Limiter): Forge {
  * repo that is not paused or missing its records (spec §3), a pass:
  *
  * 1. checks the default branch head with `git ls-remote` and reads what
- *    changed on the forge, taking in the owner's new issues and handing each
- *    change to the change handlers;
+ *    changed on the forge, taking in the owner's new issues and the issues
+ *    the owner pulls in with `/entail`, and handing each change to the change
+ *    handlers;
  * 2. works out every non-final ticket's next owed step from its records and
  *    the latest forge state;
  * 3. starts that step unless the ticket already has one running.
@@ -291,6 +293,10 @@ export class Passes {
             takenIn.push(outcome.takenIn.id);
             this.#log.info("taken-in", { repoId, issue: change.issue.number, ticketId: outcome.takenIn.id });
           }
+        } else if (change.kind === "issue-comment") {
+          const context = { store: this.#store, forge, repo, settingsVersionId: settings.id, writer: pass.writer, log: this.#log };
+          const outcome = await pullInOnComment(context, change.comment);
+          if ("takenIn" in outcome) takenIn.push(outcome.takenIn.id);
         }
         for (const handle of this.#changeHandlers) await handle(change, pass);
       }

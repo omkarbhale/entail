@@ -292,3 +292,28 @@ test("each write counts as in flight until it settles, and stopping waits for th
   await assert.rejects(writer.comment({ ticketId: ticket.id }, "issue", 2, "no attribution"), CommentRuleError);
   assert.equal(inFlight.count, 0, "a refused write is not left in flight");
 });
+
+test("a reply with no ticket carries the replied comment's marker, and a lost answer is found by its text on start", async (t) => {
+  const { store, repo } = world(t);
+  let lose = true;
+  const forge = new StateForge({
+    afterWrite: () => {
+      if (lose) {
+        lose = false;
+        throw new Error("the connection dropped after the forge took the comment");
+      }
+    },
+  });
+  const writer = new ForgeWriter(store, forge, repo, OWNER);
+  const body = composeComment(OWNER, { reply: 7001 }, "Reopen it and pull it in again.");
+  const write = { ticketId: null, reply: 7001, purpose: "closed-issue-reply:7001" };
+  // Its marker must name the comment it replies to, not a ticket.
+  await assert.rejects(writer.comment({ ...write, reply: 7002 }, "issue", 3, body), CommentRuleError);
+  await assert.rejects(writer.comment(write, "issue", 3, composeComment(OWNER, 1, "Reopen it.")), CommentRuleError);
+  await assert.rejects(writer.comment(write, "issue", 3, body), /connection dropped/);
+  const [intent] = store.unconfirmedForgeWrites();
+  assert.equal(intent?.ticketId, null);
+
+  assert.deepEqual(await settleUnconfirmedWrites(store, () => forge), [{ intentId: intent!.id, kind: "comment", settled: "found by its hidden marker" }]);
+  assert.equal(forge.state.sends.comment, 1, "the reply was posted once");
+});

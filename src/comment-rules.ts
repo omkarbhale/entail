@@ -5,7 +5,8 @@
  * - its first line is the attribution line, naming the owner in the
  *   possessive, such as "Speaking from Omkar's entail:";
  * - it carries the hidden marker with its ticket's record id, by which entail
- *   finds its own comment again after a crash;
+ *   finds its own comment again after a crash (see {@link MarkerFor} for the
+ *   one comment posted where entail has no ticket);
  * - no line starts with `/`, so no line is ever a GitLab quick action.
  */
 
@@ -50,20 +51,39 @@ export function attributionLine(ownerName: string): string {
 }
 
 const MARKER = /<!-- entail ticket (\d+) -->/g;
+const REPLY_MARKER = /<!-- entail reply (\d+) -->/g;
 
 /**
- * The hidden marker carrying a ticket's record id: an HTML comment, which
- * both forges hide when they render the comment. It starts with `<`, so its
- * line never starts with `/`.
+ * What a comment's hidden marker carries: its ticket's record id, or, for
+ * entail's one reply to an `/entail` comment on a closed issue it has no
+ * ticket for, the forge id of that `/entail` comment, since there is no
+ * ticket record to name (ADR-0020).
  */
-export function hiddenMarker(ticketId: number): string {
-  if (!Number.isSafeInteger(ticketId) || ticketId <= 0) throw new Error(`a ticket's record id is a positive integer, not ${ticketId}`);
-  return `<!-- entail ticket ${ticketId} -->`;
+export type MarkerFor = number | { reply: number };
+
+/**
+ * The hidden marker carrying a ticket's record id, or the `/entail` comment a
+ * reply answers: an HTML comment, which both forges hide when they render the
+ * comment. It starts with `<`, so its line never starts with `/`.
+ */
+export function hiddenMarker(markerFor: MarkerFor): string {
+  if (typeof markerFor !== "number") {
+    const { reply } = markerFor;
+    if (!Number.isSafeInteger(reply) || reply <= 0) throw new Error(`a comment's forge id is a positive integer, not ${reply}`);
+    return `<!-- entail reply ${reply} -->`;
+  }
+  if (!Number.isSafeInteger(markerFor) || markerFor <= 0) throw new Error(`a ticket's record id is a positive integer, not ${markerFor}`);
+  return `<!-- entail ticket ${markerFor} -->`;
 }
 
 /** The ticket record ids of the hidden markers in a comment body, in order. */
 export function markedTickets(body: string): number[] {
   return [...body.matchAll(MARKER)].map((match) => Number(match[1]));
+}
+
+/** The `/entail` comment ids of the reply markers in a comment body, in order. */
+export function markedReplies(body: string): number[] {
+  return [...body.matchAll(REPLY_MARKER)].map((match) => Number(match[1]));
 }
 
 /**
@@ -72,14 +92,14 @@ export function markedTickets(body: string): number[] {
  * is checked like any other body, so a line of it starting with `/` is still
  * refused.
  */
-export function composeComment(ownerName: string, ticketId: number, text: string): string {
-  const body = `${attributionLine(ownerName)}\n\n${text.trim()}\n\n${hiddenMarker(ticketId)}`;
-  assertCommentRules(body, ownerName, ticketId);
+export function composeComment(ownerName: string, markerFor: MarkerFor, text: string): string {
+  const body = `${attributionLine(ownerName)}\n\n${text.trim()}\n\n${hiddenMarker(markerFor)}`;
+  assertCommentRules(body, ownerName, markerFor);
   return body;
 }
 
-/** Every way `body` breaks the comment rules for the owner's name and the ticket, or none. */
-export function commentRuleViolations(body: string, ownerName: string, ticketId: number): string[] {
+/** Every way `body` breaks the comment rules for the owner's name and the ticket (or replied comment), or none. */
+export function commentRuleViolations(body: string, ownerName: string, markerFor: MarkerFor): string[] {
   const violations: string[] = [];
   const lines = body.split(/\r\n|\r|\n/);
   const first = lines.find((line) => line.trim() !== "");
@@ -87,9 +107,15 @@ export function commentRuleViolations(body: string, ownerName: string, ticketId:
   if (first?.trim() !== expected) violations.push(`the first line is not the attribution line "${expected}"`);
 
   const tickets = markedTickets(body);
-  if (!tickets.includes(ticketId)) violations.push(`it lacks the hidden marker for ticket ${ticketId}`);
-  if (tickets.some((id) => id !== ticketId)) violations.push("it carries a hidden marker for another ticket");
-  if (tickets.length > 1) violations.push("it carries more than one hidden marker");
+  const replies = markedReplies(body);
+  if (typeof markerFor === "number") {
+    if (!tickets.includes(markerFor)) violations.push(`it lacks the hidden marker for ticket ${markerFor}`);
+    if (tickets.some((id) => id !== markerFor) || replies.length > 0) violations.push("it carries a hidden marker for another ticket");
+  } else {
+    if (!replies.includes(markerFor.reply)) violations.push(`it lacks the hidden marker for the comment ${markerFor.reply} it replies to`);
+    if (replies.some((id) => id !== markerFor.reply) || tickets.length > 0) violations.push("it carries a hidden marker for another ticket");
+  }
+  if (tickets.length + replies.length > 1) violations.push("it carries more than one hidden marker");
 
   // Leading whitespace is ignored, so an indented `/` is refused too.
   const slashed = lines.flatMap((line, index) => (/^\s*\//.test(line) ? [index + 1] : []));
@@ -98,7 +124,7 @@ export function commentRuleViolations(body: string, ownerName: string, ticketId:
 }
 
 /** Throws {@link CommentRuleError} unless `body` follows the comment rules. */
-export function assertCommentRules(body: string, ownerName: string, ticketId: number): void {
-  const violations = commentRuleViolations(body, ownerName, ticketId);
+export function assertCommentRules(body: string, ownerName: string, markerFor: MarkerFor): void {
+  const violations = commentRuleViolations(body, ownerName, markerFor);
   if (violations.length > 0) throw new CommentRuleError(violations);
 }

@@ -495,14 +495,44 @@ function issueOf(calls: readonly CallRecord[]): { url: string; filedBy: Actor | 
   return null;
 }
 
-/** The latest intake comment entail posted for a ticket, which a new one names as the one it replaces. */
+/**
+ * The latest intake comment entail posted for a ticket, which a new one names
+ * as the one it replaces. A ticket pulled in again that has posted none yet
+ * names its predecessor's last one, recorded when it was taken in (ADR-0020).
+ */
 export function latestIntakeComment(calls: readonly CallRecord[]): string | null {
+  return latestComment(calls, INTAKE_COMMENT_KINDS) ?? predecessorsLastComment(calls);
+}
+
+/**
+ * The call kinds whose comment can be a ticket's last intake comment: its
+ * intake comments, and the comment that ended it at intake or on the owner's
+ * "don't go ahead" (spec §9).
+ */
+const LAST_COMMENT_KINDS: ReadonlySet<CallKind> = new Set<CallKind>([...INTAKE_COMMENT_KINDS, "decline", "close-at-intake", "cancel-on-answer"]);
+
+/**
+ * The last intake comment a ticket posted, which the first intake comment of
+ * the ticket that pulls its issue in again names (ADR-0020): its latest intake
+ * comment, or the comment that ended it, or else its own predecessor's.
+ */
+export function lastIntakeComment(calls: readonly CallRecord[]): string | null {
+  return latestComment(calls, LAST_COMMENT_KINDS) ?? predecessorsLastComment(calls);
+}
+
+function latestComment(calls: readonly CallRecord[], kinds: ReadonlySet<CallKind>): string | null {
   for (const call of [...calls].reverse()) {
-    if (!INTAKE_COMMENT_KINDS.has(call.kind)) continue;
+    if (!kinds.has(call.kind)) continue;
     const posted = call.postedComments.at(-1);
     if (posted) return posted.commentUrl;
   }
   return null;
+}
+
+/** The predecessor's last intake comment, as the ticket's intake call recorded it. */
+function predecessorsLastComment(calls: readonly CallRecord[]): string | null {
+  const intake = calls.find((call) => call.kind === "intake");
+  return (intake?.detail as Partial<IntakeDetail> | null)?.predecessor?.lastIntakeComment ?? null;
 }
 
 /** The text of the notice for a raised item: no question text and no issue text (spec §13). */

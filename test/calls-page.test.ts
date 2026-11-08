@@ -312,6 +312,13 @@ test("a ticket page shows its whole history, answers by name, and links its pred
   const before = (await get(records, ticketPath(cancelled.id))).body;
   assert.ok(before.includes(`<a href="${ticketPath(pulledInAgain.id)}">ticket ${pulledInAgain.id}</a>`), "the old ticket links the new one");
 
+  // The new ticket shows the history of the one before it.
+  const againHtml = (await get(records, ticketPath(pulledInAgain.id))).body;
+  const cancelledCall = records.calls.find((c) => c.ticketId === cancelled.id)!;
+  assert.ok(againHtml.includes(`id="call-${cancelledCall.id}"`), "the predecessor's call is shown");
+  assert.match(again, new RegExp(`Tickets before this one[\\s\\S]*Before this: ticket ${cancelled.id}, cancelled[\\s\\S]*The issue was closed on the forge`));
+  assert.doesNotMatch(parsePage(before).text, /Tickets before this one/, "a first ticket has none before it");
+
   const gl = parsePage((await get(records, ticketPath(withdrawn.id))).body).text;
   assert.match(gl, /Board item withdrawn: Change the output format\?/);
   assert.match(gl, /Why: the issue was edited/);
@@ -362,4 +369,33 @@ test("neither page has any form or action", async (t) => {
     const posted = await postForm(records.server.info.port, base, { token: records.server.info.token });
     assert.equal(posted.status, 405, `${base} takes no write`);
   }
+});
+
+test("a ticket pulled in again shows its predecessor's calls and the answer given on it", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "entail-calls-"));
+  let clock = Date.UTC(2026, 10, 1, 9, 0, 0);
+  const store = Store.openIn(dir, { now: () => new Date((clock += 60_000)) });
+  const repo = store.enrollRepo({ forge: "github", host: "github.com", projectId: 11, path: "acme/tally", ownerAccountId: 1, ownerLogin: "owner" });
+  const first = store.takeIn({ repoId: repo.id, issueNumber: 7 });
+  store.recordCall({ ticketId: first.id, kind: "intake", reason: "The owner's account opened this issue after the repo was enrolled." });
+  const raise = store.recordCall({ ticketId: first.id, kind: "raise", reason: "Raised to the owner: it contradicts a line.", stateTo: "on-the-board" });
+  const item = store.raiseBoardItem({ ticketId: first.id, callId: raise.id, decision: "Count the words of a web page?", whyRaised: "contradicts a line", snapshot: {} });
+  store.recordAnswer({ boardItemId: item.id, answeredBy: "Ada Owner", shape: "dont-go-ahead" });
+  store.recordCall({ ticketId: first.id, kind: "cancel-on-answer", reason: "The owner decided not to go ahead.", stateTo: "cancelled" });
+  const second = store.takeIn({ repoId: repo.id, issueNumber: 7, predecessorId: first.id });
+  store.recordCall({ ticketId: second.id, kind: "intake", reason: "The owner pulled this issue in again with /entail, after ticket 1 ended cancelled." });
+  const server = await startServer({ port: 0, pages: [ticketPage({ store })] });
+  t.after(async () => {
+    await server.close();
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const text = parsePage((await send(server.info.port, { path: ticketPath(second.id) })).body).text;
+  assert.match(text, /The owner pulled this issue in again with \/entail/);
+  const predecessor = text.slice(text.indexOf("Tickets before this one"));
+  assert.match(predecessor, new RegExp(`Before this: ticket ${first.id}, cancelled`));
+  assert.match(predecessor, /Raised to the board: Count the words of a web page\?/);
+  assert.match(predecessor, /Answered by Ada Owner/);
+  assert.match(predecessor, /The owner decided not to go ahead\./);
 });
