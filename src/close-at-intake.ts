@@ -11,6 +11,7 @@ import { modelRunRecord } from "./model-runs.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import type { RepoPass } from "./pass.ts";
 import type { JudgedInputs, NewModelRun, Store, TicketRecord } from "./store.ts";
+import type { TicketState } from "./ticket-states.ts";
 import { VISION_PATH } from "./vision.ts";
 
 /**
@@ -144,7 +145,15 @@ function issueNumberOf(ref: string): number | null {
  * must be on the default branch at the head the close was judged at.
  */
 export async function findEvidence(
-  input: { forge: Pick<Forge, "issue">; git: Git; repo: RepoLocation; head: string; issueNumber: number },
+  input: {
+    forge: Pick<Forge, "issue">;
+    git: Git;
+    repo: RepoLocation;
+    head: string;
+    issueNumber: number;
+    /** The state of the issue's latest ticket in entail's records, or null when entail has none. */
+    ticketState(issueNumber: number): TicketState | null;
+  },
   evidence: RecordedVerdict["close_evidence"],
 ): Promise<FoundEvidence[]> {
   const found: FoundEvidence[] = [];
@@ -158,7 +167,14 @@ export async function findEvidence(
       else {
         const read = await input.forge.issue(number);
         if (read === null) missing = `This repo has no issue #${number}.`;
-        else issue = { number: read.number, title: read.title, body: read.body, state: read.state, url: read.url };
+        else {
+          issue = { number: read.number, title: read.title, body: read.body, state: read.state, url: read.url };
+          const ticketState = input.ticketState(number);
+          if (read.state !== "open") missing = `Issue #${number} is not open, so nothing would be done for either issue.`;
+          else if (ticketState === "cancelled" || ticketState === "declined") {
+            missing = `Issue #${number} is not open for work: entail ${ticketState === "declined" ? "declined" : "cancelled"} its latest ticket, so nothing would be done for either issue.`;
+          }
+        }
       }
       found.push({ kind: "duplicate_issue", ref: piece.ref, why: piece.why, issue, missing });
     } else {
@@ -217,7 +233,7 @@ function result(check: CloseCheckName, failures: readonly string[]): CloseCheckR
  *   the vision opposes needs the owner, and is never closed on the vision),
  *   and no fixing commit changes nothing but VISION.md;
  * - every piece of evidence exists: the duplicate is another issue of this
- *   repo, and the fixing commit is on the default branch at the judged head.
+ *   repo that is open and not one entail cancelled or declined, and the fixing commit is on the default branch at the judged head.
  */
 export function checkClose(verdict: RecordedVerdict, evidence: readonly FoundEvidence[]): CloseChecks {
   if (verdict.verdict !== "close") throw new Error(`only a proposed close is checked here, not ${String(verdict.verdict)}`);
@@ -386,7 +402,10 @@ export async function proposeClose(options: { store: Store; log: OperationalLog 
   const { ticket, pass, verdict } = proposal;
   const location = { forge: pass.repo.forge, host: pass.repo.host, path: pass.repo.path };
   const evidence = await findEvidence(
-    { forge: pass.forge, git: proposal.git, repo: location, head: verdict.vision_sha, issueNumber: ticket.issueNumber },
+    { forge: pass.forge, git: proposal.git, repo: location, head: verdict.vision_sha,
+      issueNumber: ticket.issueNumber,
+      ticketState: (number) => store.latestTicketForIssue(pass.repo.id, number)?.state ?? null,
+    },
     verdict.close_evidence,
   );
   const checks = checkClose(verdict, evidence);

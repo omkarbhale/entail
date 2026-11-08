@@ -170,7 +170,7 @@ test("each piece of evidence is found in the repo: another issue read live, a co
   const r = await repo(t, setup.dataDirectory, 5001);
   const forge = new CloseForge();
   forge.others.set(3, issue(3, { title: "Counts one too many" }));
-  const found = await findEvidence({ forge, git: r.mirror.git, repo: REPO, head: r.head, issueNumber: 5 }, [
+  const found = await findEvidence({ forge, git: r.mirror.git, repo: REPO, head: r.head, issueNumber: 5, ticketState: () => null }, [
     { kind: "duplicate_issue", ref: "#3", why: "Same report." },
     { kind: "duplicate_issue", ref: "404", why: "Gone." },
     { kind: "duplicate_issue", ref: "5", why: "Itself." },
@@ -522,4 +522,45 @@ test("a close whose comment failed to post is settled on the next start: the com
   ]);
   assert.equal(h.forge.state.comments["issue:5"]!.length, 1);
   assert.deepEqual(h.forge.state.closed, { 5: "not-planned" });
+});
+
+function endTicket(h: Harness, issueNumber: number, state: "cancelled" | "declined"): void {
+  const ticket = h.setup.store.takeIn({ repoId: h.repo.id, issueNumber, predecessorId: null });
+  h.setup.store.recordCall({ ticketId: ticket.id, kind: "intake", reason: "taken in", inputs: { issueTitle: "Earlier", issueBody: "" } });
+  h.setup.store.recordCall({ ticketId: ticket.id, kind: "verdict", reason: "Ended.", stateTo: state });
+}
+
+async function raisedFor(h: Harness, pattern: RegExp): Promise<void> {
+  const earlier = h.setup.store.latestTicketForIssue(h.repo.id, 3);
+  h.scripted.script("verdict", earlier === null ? "1" : "2", { output: close() });
+  await h.pass();
+  await h.pass();
+  const ticket = h.ticket(5);
+  assert.equal(ticket.state, "on-the-board");
+  assert.equal(h.scripted.requests.length, 1, "no challenge runs");
+  const snapshot = h.setup.store.openBoardItem(ticket.id)!.snapshot as BoardItemSnapshot;
+  assert.equal(snapshot.why.failedCheck?.check, CLOSE_CHECKS.evidenceExists);
+  assert.match(snapshot.why.text, pattern);
+  assert.deepEqual(h.forge.state.closed, {});
+}
+
+test("a duplicate of a closed issue fails the evidence check and is raised to the board", async (t) => {
+  const h = await harness(t);
+  h.forge.issues = [issue(5, REPORT)];
+  h.forge.others.set(3, issue(3, { title: "Word counts are one too high", state: "closed" }));
+  await raisedFor(h, /Issue #3 is not open/);
+});
+
+test("a duplicate whose latest entail ticket was declined fails the evidence check and is raised to the board", async (t) => {
+  const h = await harness(t);
+  h.forge.issues = [issue(5, REPORT)];
+  endTicket(h, 3, "declined");
+  await raisedFor(h, /entail declined its latest ticket/);
+});
+
+test("mutual duplicates: an issue closed at intake as a duplicate cannot be the target of its target's close", async (t) => {
+  const h = await harness(t);
+  h.forge.issues = [issue(5, REPORT)];
+  endTicket(h, 3, "cancelled");
+  await raisedFor(h, /entail cancelled its latest ticket/);
 });
