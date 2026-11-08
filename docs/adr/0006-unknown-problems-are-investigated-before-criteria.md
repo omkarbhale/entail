@@ -19,5 +19,5 @@ The owner chose this because a report that is wrong, or whose cause is unknown, 
 - The findings are issue text: evidence to be judged, never the owner's word (ADR-0001). Closing on findings cites them as evidence and passes the same checks and challenge as any close at intake. Closing on the vision alone is never allowed: a request that contradicts the vision needs the owner.
 - A PR that links an issue under investigation is not checked or merged. entail comments that the issue has no criteria yet.
 - An issue closed by someone else while it is under investigation makes the ticket cancelled, as in any non-final state.
-- `entail:investigate` and the findings comment are part of the label contract with executors, decided on [What is the contract between entail and any executor?](https://github.com/omkarbhale/entail/issues/30).
+- `entail:investigate` and the findings comment are part of the label contract with executors, decided on [What is the contract between entail and any executor?](https://github.com/omkarbhale/entail/issues/30) (ADR-0013): the investigate comment numbers its questions Q1…Qn, and findings answer each by id.
 - Decided on [What form do intake criteria take, and when does writing them need the owner?](https://github.com/omkarbhale/entail/issues/21), after its first resolution.
