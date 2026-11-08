@@ -31,8 +31,12 @@ const COMMIT_MESSAGES: Record<RecordsCommitReason, string> = {
 export interface RecordsPushState {
   /** The last push that succeeded, or null when none has. */
   lastSuccess: { at: string; remote: string; commit: string } | null;
-  /** The last push that failed, or null when none has failed since the last success. */
-  lastFailure: { at: string; remote: string; error: string } | null;
+  /**
+   * The last push that failed, or null when none has failed since the last
+   * success; `since` is the first failure in that run, which the records push
+   * warning counts from (spec §16).
+   */
+  lastFailure: { at: string; remote: string; error: string; since?: string } | null;
 }
 
 /** What one save did. */
@@ -159,7 +163,8 @@ export class RecordsRepo {
       });
     } catch (error) {
       const message = errorText(error);
-      this.#writePushState({ ...state, lastFailure: { at, remote, error: message } });
+      const since = state.lastFailure?.since ?? state.lastFailure?.at ?? at;
+      this.#writePushState({ ...state, lastFailure: { at, remote, error: message, since } });
       this.#options.log?.warn("records-push-failed", { error: message });
       return "failed";
     }

@@ -205,7 +205,18 @@ const failures: { name: string; behaviour: Behaviour; kind: string; message?: Re
     kind: "error",
     message: /overloaded/,
   },
-  { name: "an exit without a result", behaviour: { print: { stderr: "Invalid API key · Please run /login", code: 1 } }, kind: "error", message: /code 1.*Invalid API key/ },
+  { name: "an exit without a result", behaviour: { print: { stderr: "Segmentation fault", code: 1 } }, kind: "error", message: /code 1.*Segmentation fault/ },
+  {
+    name: "an exit for want of a login",
+    behaviour: { print: { stderr: "Invalid API key · Please run /login", code: 1 } },
+    kind: "logged-out",
+    message: /not logged in.*Invalid API key/,
+  },
+  {
+    name: "an authentication error result",
+    behaviour: { print: { stdout: resultJson({ is_error: true, subtype: "error_during_execution", api_error_status: 401, result: "OAuth token has expired" }), code: 1 } },
+    kind: "logged-out",
+  },
   {
     name: "a refusal",
     behaviour: { print: { stdout: resultJson({ stop_reason: "refusal", structured_output: undefined, result: "I can't help with that." }) } },

@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import type { PageHealth } from "./health.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import { renderPage } from "./page.ts";
 
@@ -20,6 +21,8 @@ export interface ServerInfo {
   token: string;
   /** The pages listed in the shared header, in order. */
   nav: readonly NavLink[];
+  /** entail's health as every page's header shows it, read at each request (spec §16); none when left out. */
+  health?: () => PageHealth;
 }
 
 export interface NavLink {
@@ -55,6 +58,8 @@ export interface ServerOptions {
   port: number;
   pages: readonly Page[];
   log?: OperationalLog;
+  /** entail's health, shown at the top of every page (spec §16). */
+  health?: () => PageHealth;
 }
 
 export interface LocalServer {
@@ -132,7 +137,7 @@ export async function startServer(options: ServerOptions): Promise<LocalServer> 
   });
 
   const port = (server.address() as AddressInfo).port;
-  info = { port, origin: `http://${SERVER_ADDRESS}:${port}`, token, nav };
+  info = { port, origin: `http://${SERVER_ADDRESS}:${port}`, token, nav, ...(options.health ? { health: options.health } : {}) };
 
   let closing: Promise<void> | undefined;
   return {

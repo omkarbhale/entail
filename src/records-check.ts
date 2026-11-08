@@ -154,13 +154,14 @@ export class RecordsCheck {
 }
 
 /**
- * Runs the check for every enrolled repo, side by side, as entail starts. A
- * repo whose check fails stays unchecked, and its pass checks it again; the
+ * Runs the check for every enrolled repo, side by side, as entail starts,
+ * leaving out any `include` refuses, such as a halted host's. A repo left
+ * out or whose check fails stays unchecked, and its pass checks it again; the
  * failure is logged by the check, so nothing here throws. An unenrolled repo
  * is never read, and a paused one is checked by its first pass after it is
  * resumed (ADR-0018).
  */
-export async function checkEveryRepo(store: Store, check: RecordsCheck): Promise<void> {
-  const repos = store.listEnrolledRepos().filter((repo) => readRepoSettings(store, repo.id)?.settings.paused !== true);
+export async function checkEveryRepo(store: Store, check: RecordsCheck, include: (repo: RepoRecord) => boolean = () => true): Promise<void> {
+  const repos = store.listEnrolledRepos().filter((repo) => readRepoSettings(store, repo.id)?.settings.paused !== true && include(repo));
   await Promise.all(repos.map((repo) => check.check(repo).catch(() => undefined)));
 }

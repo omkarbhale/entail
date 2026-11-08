@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { ensureDataDirectory, UnsupportedPlatformError } from "./data-directory.ts";
+import { ensureDataDirectory, resolveDataDirectory, UnsupportedPlatformError } from "./data-directory.ts";
 import { LockHeldError } from "./lock.ts";
 import { restoreRecords, RestoreError } from "./records-restore.ts";
 import { startRun, type RunningEntail } from "./run.ts";
 import { BoardPortTakenError } from "./server.ts";
 import { installService, machineServiceSystem, ServiceError, uninstallService, type ServiceInputs } from "./service.ts";
+import { readStatus, statusText } from "./status.ts";
 import { StoreOpenError } from "./store.ts";
 
 const USAGE = `Usage: entail <command>
@@ -16,6 +17,10 @@ Commands:
   service install    Run entail as a per-user service that starts at login
                      and restarts after a crash
   service uninstall  Stop the service and remove it
+  status [--json]    Show whether entail is running, its halts and warnings,
+                     each repo's state and the last records push. Works
+                     whether or not entail is running. Exits 0 when healthy,
+                     1 when something is halted or warned, 2 when not running
   restore <remote> [--replace]
                      With entail stopped, clone the records repo from <remote>
                      and import it into a fresh store. --replace sets aside
@@ -30,6 +35,9 @@ async function main(argv: string[]): Promise<number> {
   }
   if (command === "run" && rest.length === 0) {
     return runCommand();
+  }
+  if (command === "status" && (rest.length === 0 || (rest.length === 1 && rest[0] === "--json"))) {
+    return statusCommand(rest[0] === "--json");
   }
   if (command === "restore") {
     const replace = rest.includes("--replace");
@@ -74,6 +82,21 @@ async function runCommand(): Promise<number> {
   if (requested) running.stop(requested);
   await running.stopped;
   return 0;
+}
+
+function statusCommand(json: boolean): number {
+  let directory: string;
+  try {
+    directory = resolveDataDirectory({ platform: process.platform, env: process.env, home: homedir() });
+  } catch (error) {
+    if (!(error instanceof UnsupportedPlatformError)) throw error;
+    process.stderr.write(`entail: ${error.message}\n`);
+    return 2;
+  }
+  // Only read: the status of an entail that never ran here is that it is not running.
+  const report = readStatus(directory);
+  process.stdout.write(json ? `${JSON.stringify(report, null, 2)}\n` : statusText(report));
+  return report.exitCode;
 }
 
 async function restoreCommand(remote: string, replace: boolean): Promise<number> {

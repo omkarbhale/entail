@@ -22,11 +22,18 @@ interface Machine {
   dataDirectory: string;
 }
 
-/** A fresh home and data directory, as if on a machine entail never ran on. */
-function machine(t: TestContext): Machine {
+/**
+ * A fresh home and data directory, as if on a machine entail never ran on,
+ * with a `claude` that reports itself logged in (or not), so whether this
+ * machine's own claude is logged in never decides a test.
+ */
+function machine(t: TestContext, { claudeLoggedIn = true } = {}): Machine {
   const root = mkdtempSync(join(tmpdir(), "entail-cli-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const env = { ...process.env, HOME: join(root, "home"), XDG_DATA_HOME: join(root, "xdg") };
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "claude"), `#!/bin/sh\necho '{"loggedIn": ${claudeLoggedIn}}'\n`, { mode: 0o755 });
+  const env = { ...process.env, HOME: join(root, "home"), XDG_DATA_HOME: join(root, "xdg"), PATH: `${bin}:${process.env.PATH ?? ""}` };
   const dataDirectory = resolveDataDirectory({ platform: process.platform, env, home: env.HOME });
   return { env, dataDirectory };
 }
@@ -41,7 +48,8 @@ function useBoardPort(m: Machine, port: number): void {
     store.close();
     return;
   }
-  store.saveGlobalSettings({ ...DEFAULT_GLOBAL_SETTINGS, ownerDisplayName: "Test", boardPort: port }, "Test");
+  // Notices go to a file, so a halt never shows on this machine's desktop.
+  store.saveGlobalSettings({ ...DEFAULT_GLOBAL_SETTINGS, ownerDisplayName: "Test", boardPort: port, noticeConnector: "file" }, "Test");
   store.close();
 }
 
@@ -251,3 +259,69 @@ test("entail restore clones the records repo into a fresh store, and refuses to 
   const usage = spawnSync(process.execPath, [CLI, "restore"], { env: m.env, encoding: "utf8" });
   assert.equal(usage.status, 2, "a remote is required");
 });
+
+function status(m: Machine, ...args: string[]): { code: number | null; stdout: string } {
+  const ran = spawnSync(process.execPath, [CLI, "status", ...args], { env: m.env, encoding: "utf8" });
+  return { code: ran.status, stdout: ran.stdout };
+}
+
+/** Waits until the running entail has written a status file whose last pass is set. */
+async function untilPassed(m: Machine): Promise<void> {
+  for (let n = 0; n < 200; n++) {
+    try {
+      if ((JSON.parse(readFileSync(join(m.dataDirectory, "status.json"), "utf8")) as { lastPass: unknown }).lastPass !== null) return;
+    } catch {
+      // not written yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("entail never wrote a status file after a pass");
+}
+
+test("entail status works with entail stopped, exiting 2, and prints the same as JSON", (t) => {
+  const m = machine(t);
+  const text = status(m);
+  assert.equal(text.code, 2);
+  assert.match(text.stdout, /^entail is not running\.\nNo status has been written yet/);
+
+  const json = status(m, "--json");
+  assert.equal(json.code, 2);
+  const report = JSON.parse(json.stdout) as Record<string, unknown>;
+  assert.equal(report.running, false);
+  assert.equal(report.exitCode, 2);
+  assert.deepEqual(report.halts, []);
+  assert.ok(!existsSync(m.dataDirectory), "status creates nothing");
+});
+
+test("entail status exits 0 while entail runs healthy, 1 while something is halted, and 2 once it stopped", async (t) => {
+  const healthy = machine(t);
+  const running = await startEntail(t, healthy);
+  await untilPassed(healthy);
+  const ok = status(healthy);
+  assert.equal(ok.code, 0, ok.stdout);
+  assert.match(ok.stdout, new RegExp(`^entail is running: pid ${running.child.pid}, started `));
+  assert.match(ok.stdout, /No halts or warnings\./);
+  assert.match(ok.stdout, /Records repo: no remote set\./);
+  const report = JSON.parse(status(healthy, "--json").stdout) as { running: boolean; pid: number; lastPass: string | null };
+  assert.deepEqual([report.running, report.pid, typeof report.lastPass], [true, running.child.pid, "string"]);
+  assert.equal(await stopWith(running.child, "SIGTERM"), 0);
+  const stopped = status(healthy);
+  assert.equal(stopped.code, 2);
+  assert.match(stopped.stdout, /^entail is not running\.\nWhat follows is as of /);
+
+  const loggedOut = machine(t, { claudeLoggedIn: false });
+  const halted = await startEntail(t, loggedOut);
+  await untilPassed(loggedOut);
+  const shown = status(loggedOut);
+  assert.equal(shown.code, 1, shown.stdout);
+  assert.match(shown.stdout, /Halted:\n {2}- claude is not logged in\. Nothing is read, decided or merged since /);
+  assert.match(shown.stdout, /Recent warnings in the operational log:\n.*tools-halted/);
+  const json = JSON.parse(status(loggedOut, "--json").stdout) as { halts: { key: string }[]; exitCode: number };
+  assert.deepEqual([json.halts.map((h) => h.key), json.exitCode], [["entail:claude"], 1]);
+  assert.equal((await send(portOf(halted.entries), { path: "/settings" })).status, 200, "the process stays up, serving its pages");
+  assert.equal(await stopWith(halted.child, "SIGTERM"), 0);
+});
+
+function portOf(entries: Entry[]): number {
+  return Number(new URL(String(entries.find((entry) => entry.event === "started")?.board)).port);
+}
