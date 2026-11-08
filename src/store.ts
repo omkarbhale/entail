@@ -26,6 +26,9 @@ export const CALL_KINDS = [
   "merge",
   "cancel-on-outside-close",
   "unenroll-cancel",
+  "pr-opened",
+  "pr-closed",
+  "merged-by-others",
 ] as const;
 export type CallKind = (typeof CALL_KINDS)[number];
 
@@ -917,6 +920,20 @@ export class Store {
   /** The forge writes a call recorded, confirmed or not, oldest first. */
   forgeWritesForCall(callId: number): ForgeWriteIntentRecord[] {
     return this.#all("SELECT * FROM forge_write_intents WHERE call_id = ? ORDER BY id", callId).map(toIntent);
+  }
+
+  /**
+   * Every forge write recorded on one of a repo's issues or PRs, confirmed or
+   * not, oldest first, each with whether it was confirmed.
+   */
+  forgeWritesOn(repoId: number, target: "issue" | "pr", number: number): (ForgeWriteIntentRecord & { confirmed: boolean })[] {
+    return this.#all(
+      `SELECT i.*, EXISTS (SELECT 1 FROM forge_write_confirmations c WHERE c.intent_id = i.id) AS confirmed
+       FROM forge_write_intents i WHERE i.repo_id = ? AND i.target = ? AND i.number = ? ORDER BY i.id`,
+      repoId,
+      target,
+      number,
+    ).map((row) => ({ ...toIntent(row), confirmed: row.confirmed === 1 }));
   }
 
   /** Forge writes recorded but never confirmed, oldest first, to settle on start. */

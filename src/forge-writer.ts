@@ -16,6 +16,12 @@ import type { ForgeWriteIntentRecord, ForgeWriteKind, RepoRecord, Store } from "
  */
 export interface CommentPayload {
   body: string;
+  /**
+   * What a comment is for, when entail posts it at most once per ticket and
+   * issue or PR, such as the one-time comment on a PR whose issue has no
+   * criteria in force. Absent on every other comment.
+   */
+  purpose?: string;
 }
 export interface LabelPayload {
   action: "add" | "remove";
@@ -33,6 +39,8 @@ export interface MergePayload {
 export interface WriteFor {
   ticketId: number;
   callId?: number | null;
+  /** For a comment, what it is for; recorded with its intent (see {@link CommentPayload.purpose}). */
+  purpose?: string;
 }
 
 /**
@@ -80,7 +88,7 @@ export class ForgeWriter {
 
   async #comment(write: WriteFor, target: ForgeTarget, number: number, body: string): Promise<PostedComment> {
     assertCommentRules(body, this.#ownerName, write.ticketId);
-    const payload: CommentPayload = { body };
+    const payload: CommentPayload = write.purpose === undefined ? { body } : { body, purpose: write.purpose };
     const { intent, resumed } = this.#intend(write, "comment", target, number, payload);
     if (resumed) {
       const found = findPostedComment(await this.#forge.comments(target, number), this.#store, this.#repo, intent);

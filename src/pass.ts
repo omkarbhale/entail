@@ -2,7 +2,7 @@ import { ChangeDeduplicator } from "./changes.ts";
 import { ClaudeRunner } from "./claude-runner.ts";
 import { CursorStore } from "./cursors.ts";
 import { createForge } from "./forge/create-forge.ts";
-import { ForgeLoggedOutError, projectKey, RateLimitedError, type Forge, type ForgeKind } from "./forge/forge.ts";
+import { ForgeLoggedOutError, projectKey, RateLimitedError, type Change, type Forge, type ForgeKind } from "./forge/forge.ts";
 import { CliTransport } from "./forge/transport.ts";
 import { Limiter, LimitedTransport } from "./forge-limit.ts";
 import { ForgeWriter, InFlightWrites } from "./forge-writer.ts";
@@ -41,7 +41,16 @@ export interface RepoPass {
   writer(): ForgeWriter;
   /** Where a step makes its model runs, so the limit, order, retries and pause hold across all repos. */
   modelRuns: ModelRuns;
+  /** What this pass read as changed on the forge that no earlier pass of this process had seen. */
+  changes: readonly Change[];
 }
+
+/**
+ * Handles one change the pass read from the forge, before the pass saves its
+ * cursor: a handler that throws fails the pass, which reads the change again
+ * next time, so a handler must be safe to run twice for one change.
+ */
+export type ChangeHandler = (change: Change, pass: RepoPass) => Promise<void>;
 
 /** One step a ticket is owed, started by the pass unless the ticket already has a step running. */
 export interface OwedStep {
@@ -77,6 +86,8 @@ export interface PassesOptions {
   defaultBranchFor?: (repo: RepoRecord) => Promise<DefaultBranchSource>;
   /** Works out each non-final ticket's next owed step; none by default. */
   planners?: readonly OwedStepPlanner[];
+  /** Handle each change read from the forge, after taking in the owner's new issues; none by default. */
+  changeHandlers?: readonly ChangeHandler[];
   /** Counts forge writes in flight, so stopping can wait for them. */
   inFlight?: InFlightWrites;
   /**
@@ -100,7 +111,8 @@ export function repoForge(repo: RepoRecord, limiter: Limiter): Forge {
  * repo that is not paused, a pass:
  *
  * 1. checks the default branch head with `git ls-remote` and reads what
- *    changed on the forge, taking in the owner's new issues;
+ *    changed on the forge, taking in the owner's new issues and handing each
+ *    change to the change handlers;
  * 2. works out every non-final ticket's next owed step from its records and
  *    the latest forge state;
  * 3. starts that step unless the ticket already has one running.
@@ -123,6 +135,7 @@ export class Passes {
   readonly #forgeFor: (repo: RepoRecord) => Forge;
   readonly #defaultBranchFor: (repo: RepoRecord) => Promise<DefaultBranchSource>;
   readonly #planners: readonly OwedStepPlanner[];
+  readonly #changeHandlers: readonly ChangeHandler[];
   readonly #inFlight: InFlightWrites;
   readonly #modelRuns: ModelRuns;
 
@@ -158,6 +171,7 @@ export class Passes {
           log: options.log,
         }));
     this.#planners = options.planners ?? [];
+    this.#changeHandlers = options.changeHandlers ?? [];
     this.#inFlight = options.inFlight ?? new InFlightWrites();
     const store = options.store;
     this.#modelRuns =
@@ -231,19 +245,31 @@ export class Passes {
     const forge = this.#forge(repo);
     const key = projectKey({ forge: repo.forge, host: repo.host, id: repo.projectId });
     let head: { branch: string; commit: string; fetched: boolean };
+    let pass: RepoPass;
     const takenIn: number[] = [];
     try {
       const source = await this.#defaultBranch(repo);
       head = await this.#limiter.run(() => source.updateDefaultBranch());
       const batch = await forge.changesSince(this.#cursors.get(key));
       const fresh = this.#deduplicator(repoId).fresh(batch.changes);
+      pass = {
+        repo,
+        forge,
+        settings,
+        head: { branch: head.branch, commit: head.commit },
+        writer: () => this.#writer(repo, forge),
+        modelRuns: this.#modelRuns,
+        changes: fresh,
+      };
       for (const change of fresh) {
-        if (change.kind !== "issue") continue;
-        const outcome = await takeInIfNew(this.#store, forge, repo, change.issue, settings.id);
-        if ("takenIn" in outcome) {
-          takenIn.push(outcome.takenIn.id);
-          this.#log.info("taken-in", { repoId, issue: change.issue.number, ticketId: outcome.takenIn.id });
+        if (change.kind === "issue") {
+          const outcome = await takeInIfNew(this.#store, forge, repo, change.issue, settings.id);
+          if ("takenIn" in outcome) {
+            takenIn.push(outcome.takenIn.id);
+            this.#log.info("taken-in", { repoId, issue: change.issue.number, ticketId: outcome.takenIn.id });
+          }
         }
+        for (const handle of this.#changeHandlers) await handle(change, pass);
       }
       // Saved only once every change was handled, so a restart before this
       // reads them again rather than losing them.
@@ -257,14 +283,7 @@ export class Passes {
     if (this.#backoff.delete(repoId)) this.#log.info("poll-recovered", { repoId });
     this.#log.info("poll", { repoId, head: head.commit, fetched: head.fetched, takenIn: takenIn.length });
 
-    const started = this.#startOwedSteps({
-      repo,
-      forge,
-      settings,
-      head: { branch: head.branch, commit: head.commit },
-      writer: () => this.#writer(repo, forge),
-      modelRuns: this.#modelRuns,
-    });
+    const started = this.#startOwedSteps(pass);
     return { repoId, outcome: "polled", takenIn, started };
   }
 
