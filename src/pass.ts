@@ -454,6 +454,7 @@ export class Passes {
       outcomes = repos.map((repo) => ({ repoId: repo.id, outcome: "halted", why: "tools" }));
     } else {
       this.#hostChecks = new Map();
+      this.#forgetUnpolled(repos);
       outcomes = await Promise.all(repos.map((repo) => this.#passRepo(repo)));
     }
     this.#lastPassAt = new Date().toISOString();
@@ -533,6 +534,15 @@ export class Passes {
     if (existing?.problem === problem.problem) return;
     this.#hostLogins.set(key, { forge: repo.forge, host: repo.host, ...problem, since: new Date().toISOString() });
     this.#log.error("host-login-halted", { host: repo.host, problem: problem.problem, detail: problem.detail });
+  }
+
+  /** Drops poll failures of repos no longer polled (paused or unenrolled), and of hosts left with none. */
+  #forgetUnpolled(repos: RepoRecord[]): void {
+    const polled = repos.filter((repo) => (this.#store.latestSettings(repo.id)?.settings as Partial<RepoSettings> | undefined)?.paused !== true);
+    const ids = new Set(polled.map((repo) => repo.id));
+    const hosts = new Set(polled.map((repo) => hostKey(repo)));
+    for (const id of [...this.#pollFailingSince.keys()]) if (!ids.has(id)) this.#pollFailingSince.delete(id);
+    for (const key of [...this.#hostUnanswered.keys()]) if (!hosts.has(key)) this.#hostUnanswered.delete(key);
   }
 
   async #passRepo(repo: RepoRecord): Promise<RepoPassOutcome> {
