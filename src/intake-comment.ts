@@ -147,7 +147,9 @@ export type WhyCleared =
   /** The vision settles it: each cited line with its permalink at the vision's commit. */
   | { kind: "settled"; commit: string; cited: { lineNumber: number; permalink: string }[] }
   /** Unopposed: no contradiction found, why nothing opposes the ticket, and the reading chosen where there was one. */
-  | { kind: "unopposed"; whyUnopposed: string; readingChosen: string | null };
+  | { kind: "unopposed"; whyUnopposed: string; readingChosen: string | null }
+  /** The owner's answer let it go ahead: the decision is quoted above the criteria, which cite it (ADR-0008). */
+  | { kind: "answered" };
 
 /** A criterion as its intake comment lists it. */
 export interface ListedCriterion {
@@ -167,8 +169,9 @@ function criterionItem(id: string, sentence: string, checks: readonly Mechanical
 /**
  * What happens next for a ticket that goes ahead (spec §9, ADR-0007,
  * ADR-0011): the criteria C1…Cn with their mechanical checks, the generic
- * criteria in full, why the ticket was cleared (a citation permalink, or "no
- * contradiction found"), then the label `entail:cleared`.
+ * criteria in full, why the ticket was cleared (a citation permalink, "no
+ * contradiction found", or the owner's decision), then the label
+ * `entail:cleared`.
  */
 export function clearedNextText(input: { criteria: readonly ListedCriterion[]; genericCriteria: readonly GenericCriterion[]; why: WhyCleared }): string {
   const lines = [
@@ -186,6 +189,8 @@ export function clearedNextText(input: { criteria: readonly ListedCriterion[]; g
     const at = `\`${shortSha(input.why.commit)}\``;
     const links = input.why.cited.map((line) => `[${VISION_PATH} line ${line.lineNumber} at ${at}](${line.permalink})`);
     lines.push(`The vision settles this issue. Citation: ${links.join(", ")}.`);
+  } else if (input.why.kind === "answered") {
+    lines.push("The owner decided this issue on entail's board, as quoted above, and the criteria cite that decision. The verdict was not run again.");
   } else {
     lines.push(`No contradiction found. ${inline(input.why.whyUnopposed)}`.trim());
     if (input.why.readingChosen !== null) lines.push("", `Reading chosen: ${inline(input.why.readingChosen)}`);

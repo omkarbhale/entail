@@ -240,6 +240,11 @@ export function raiseFromCall(ticket: TicketRecord, call: CallRecord, calls: rea
  * The raise a criteria call asks for (spec §7): writing the criteria needs a
  * product call, with the open choice as the options; or the challenge over
  * the verdict and the criteria overturned them, with the objection.
+ *
+ * Criteria written from the owner's answer raise a new item for the call the
+ * answer does not cover alone (ADR-0008): it offers only that open choice,
+ * never the readings the owner already chose between, and names no pin the
+ * owner has seen for the ticket.
  */
 export function raiseFromCriteria(ticket: TicketRecord, call: CallRecord, calls: readonly CallRecord[]): RaiseRequest {
   const detail = call.detail as CriteriaDetail;
@@ -247,7 +252,9 @@ export function raiseFromCriteria(ticket: TicketRecord, call: CallRecord, calls:
   if (verdictCall === undefined) throw new Error(`criteria call ${call.id} rests on verdict call ${detail.verdictCallId}, which is not the ticket's`);
   const verdict = verdictCall.detail as RecordedVerdict;
   const challenge = call.challenge as RecordedChallenge | null;
-  const pins = touchedPins(verdict);
+  const answered = detail.goAheadCallId !== undefined && detail.goAheadCallId !== null;
+  const seen = new Set(detail.pinsSeen ?? []);
+  const pins = touchedPins(verdict).filter((pin) => !seen.has(pin.pin.trim()));
   const raise = {
     ticket,
     visionCommit: verdict.vision_sha,
@@ -263,7 +270,7 @@ export function raiseFromCriteria(ticket: TicketRecord, call: CallRecord, calls:
       openReadings: [],
     };
   }
-  return challengeRaise(raise, verdict, challenge!, pins);
+  return challengeRaise(raise, answered ? { ...verdict, readings: [] } : verdict, challenge!, pins);
 }
 
 /** A raise for a challenge that overturned an automatic verdict, or the verdict and its criteria. */

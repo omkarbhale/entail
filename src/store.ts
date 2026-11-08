@@ -19,6 +19,8 @@ export const CALL_KINDS = [
   "criteria",
   "decline",
   "raise",
+  "go-ahead",
+  "cancel-on-answer",
   "close-at-intake",
   "recheck",
   "landing",

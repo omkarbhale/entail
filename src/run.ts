@@ -1,3 +1,4 @@
+import { afterAnswerPlanner } from "./after-answer.ts";
 import { readGlobalSettings, type GlobalSettings } from "./global-settings.ts";
 import { acquireLock, type HeldLock } from "./lock.ts";
 import { Notifier } from "./notice.ts";
@@ -176,6 +177,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     forgeFor,
     defaultBranchFor: options.passes?.defaultBranchFor,
     planners: options.passes?.planners ?? [
+      afterAnswerPlanner({ store, log }),
       deciderPlanner({ store, log, dataDirectory: options.dataDirectory }),
       criteriaPlanner({ store, log, dataDirectory: options.dataDirectory }),
       boardPlanner({ store, log, dataDirectory: options.dataDirectory, notifier, boardOrigin: server.info.origin }),

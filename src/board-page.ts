@@ -16,7 +16,9 @@ import {
   type AnswerDraft,
   type AnswerRefusal,
   type ChosenAnswer,
+  type GivenAnswer,
 } from "./answer.ts";
+import { answersInForce } from "./after-answer.ts";
 import { BOARD_PATH, type BoardItemSnapshot, type BoardOption, type HappenedAnswer, type HappenedCall } from "./board-item.ts";
 import { CALL_KIND_LABELS, CALLS_PATH, issueUrl, recordId, repoLabel, ticketPath } from "./calls-page.ts";
 import { readGlobalSettings } from "./global-settings.ts";
@@ -25,7 +27,7 @@ import { escapeHtml, renderPage, timeHtml } from "./page.ts";
 import { readRepoSettings } from "./repo-settings.ts";
 import { SETTINGS_PATH } from "./settings-page.ts";
 import { TOKEN_FIELD, type FormRequest, type Page, type PageRequest, type Reply } from "./server.ts";
-import type { AnswerRecord, BoardItemHistory, RepoRecord, Store, WithdrawalRecord } from "./store.ts";
+import type { AnswerRecord, BoardItemHistory, CallRecord, RepoRecord, Store, WithdrawalRecord } from "./store.ts";
 import type { TicketState } from "./ticket-states.ts";
 import { VISION_PATH } from "./vision.ts";
 
@@ -78,6 +80,12 @@ export interface BoardEntry {
   lock: ItemLock | null;
   /** For a withdrawn item, what happens to its ticket next. */
   next: string | null;
+  /** Earlier answers going ahead on the ticket, which the comment quotes before this item's. */
+  earlier: GivenAnswer[];
+  /** For an answered item: the comment entail posted for the answer, once posted. */
+  posted: string | null;
+  /** The item's host while entail cannot reach it (its host halt), whatever the item's status. */
+  unreachable: string | null;
 }
 
 /** The board as the page shows it: the open items, then those answered or withdrawn today. */
@@ -128,6 +136,8 @@ export function readBoard(options: BoardPageOptions): Board {
 /** One board item as the board shows it, with its repo. */
 function entryOf(options: BoardPageOptions, history: BoardItemHistory, repo: RepoRecord | null): BoardEntry {
   const status: BoardItemStatus = history.answer ? "answered" : history.withdrawal ? "withdrawn" : "open";
+  const ticketId = history.item.ticketId;
+  const calls = status === "withdrawn" ? [] : options.store.callsForTicket(ticketId);
   return {
     history,
     snapshot: (history.item.snapshot ?? {}) as Partial<BoardItemSnapshot>,
@@ -135,7 +145,20 @@ function entryOf(options: BoardPageOptions, history: BoardItemHistory, repo: Rep
     status,
     lock: status === "open" ? lockOf(options, repo) : null,
     next: history.withdrawal ? whatNext(options.store.getCall(history.withdrawal.callId)?.stateChange?.to ?? null) : null,
+    earlier: status === "withdrawn" ? [] : answersInForce(options.store, ticketId, calls).filter((given) => given.answer.boardItemId < history.item.id),
+    posted: history.answer === null ? null : postedFor(calls, history.answer.id),
+    unreachable: repo !== null && options.hostHalted?.(repo.host) === true ? repo.host : null,
   };
+}
+
+/** The comment entail posted for an answer: the one posted by a call citing it, once confirmed. */
+function postedFor(calls: readonly CallRecord[], answerId: number): string | null {
+  for (const call of calls) {
+    if (call.answerId !== answerId) continue;
+    const posted = call.postedComments.at(-1);
+    if (posted) return posted.commentUrl;
+  }
+  return null;
 }
 
 /** Why an item's form is locked, in the words a refused answer gives. */
@@ -514,7 +537,7 @@ ${outcome.next.map((step) => `<li>${escapeHtml(step)}</li>`).join("\n")}
  */
 function renderReview(e: BoardEntry, context: FormContext, draft: AnswerDraft, answer: ChosenAnswer): string {
   const owner = context.owner ?? "";
-  const comment = answerComment(owner, e.history.item.ticketId, answer, e.snapshot, forgeOf(e));
+  const comment = answerComment(owner, e.history.item.ticketId, answer, e.snapshot, forgeOf(e), { earlier: e.earlier });
   const keep = (name: string, value: string) => `<input type="hidden" name="${name}" value="${escapeHtml(value)}">`;
   return `<div id="review" class="review">
 <p><strong>Check your answer before it is recorded. Answers are final.</strong></p>
@@ -643,19 +666,32 @@ export function whatNext(state: TicketState | null): string | null {
 function answeredState(answer: AnswerRecord, e: BoardEntry, nextId: number | null): string {
   let comment: string;
   try {
-    comment = answerComment(answer.answeredBy, e.history.item.ticketId, answer, e.snapshot, forgeOf(e));
+    comment = answerComment(answer.answeredBy, e.history.item.ticketId, answer, e.snapshot, forgeOf(e), { earlier: e.earlier });
   } catch {
     comment = "";
   }
   return stateBox(
-    `answered:${nextId ?? ""}`,
+    // The comment's posting, or its host halting, changes the key, so the receipt is swapped in again.
+    `answered:${nextId ?? ""}:${e.posted !== null ? "posted" : e.unreachable !== null ? "waiting" : ""}`,
     true,
     `<p><strong>Answered by ${escapeHtml(answer.answeredBy)}</strong> at ${timeHtml(answer.answeredAt)} · item version ${answer.itemVersion}</p>
 <p><span class="muted">The answer:</span> <strong>${escapeHtml(answerWords(answer, e.snapshot))}</strong></p>
 ${noteLine(answer)}
 ${outcomeHtml(answer, e)}
-${comment === "" ? "" : `<details><summary>The comment entail posts on the issue</summary>\n<pre class="comment">${escapeHtml(comment)}</pre></details>`}${nextDecision(nextId)}`,
+${comment === "" ? "" : `<details><summary>The comment entail posts on the issue</summary>\n<pre class="comment">${escapeHtml(comment)}</pre></details>`}${postedLine(e)}${nextDecision(nextId)}`,
   );
+}
+
+/**
+ * Whether the answer's comment is on the issue yet: a link once it is posted,
+ * or, while entail cannot reach the item's host, that the comment is kept and
+ * posted when the host answers again (spec §16 "Answering during a halt").
+ */
+function postedLine(e: BoardEntry): string {
+  if (e.posted !== null) return `\n<p class="posted">Posted on the issue: <a href="${escapeHtml(e.posted)}">entail's comment</a>.</p>`;
+  if (e.unreachable === null) return "";
+  const host = escapeHtml(e.unreachable);
+  return `\n<p class="warn">entail cannot reach ${host} now. Your answer is recorded, and the comment is kept and posted when ${host} answers again.</p>`;
 }
 
 function renderLeftState(nextId: number | null): string {
