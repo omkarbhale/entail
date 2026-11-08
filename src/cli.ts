@@ -2,6 +2,7 @@
 import { ensureDataDirectory, UnsupportedPlatformError } from "./data-directory.ts";
 import { LockHeldError } from "./lock.ts";
 import { startRun, type RunningEntail } from "./run.ts";
+import { StoreOpenError } from "./store.ts";
 
 const USAGE = `Usage: entail <command>
 
@@ -34,7 +35,7 @@ async function runCommand(): Promise<number> {
   } catch (error) {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
-    if (error instanceof LockHeldError || error instanceof UnsupportedPlatformError) {
+    if (error instanceof LockHeldError || error instanceof UnsupportedPlatformError || error instanceof StoreOpenError) {
       process.stderr.write(`entail: ${error.message}\n`);
       return 1;
     }

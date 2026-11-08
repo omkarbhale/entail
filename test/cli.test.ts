@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { resolveDataDirectory } from "../src/data-directory.ts";
 import { LOCK_FILE } from "../src/lock.ts";
 import { OPERATIONAL_LOG_FILE } from "../src/operational-log.ts";
+import { STORE_FILE, Store } from "../src/store.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
@@ -80,6 +81,35 @@ test("entail run creates the data directory, holds the lock and stops on SIGTERM
     logEntries(m).map((entry) => entry.event),
     ["started", "stopping", "stopped"],
   );
+});
+
+test("entail run creates the store at start and opens it again on the next start", async (t) => {
+  const m = machine(t);
+  const first = await startEntail(t, m);
+  assert.ok(existsSync(join(m.dataDirectory, STORE_FILE)), "the store is created at start");
+  assert.equal(await stopWith(first.child, "SIGTERM"), 0);
+
+  const store = Store.openIn(m.dataDirectory);
+  const repo = store.enrollRepo({ forge: "github", host: "github.com", projectId: 7, path: "o/r", ownerAccountId: 1, ownerLogin: "o" });
+  store.close();
+
+  const second = await startEntail(t, m);
+  assert.equal(await stopWith(second.child, "SIGTERM"), 0);
+  const reopened = Store.openIn(m.dataDirectory);
+  t.after(() => reopened.close());
+  assert.deepEqual(reopened.getRepo(repo.id), repo, "records survive a restart");
+});
+
+test("entail run exits non-zero and releases the lock when the store cannot be opened", (t) => {
+  const m = machine(t);
+  mkdirSync(m.dataDirectory, { recursive: true });
+  writeFileSync(join(m.dataDirectory, STORE_FILE), "this is not a SQLite database, just some text that is long enough\n".repeat(20));
+
+  const result = spawnSync(process.execPath, [CLI, "run"], { env: m.env, encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /entail: cannot open the store at /);
+  assert.ok(!existsSync(join(m.dataDirectory, LOCK_FILE)), "the lock is released");
+  assert.ok(logEntries(m).some((entry) => entry.event === "store-open-failed"));
 });
 
 test("entail run stops on SIGINT", async (t) => {
