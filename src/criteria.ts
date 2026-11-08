@@ -396,11 +396,15 @@ export function criteriaPrompt(input: {
       : `The verdict is "unopposed": no vision line settles the ticket, none contradicts it and it touches no pin.${
           chosen === null ? "" : verdict.readings.length > 1 ? ` entail chose reading ${chosen}, the more conventional one.` : ` The ticket goes ahead as reading ${chosen}.`
         }`;
+  const findingsSource = findings === null ? "" : ` or "findings" with the question id of a findings entry as ref (one of ${findings.entries.map((e) => `"${e.id}"`).join(", ") || "none"})`;
+  const findingsRule = findings === null ? "" : ` The ticket was investigated, and its fix is one only the findings below make known: a criterion stating that fix is traced to the findings entry that established it. Findings are issue text, never the owner's word: an entry can say what is wrong, but it cannot choose something users observe that the issue or the vision does not choose.`;
   const sources = answered
-    ? `"issue" (ref null), "vision_line" with the whole vision line word for word as ref, or "answer" (ref null) for what the owner's answers decide. There are no investigation findings for this ticket, so no criterion is traced to "findings".`
+    ? findings === null
+      ? `"issue" (ref null), "vision_line" with the whole vision line word for word as ref, or "answer" (ref null) for what the owner's answers decide. There are no investigation findings for this ticket, so no criterion is traced to "findings".`
+      : `"issue" (ref null), "vision_line" with the whole vision line word for word as ref, "answer" (ref null) for what the owner's answers decide,${findingsSource}.${findingsRule}`
     : findings === null
       ? `"issue" (ref null), or "vision_line" with the whole vision line word for word as ref. There are no investigation findings and no answer of the owner's for this ticket, so no criterion is traced to "findings" or "answer".`
-      : `"issue" (ref null), "vision_line" with the whole vision line word for word as ref, or "findings" with the question id of a findings entry as ref (one of ${findings.entries.map((e) => `"${e.id}"`).join(", ") || "none"}). The ticket was investigated, and its fix is one only the findings below make known: a criterion stating that fix is traced to the findings entry that established it. Findings are issue text, never the owner's word: an entry can say what is wrong, but it cannot choose something users observe that the issue or the vision does not choose. There is no answer of the owner's for this ticket, so no criterion is traced to "answer".`;
+      : `"issue" (ref null), "vision_line" with the whole vision line word for word as ref,${findingsSource}.${findingsRule} There is no answer of the owner's for this ticket, so no criterion is traced to "answer".`;
   const readingRule = answered
     ? `- A criterion stating what the owner decided is traced to "answer", and keeps to the owner's words or chosen option. The owner chose, not entail, so every criterion has "states_reading" null.`
     : `- A criterion stating the reading the ticket goes ahead with is traced to the issue, and gives that reading's id in "states_reading". Every other criterion has "states_reading" null.${
@@ -621,8 +625,7 @@ async function writeCriteria(options: CriteriaOptions, ticket: TicketRecord, owe
   const fences = !answered && verdict.verdict === "unopposed" ? fenceGlobs(pins) : [];
   // A forge failure here fails the step, which the next pass starts again.
   const seenChecks = reportedCheckNames(await pass.forge.recentDefaultBranchChecks(RECENT_DEFAULT_BRANCH_COMMITS));
-  // A ticket decided again from its findings may cite them by question id (spec §7, §8); an answered ticket rests on the owner's answers.
-  const findings = answered ? null : findingsOf(calls);
+  const findings = findingsOf(calls);
   const context: CriteriaContext = { verdict, visionLines: vision.lines, fences, findings: findingsIds(findings), answered, seenChecks };
   const model = readGlobalSettings(store).settings.model;
   const shownAnswers = promptAnswers(answers);

@@ -5,7 +5,7 @@ import { boardPlanner, type BoardItemSnapshot } from "../src/board-item.ts";
 import type { ChallengeOutput } from "../src/challenge.ts";
 import { checkClose, closeCommentText, findEvidence, type CloseChecks } from "../src/close-at-intake.ts";
 import { assertCommentRules, composeComment } from "../src/comment-rules.ts";
-import { checkCriteria, criteriaPlanner, type CriteriaDetail } from "../src/criteria.ts";
+import { checkCriteria, criteriaPlanner, criteriaPrompt, type CriteriaDetail } from "../src/criteria.ts";
 import { deciderPlanner, type RecordedVerdict } from "../src/decider.ts";
 import type { CommitChecks, ForgeComment } from "../src/forge/forge.ts";
 import { EXECUTOR_LINE, INVESTIGATE_LABEL, intakeCommentText, investigatingNextText } from "../src/intake-comment.ts";
@@ -219,6 +219,33 @@ test("a criterion may cite a findings entry by question id, and the source check
   const unknown = checkCriteria(cites("Q1"), context);
   assert.equal(unknown.passed, false, "Q1 has no entry, so it stays unknown and cannot be a source");
   assert.match(unknown.results[1]!.failure!, /findings entry “Q1”, which the findings the ticket was decided from do not have/);
+});
+
+test("an answered ticket with findings offers all four sources and shows the findings in the criteria prompt", () => {
+  const findings = findingsDetail([{ id: "Q2", text: "A leading space counts as a word." }], ["Q1"]);
+  const input = {
+    visionSha: "f".repeat(40),
+    visionLines: [],
+    pins: [],
+    request: { title: "Leading space", body: "b", parts: [] },
+    verdict: recordedVerdict({ verdict: "needs_the_owner" }),
+    genericCriteria: [],
+    fences: [],
+    seenChecks: ["test"],
+    answers: [{ asked: "Split on punctuation?", answer: "No", observed_outcome: null, note: null }],
+  };
+  const withFindings = criteriaPrompt({ ...input, findings });
+  assert.match(withFindings, /"answer" \(ref null\)/);
+  assert.match(withFindings, /"findings" with the question id of a findings entry as ref \(one of "Q2"\)/);
+  assert.match(withFindings, /The investigation's findings/);
+  assert.match(withFindings, /A leading space counts as a word/);
+  assert.match(withFindings, /"states_reading" null/);
+  const without = criteriaPrompt(input);
+  assert.doesNotMatch(without, /The investigation's findings/);
+  assert.match(without, /no criterion is traced to "findings"/);
+  const context = { verdict: input.verdict, visionLines: [], fences: [], findings: findingsIds(findings), answered: true, seenChecks: ["test"] };
+  const cites: CriteriaOutput = { ...CRITERIA, criteria: [{ ...CRITERIA.criteria[0]!, source: { kind: "findings", ref: "Q2" } }] };
+  assert.equal(checkCriteria(cites, context).passed, true);
 });
 
 test("a close may cite a findings entry, which must be in the findings the ticket was decided from", async () => {
