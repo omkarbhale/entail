@@ -51,6 +51,14 @@ export interface CliTransportOptions {
 
 /** `gh` exits 4 when the host needs `gh auth login`. */
 const GH_EXIT_AUTH_REQUIRED = 4;
+/**
+ * `glab` has no exit code of its own for a missing login. When it holds a
+ * host's login but cannot use it, such as a token missing from the keyring, it
+ * refuses before sending anything and tells the owner to run `glab auth
+ * login`. With no login at all for the host it sends the request without a
+ * token, and the forge's 401 says so instead.
+ */
+const GLAB_AUTH_REQUIRED = /glab auth login|glab is not authenticated/;
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_OUTPUT_BYTES = 256 * 1024 * 1024;
 
@@ -89,7 +97,14 @@ export class CliTransport implements Transport {
           encoding: "utf8",
           maxBuffer: MAX_OUTPUT_BYTES,
           timeout: this.#timeoutMs,
-          env: { ...process.env, GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1", NO_PROMPT: "1", NO_COLOR: "1" },
+          env: {
+            ...process.env,
+            GH_PROMPT_DISABLED: "1",
+            GH_NO_UPDATE_NOTIFIER: "1",
+            GLAB_CHECK_UPDATE: "false",
+            NO_PROMPT: "1",
+            NO_COLOR: "1",
+          },
         },
         (error, stdout, stderr) => {
           // A timeout or an output overflow leaves the output cut short, so only
@@ -102,7 +117,8 @@ export class CliTransport implements Transport {
             return;
           }
           const detail = stderr.trim() || error?.message || "no HTTP response";
-          const loggedOut = this.#cli === "gh" && code === GH_EXIT_AUTH_REQUIRED;
+          const loggedOut =
+            code !== null && (this.#cli === "gh" ? code === GH_EXIT_AUTH_REQUIRED : GLAB_AUTH_REQUIRED.test(stderr));
           reject(new TransportError(`${this.#cli} api ${request.method} ${request.path} on ${request.host}: ${detail}`, loggedOut));
         },
       );

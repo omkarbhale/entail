@@ -4,6 +4,7 @@ import {
   type ChangeBatch,
   type ChangeCursor,
   type Forge,
+  type ForgeInstance,
   ForgeLoggedOutError,
   ForgeRequestError,
   type ForgeSetting,
@@ -80,6 +81,11 @@ export class GitHubForge implements Forge {
       path: this.setting.path,
       defaultBranch: field(repo, "default_branch", "string", path),
     };
+  }
+
+  /** github.com is the only GitHub host, with no version to read, so it is always served. */
+  async instance(): Promise<ForgeInstance> {
+    return { version: null, unsupported: null };
   }
 
   async changesSince(cursor: ChangeCursor | null): Promise<ChangeBatch> {

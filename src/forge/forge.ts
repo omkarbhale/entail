@@ -106,6 +106,17 @@ export type Change =
  */
 export type ChangeCursor = string;
 
+/**
+ * The forge instance a repo lives on: its version, and why entail cannot serve
+ * it if it cannot. Enrollment refuses an instance with a reason (ADR-0015).
+ */
+export interface ForgeInstance {
+  /** The version the instance reports, or null when the forge has none to read, as on github.com. */
+  version: string | null;
+  /** Why entail cannot serve this instance, such as a GitLab older than 15.6, or null when it can. */
+  unsupported: string | null;
+}
+
 /** What changed since a cursor, and the cursor to ask from next time. */
 export interface ChangeBatch {
   /** May repeat changes reported before; the core deduplicates them. */
@@ -125,6 +136,9 @@ export interface Forge {
 
   /** The repo's numeric project id and default branch. */
   project(): Promise<Project>;
+
+  /** The instance the repo lives on, read so enrollment can refuse one entail cannot serve. */
+  instance(): Promise<ForgeInstance>;
 
   /**
    * What changed in the repo's issues and issue comments since `cursor`, or

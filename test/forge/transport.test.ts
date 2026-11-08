@@ -104,3 +104,44 @@ test("a call that outlives its timeout fails even if it printed a status line", 
     TransportError,
   );
 });
+
+test("glab is run the same way, at the self-hosted host it is given", async (t) => {
+  const included = 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Next-Page: \r\n\r\n[{"id":1}]';
+  const cli = fakeCli(t, included, 0);
+  const response = await new CliTransport("glab", { executable: cli.path }).request({
+    host: "gitlab.example.org",
+    method: "GET",
+    path: "projects/acme%2Ftally/issues?order_by=updated_at",
+  });
+  assert.deepEqual(response, { status: 200, headers: { "content-type": "application/json", "x-next-page": "" }, body: '[{"id":1}]' });
+  assert.deepEqual(cli.args(), [
+    "api",
+    "--hostname",
+    "gitlab.example.org",
+    "--include",
+    "--method",
+    "GET",
+    "projects/acme%2Ftally/issues?order_by=updated_at",
+  ]);
+});
+
+test("glab refusing a login it cannot use fails as logged out", async (t) => {
+  const cli = fakeCli(
+    t,
+    "",
+    1,
+    'the token for "gitlab.example.org" is missing from the operating system keyring; run `glab auth login --hostname gitlab.example.org` to re-authenticate\n',
+  );
+  await assert.rejects(
+    new CliTransport("glab", { executable: cli.path }).request({ host: "gitlab.example.org", method: "GET", path: "user" }),
+    (error: unknown) => error instanceof TransportError && error.loggedOut,
+  );
+});
+
+test("glab failing for another reason fails, not as logged out", async (t) => {
+  const cli = fakeCli(t, "", 1, "dial tcp: lookup gitlab.example.org: no such host\n");
+  await assert.rejects(
+    new CliTransport("glab", { executable: cli.path }).request({ host: "gitlab.example.org", method: "GET", path: "user" }),
+    (error: unknown) => error instanceof TransportError && !error.loggedOut && /no such host/.test(error.message),
+  );
+});
