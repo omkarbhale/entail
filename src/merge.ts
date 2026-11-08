@@ -18,7 +18,7 @@ import {
   type MechanicalPass,
 } from "./landing.ts";
 import { failingClosing, gradedLandingText, type GradedLandingDetail, type GradedPass } from "./landing-grade.ts";
-import { isLandingMergeAnswer, ownerClosing, pinnedPathsAtLanding } from "./landing-pin.ts";
+import { isLandingMergeAnswer, ownerClosing, pinnedPathsAtLanding, pinsCoveredAtHead } from "./landing-pin.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import type { OwedStep, OwedStepPlanner, RepoPass } from "./pass.ts";
@@ -51,7 +51,8 @@ import { readVision } from "./vision.ts";
  *   not seen for a ticket whose criteria do not fence it off the pins, is not
  *   merged, and the check covers every ticket the merge would end: the
  *   unseen pinned paths of all the tickets the PR links are raised on the run
- *   that decides to merge, so none merges unasked. Its landing call raises the ticket to the owner
+ *   that decides to merge, so none merges unasked; a pin an answered going-ahead
+ *   item listed for this PR at this head counts as seen for every ticket it links. Its landing call raises the ticket to the owner
  *   ({@link MergeOptions.raiseForPins}, in `landing-pin.ts`). Answered "Merge
  *   this PR as it is", entail verifies the same head again through the merge
  *   guard and merges it; a merge that does not go through then takes the
@@ -461,8 +462,11 @@ async function takeToMerge(context: MergeContext, passed: GradedPass): Promise<"
           : { decision: "merging" };
   // Only a PR that passed everything else goes to the owner for a touched pin, with the pins as they are now (spec §11).
   if (decision.decision === "merging") {
-    const paths = [{ ticket, criteria }, ...others.flatMap((o) => (o.ticket === null ? [] : [{ ticket: o.ticket, criteria: criteriaInForce(store.callsForTicket(o.ticket.id)) }]))]
+    const linkedTickets = [{ ticket, criteria }, ...others.flatMap((o) => (o.ticket === null ? [] : [{ ticket: o.ticket, criteria: criteriaInForce(store.callsForTicket(o.ticket.id)) }]))];
+    const covered = pinsCoveredAtHead(store, linkedTickets.map((t) => t.ticket.id), live.number, pinned);
+    const paths = linkedTickets
       .flatMap((t) => (t.criteria === null ? [] : pinnedPathsAtLanding(store, t.ticket, t.criteria, passed.changedPaths)))
+      .filter((p) => !covered.has(p.pin.trim()))
       .filter((p, i, all) => all.findIndex((q) => q.pin === p.pin && q.path === p.path) === i);
     if (paths.length > 0) decision = { decision: "owner", paths };
   }

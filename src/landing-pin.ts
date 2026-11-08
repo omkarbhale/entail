@@ -112,6 +112,20 @@ export function pinnedPathsAtLanding(store: Store, ticket: TicketRecord, criteri
   return pinnedPathsToRaise({ criteria, pins, seen: pinsSeen(store, ticket.id), changedPaths });
 }
 
+/** The pins an answered going-ahead landing pin item on any of the tickets listed for this PR at this head, by topic. */
+export function pinsCoveredAtHead(store: Store, ticketIds: readonly number[], pullRequest: number, headSha: string): Set<string> {
+  const covered = new Set<string>();
+  for (const id of ticketIds) {
+    for (const { item, answer } of store.boardItemsForTicket(id)) {
+      const landing = (item.snapshot as Partial<BoardItemSnapshot> | null)?.landing;
+      if (answer === null || answer.shape === "dont-go-ahead" || landing === undefined) continue;
+      if (landing.pullRequest !== pullRequest || landing.headSha !== headSha) continue;
+      for (const path of landing.paths) covered.add(path.pin.trim());
+    }
+  }
+  return covered;
+}
+
 /** The touched pins, by name, each with the paths that touch it. */
 export function touchedPinsOf(pullRequest: number, paths: readonly PinnedPathTouched[]): TouchedPin[] {
   const byPin = new Map<string, string[]>();

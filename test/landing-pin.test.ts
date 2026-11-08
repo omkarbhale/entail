@@ -704,3 +704,36 @@ test("when the last linked ticket passes, a pin only an earlier-passed ticket ha
   assert.deepEqual(h.forge.merges, [], "nothing merges unasked");
   assert.equal(h.setup.store.boardItemsForTicket(first.id).length + h.setup.store.boardItemsForTicket(second.id).length, 1);
 });
+
+test("an answered item covers its pins for every ticket the PR links, so the same head merges both after the owner's own words", async (t) => {
+  const h = await harness(t);
+  const first = h.cleared(1);
+  const second = h.cleared(2);
+  h.forge.open(12, [1, 2]);
+  await h.pass(4);
+
+  const raised = [first, second].find((ticket) => h.setup.store.openBoardItem(ticket.id) !== null)!;
+  assert.ok(raised, "one item on the last ticket to pass");
+  const other = raised.id === first.id ? second : first;
+  assert.equal(h.setup.store.boardItemsForTicket(other.id).length, 0);
+
+  h.answer(raised.id, { shape: "own-words", optionId: null, text: "Go ahead, the format change is fine." });
+  await h.pass();
+  const verdict = h.calls(raised.id, "verdict")[0]!;
+  const [goAhead] = h.calls(raised.id, "go-ahead");
+  h.setup.store.recordCall({
+    ticketId: raised.id,
+    kind: "criteria",
+    reason: "Criteria version 2 from the owner's words.",
+    detail: criteriaDetail(h.setup.store.latestSettings(h.repo.id)!.id, verdict.id, { version: 2, goAheadCallId: goAhead!.id, pinsSeen: ["the output format"] }),
+    stateTo: "cleared",
+  });
+  h.grades(raised.id);
+  await h.pass(4);
+
+  assert.equal(h.setup.store.boardItemsForTicket(raised.id).length, 1, "no new item");
+  assert.equal(h.setup.store.boardItemsForTicket(other.id).length, 0);
+  assert.equal(h.state(raised.id), "merged");
+  assert.equal(h.state(other.id), "merged");
+  assert.deepEqual(h.forge.merges.map((m) => m.number), [12]);
+});
