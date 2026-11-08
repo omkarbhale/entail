@@ -23,7 +23,18 @@ import { RecordedTransport, type Recording } from "./recorded-transport.ts";
  * its own forge's wire format, playing out the same world described below, and
  * must give the same forge-neutral answers.
  */
-export type Scenario = "actor" | "logged-out" | "project" | "changes" | "rate-limited";
+export type Scenario =
+  | "actor"
+  | "logged-out"
+  | "project"
+  | "changes"
+  | "rate-limited"
+  | "comment"
+  | "label"
+  | "close"
+  | "merge"
+  | "merge-refused"
+  | "settle-reads";
 
 export interface ForgeContractSubject {
   name: string;
@@ -44,7 +55,26 @@ export interface ForgeContractSubject {
  * - Then reporter edits issue #2's title, it is labelled `entail:deciding`, and
  *   owner, having renamed the account to `owner-renamed`, opens issue #3 (id 9003).
  * - Rate limited: the forge refuses reads until 2026-11-08T12:00:00Z.
+ *
+ * The writes, on the same repo, as owner:
+ *
+ * - Comment: entail's comment for ticket 42 on issue #2 (comment id 8001), and
+ *   one on PR #4 (comment id 8002).
+ * - Label: `entail:cleared` is missing from the repo when it is first added
+ *   to issue #2, and is there when it is added to issue #3. It is then
+ *   removed from issue #2, and `entail:investigate`, which issue #2 does not
+ *   carry, is removed too.
+ * - Close: issue #7 is closed as not planned, and issue #2 as completed.
+ * - Merge: PR #4 is merged at its head (HEAD below) by squashing, making MERGE_COMMIT.
+ * - Merge refused: PR #5's head moved away from the pinned sha, and PR #6 is a draft.
+ * - Settle reads: issue #2 carries the `/entail` comment then entail's comment
+ *   8001 (with a system note between them on GitLab), PR #4 carries entail's
+ *   comment 8002, PR #4 is merged and PR #5 is open.
  */
+const HEAD = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const MERGE_COMMIT = "9fceb02d0ae598e95dc970b74767f19372d61af8";
+const ISSUE_COMMENT = "Speaking from Owner's entail:\n\nCleared.\n\n<!-- entail ticket 42 -->";
+const PR_COMMENT = "Speaking from Owner's entail:\n\nNot merged at `4b825dc`.\n\n<!-- entail ticket 42 -->";
 const OWNER = { id: 1001, username: "owner" };
 const REPORTER = { id: 1002, username: "reporter" };
 
@@ -156,6 +186,69 @@ export function forgeContract(subject: ForgeContractSubject): void {
       assert.equal(opened.author.username, "owner-renamed", "the username is kept for display");
       assert.ok(sameActor(opened.author, actor(OWNER)), "a renamed account is still the same actor");
       assert.ok(!sameActor(edited.author, actor(OWNER)), "another account is not the owner");
+    });
+
+    test("a comment is posted on an issue or a PR exactly as given, and known by its id and URL", async (t) => {
+      const forge = forgeFor(t, "comment");
+      const onIssue = await forge.postComment("issue", 2, ISSUE_COMMENT);
+      assert.equal(onIssue.id, 8001);
+      assert.ok(onIssue.url.startsWith(`https://${setting.host}/acme/tally/`) && onIssue.url.includes("8001"), onIssue.url);
+      const onPr = await forge.postComment("pr", 4, PR_COMMENT);
+      assert.equal(onPr.id, 8002);
+      assert.ok(onPr.url.startsWith(`https://${setting.host}/acme/tally/`) && onPr.url.includes("8002"), onPr.url);
+    });
+
+    test("an entail: label is created on first use, added, and removed even when absent", async (t) => {
+      const forge = forgeFor(t, "label");
+      await forge.addLabel(2, "entail:cleared");
+      await forge.addLabel(3, "entail:cleared");
+      await forge.removeLabel(2, "entail:cleared");
+      await forge.removeLabel(2, "entail:investigate");
+      await assert.rejects(forge.addLabel(2, "bug"), /only its own labels/);
+      await assert.rejects(forge.removeLabel(2, "entail:"), /only its own labels/);
+    });
+
+    test("an issue is closed, as not planned where asked", async (t) => {
+      const forge = forgeFor(t, "close");
+      await forge.closeIssue(7, "not-planned");
+      await forge.closeIssue(2, "completed");
+    });
+
+    test("a PR is merged pinned to its sha, without bypassing rules or auto-merge", async (t) => {
+      const forge = forgeFor(t, "merge");
+      assert.deepEqual(await forge.merge(4, HEAD, "squash"), { merged: true, mergeCommitSha: MERGE_COMMIT });
+    });
+
+    test("any outcome other than merged is a refusal, with the forge's reason", async (t) => {
+      const forge = forgeFor(t, "merge-refused");
+      const moved = await forge.merge(5, HEAD);
+      assert.ok(!moved.merged && /HEAD|modified/i.test(moved.refusal), JSON.stringify(moved));
+      const draft = await forge.merge(6, HEAD);
+      assert.ok(!draft.merged && draft.refusal.length > 0, JSON.stringify(draft));
+    });
+
+    test("comments and a PR's state are read to settle unconfirmed writes", async (t) => {
+      const forge = forgeFor(t, "settle-reads");
+      const onIssue = await forge.comments("issue", 2);
+      assert.deepEqual(
+        onIssue.map(({ url: _url, ...comment }) => comment),
+        [
+          { id: 7001, body: "/entail", author: actor(OWNER), createdAt: "2026-11-01T11:05:00.000Z" },
+          { id: 8001, body: ISSUE_COMMENT, author: actor(OWNER), createdAt: "2026-11-08T10:00:00.000Z" },
+        ],
+      );
+      assert.ok(onIssue.every((c) => c.url.startsWith(`https://${setting.host}/`)));
+      assert.deepEqual(
+        (await forge.comments("pr", 4)).map((c) => [c.id, c.body]),
+        [[8002, PR_COMMENT]],
+      );
+      assert.deepEqual(await forge.pullRequestState(4), { state: "merged", headSha: HEAD, mergeCommitSha: MERGE_COMMIT });
+      assert.deepEqual(await forge.pullRequestState(5), { state: "open", headSha: HEAD, mergeCommitSha: null });
+    });
+
+    test("the forge supplies its own word for a PR in comments", () => {
+      const forge = subject.createForge(setting, new RecordedTransport({ host: setting.host, exchanges: [] }));
+      assert.equal(forge.wording.pullRequest, setting.forge === "gitlab" ? "merge request" : "pull request");
     });
 
     test("a rate-limited read is surfaced with its reset time", async (t) => {

@@ -1,0 +1,91 @@
+{
+  "host": "github.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "PUT",
+        "path": "repos/acme/tally/pulls/4/merge-async",
+        "body": {
+          "sha": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+          "merge_action": "direct_merge",
+          "bypass_rules": false,
+          "merge_method": "squash"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "status": "pending",
+          "details": {
+            "message": "The merge request has been accepted and is being processed.",
+            "uuid": "6f1c2a9e-3b7d-4c55-9a1e-0d2f8b7c4e10",
+            "merge_method": "squash",
+            "merge_action": "direct_merge",
+            "expected_head_sha": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+            "bypass_rules": false
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/pulls/4/merge-async/6f1c2a9e-3b7d-4c55-9a1e-0d2f8b7c4e10"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "status": "pending",
+          "details": {
+            "message": "The merge request has been accepted and is being processed.",
+            "uuid": "6f1c2a9e-3b7d-4c55-9a1e-0d2f8b7c4e10",
+            "merge_method": "squash",
+            "merge_action": "direct_merge",
+            "expected_head_sha": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+            "bypass_rules": false
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/pulls/4/merge-async/6f1c2a9e-3b7d-4c55-9a1e-0d2f8b7c4e10"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "status": "merged",
+          "details": {
+            "message": "Pull Request successfully merged",
+            "sha": "9fceb02d0ae598e95dc970b74767f19372d61af8"
+          }
+        }
+      }
+    }
+  ]
+}

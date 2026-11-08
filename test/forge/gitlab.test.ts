@@ -210,13 +210,16 @@ test("createForge picks the GitLab adapter for gitlab.com and self-hosted hosts 
   assert.ok(createForge(SETTING, transport) instanceof GitLabForge);
 });
 
-/** The Free/CE REST endpoints the adapter reads: nothing that needs Premium or Ultimate (ADR-0015). */
+/** The Free/CE REST endpoints the adapter reads and writes: nothing that needs Premium or Ultimate (ADR-0015). */
 const FREE_ENDPOINTS = [
   /^user$/,
   /^version$/,
   /^projects\/[^/?]+$/,
   /^projects\/[^/?]+\/issues\?/,
-  /^projects\/[^/?]+\/issues\/\d+\/notes\?/,
+  /^projects\/[^/?]+\/issues\/\d+$/,
+  /^projects\/[^/?]+\/(issues|merge_requests)\/\d+\/notes(\?|$)/,
+  /^projects\/[^/?]+\/labels(\/[^/?]+)?$/,
+  /^projects\/[^/?]+\/merge_requests\/\d+(\/merge)?$/,
 ];
 
 test("every recorded GitLab request is a Free/CE endpoint", () => {

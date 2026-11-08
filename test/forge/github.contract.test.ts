@@ -6,5 +6,5 @@ forgeContract({
   name: "GitHub",
   setting: { forge: "github", host: "github.com", path: "acme/tally" },
   recording: (scenario) => loadRecording(new URL(`./recordings/github/${scenario}.json`, import.meta.url)),
-  createForge: (setting, transport) => new GitHubForge(setting, transport),
+  createForge: (setting, transport) => new GitHubForge(setting, transport, { mergePollIntervalMs: 0 }),
 });
