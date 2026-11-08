@@ -27,7 +27,7 @@ import {
   type RecheckDetail,
   type VisionChanges,
 } from "../src/recheck.ts";
-import type { GenericCriterion, RepoSettings } from "../src/repo-settings.ts";
+import type { GenericCriterion, Pin, RepoSettings } from "../src/repo-settings.ts";
 import { ScriptedRunner } from "../src/scripted-runner.ts";
 import type { CallRecord, RepoRecord, TicketRecord } from "../src/store.ts";
 import { blobAt } from "../src/vision-change.ts";
@@ -269,6 +269,8 @@ interface Harness {
   calls(issueNumber?: number, kind?: CallRecord["kind"]): CallRecord[];
   /** Commits and pushes a new VISION.md. */
   editVision(content: string, message?: string): string;
+  /** Saves the repo's pins on its settings, as the settings page does. */
+  setPins(pins: Pin[]): void;
   /** Takes issue 1 in and clears it on the scripted verdict, criteria and challenge. */
   clear(verdict?: VerdictOutput, criteria?: CriteriaOutput): Promise<TicketRecord>;
   kinds(): string[];
@@ -358,6 +360,10 @@ async function harness(t: TestContext): Promise<Harness> {
       const sha = fixture.commit(message);
       fixture.push();
       return sha;
+    },
+    setPins(pins) {
+      const latest = setup.store.latestSettings(repo.id)!.settings as RepoSettings;
+      setup.store.saveSettings(repo.id, { ...latest, pins }, "Ada");
     },
     async clear(verdict = settled(), criteria = SETTLED_CRITERIA) {
       forge.issues = [issue(1, { title: "Count hyphenated words", body: "Is `a-b` one word or two?" })];
@@ -799,4 +805,230 @@ test("while VISION.md is gone the repo is halted: a flagged ticket is neither re
   assert.equal(recheckCall(h).detail.recheck.outcome, "stands");
   assert.deepEqual(recheckCall(h).detail.recheck.added, [NEW_LINE, "Output is exact."]);
   assert.equal(h.setup.store.visionChanges(h.repo.id).length, 2, "the vision back is recorded against the last vision of record");
+});
+
+// Pin changes (spec §12, §15, ADR-0018): the same re-check, flags and withdrawals.
+
+const FORMAT_PIN: Pin = { topic: "the output format", paths: ["src/format.js"], keywords: ["format"] };
+const NETWORK_PIN: Pin = { topic: "network access", paths: [], keywords: ["http"] };
+
+function heldPass(h: Harness): Parameters<VisionChanges["processChanges"]>[0]["pass"] {
+  return { repo: h.repo } as Parameters<VisionChanges["processChanges"]>[0]["pass"];
+}
+
+test("adding a pin flags a cleared ticket at once, so nothing merges until its re-check, which runs at the current pins and is recorded with the pin added", async (t) => {
+  const h = await harness(t);
+  const ticket = await h.clear();
+  const comments = h.forge.commentsOn().length;
+  assert.equal(await h.vision.hold.held(ticket, heldPass(h)), false);
+
+  h.setPins([FORMAT_PIN]);
+  assert.equal(await h.vision.hold.held(ticket, heldPass(h)), true, "the merge is held from the save, before any pass");
+  h.runner.script("re-check", String(ticket.id), { output: recheckOf({ reason: "The ticket does not touch the output format." }) });
+  h.runner.script("challenge", String(ticket.id), { output: UPHELD });
+  await h.pass();
+
+  const call = recheckCall(h);
+  assert.equal(call.detail.recheck.outcome, "stands");
+  assert.deepEqual(call.detail.recheck.pinsAdded, [FORMAT_PIN]);
+  assert.deepEqual([call.detail.recheck.pinsRemoved, call.detail.recheck.removed, call.detail.recheck.added, call.detail.visionChangeIds], [[], [], [], []]);
+  assert.match(call.reason, /^Re-checked after the pin change adding the pin “the output format”: the call stands\./);
+  assert.deepEqual(
+    (call.inputs?.pins as Pin[]).map((pin) => pin.topic),
+    ["The product's vision, VISION.md", "the output format"],
+    "the re-check judged the current pins",
+  );
+  const prompt = h.runner.requests.find((request) => request.kind === "re-check")!.prompt;
+  assert.match(prompt, /Added pins:\n- \{"topic":"the output format","paths":\["src\/format\.js"\],"keywords":\["format"\]\}/);
+  assert.match(prompt, /Removed pins:\nNone\./);
+  assert.match(h.runner.requests.filter((request) => request.kind === "challenge").at(-1)!.prompt, /"topic": "the output format"/, "and is challenged at them");
+
+  assert.equal(h.ticket().state, "cleared");
+  assert.equal(criteriaInForce(h.calls())?.version, 1);
+  assert.equal(h.forge.commentsOn().length, comments, "nothing an executor reads changed, so the issue gets no comment");
+  assert.equal(await h.vision.hold.held(ticket, heldPass(h)), false, "recorded, the merge is no longer held");
+  await h.pass(2);
+  assert.equal(h.calls(1, "recheck").length, 1, "no second re-check");
+});
+
+test("a re-check after a pin was added that finds the pin touched raises the ticket; the issue and PR are told the repo's pins changed, never which pin", async (t) => {
+  const h = await harness(t);
+  const ticket = await h.clear();
+  h.forge.open(12, 1);
+  await h.pass();
+  assert.equal(h.ticket().state, "landing");
+  h.runner.script("grade", String(ticket.id), { output: GOOD_GRADE });
+  h.runner.script("landing-challenge", String(ticket.id), { output: LANDING_UPHELD });
+
+  h.setPins([FORMAT_PIN]);
+  h.runner.script("re-check", String(ticket.id), {
+    output: recheckOf({
+      outcome: "needs_the_owner",
+      verdict: "needs_the_owner",
+      citations: [],
+      pins_touched: [{ pin: FORMAT_PIN.topic, why: "Counting hyphenated words changes the printed counts." }],
+      why_raised: "pin",
+      open_readings: ["R1", "R2"],
+    }),
+  });
+  await h.pass(2);
+
+  assert.equal(h.ticket().state, "on-the-board");
+  assert.deepEqual(h.forge.merges, [], "no PR for it merges");
+  assert.deepEqual(h.forge.state.labels[1], []);
+  const item = h.setup.store.openBoardItem(ticket.id)!;
+  assert.equal(item.whyRaised, "pin");
+  assert.match((item.snapshot as BoardItemSnapshot).why.text, /It touches the pin “the output format”/);
+  assert.match(recheckCall(h).reason, /^Re-checked after the pin change adding the pin “the output format”: it needs the owner/);
+
+  const intake = h.forge.commentsOn().at(-1)!;
+  assert.match(intake, /after a change to the repo's pins\./);
+  assert.doesNotMatch(intake, /output format|vision change/, "the pin is not named on the forge");
+  const [raised, ...more] = h.forge.prComments(12);
+  assert.deepEqual(more, []);
+  assert.match(raised!, /entail raised #1 to the owner after a change to the repo's pins\./);
+  assert.doesNotMatch(raised!, /output format/);
+  assertCommentRules(raised!, "Ada", ticket.id);
+
+  h.setup.store.recordAnswer({ boardItemId: item.id, answeredBy: "Ada", shape: "dont-go-ahead" });
+  await h.pass(2);
+  assert.equal(h.ticket().state, "cancelled");
+  assert.equal(h.forge.state.prs[12]?.state, "open", "the PR is not closed");
+  assert.match(h.forge.prComments(12)[1]!, /The owner decided not to go ahead with #1 after a change to the repo's pins, so its ticket is cancelled\./);
+});
+
+test("editing a pin behaves as removing the old one and adding the new: it flags the ticket, and the re-check is given both", async (t) => {
+  const h = await harness(t);
+  h.setPins([FORMAT_PIN, NETWORK_PIN]);
+  const ticket = await h.clear();
+  assert.equal(await h.vision.hold.held(ticket, heldPass(h)), false);
+
+  const edited: Pin = { ...FORMAT_PIN, keywords: ["format", "printf"] };
+  h.setPins([edited, NETWORK_PIN]);
+  h.runner.script("re-check", String(ticket.id), { output: recheckOf() });
+  h.runner.script("challenge", String(ticket.id), { output: UPHELD });
+  await h.pass();
+
+  const call = recheckCall(h);
+  assert.deepEqual([call.detail.recheck.pinsRemoved, call.detail.recheck.pinsAdded], [[FORMAT_PIN], [edited]]);
+  assert.match(call.reason, /after the pin change adding the pin “the output format” and removing the pin “the output format”/);
+  const prompt = h.runner.requests.find((request) => request.kind === "re-check")!.prompt;
+  assert.match(prompt, /Removed pins:\n- \{"topic":"the output format","paths":\["src\/format\.js"\],"keywords":\["format"\]\}/);
+  assert.match(prompt, /Added pins:\n- \{"topic":"the output format","paths":\["src\/format\.js"\],"keywords":\["format","printf"\]\}/);
+});
+
+test("removing a pin flags nothing; a pin added later flags the ticket, and its re-check is given every pin change so far", async (t) => {
+  const h = await harness(t);
+  h.setPins([FORMAT_PIN, NETWORK_PIN]);
+  const ticket = await h.clear();
+
+  h.setPins([NETWORK_PIN]);
+  assert.equal(await h.vision.hold.held(ticket, heldPass(h)), false, "removing a pin holds no merge");
+  await h.pass(2);
+  assert.equal(h.kinds().includes("re-check"), false);
+  assert.deepEqual(h.calls(1, "recheck"), []);
+  assert.equal(h.vision.flags.flag(ticket.id), null);
+
+  const added: Pin = { topic: "exit codes", paths: [], keywords: ["exit"] };
+  h.setPins([NETWORK_PIN, added]);
+  h.runner.script("re-check", String(ticket.id), { output: recheckOf() });
+  h.runner.script("challenge", String(ticket.id), { output: UPHELD });
+  await h.pass();
+  const call = recheckCall(h);
+  assert.deepEqual([call.detail.recheck.pinsRemoved, call.detail.recheck.pinsAdded], [[FORMAT_PIN], [added]]);
+});
+
+test("a ticket cleared by the owner's answer is not flagged by an added pin, as by a vision change", async (t) => {
+  const h = await harness(t);
+  const ticket = await h.clear();
+  h.editVision(`${VISION}${NEW_LINE}\n`);
+  h.runner.script("re-check", String(ticket.id), { output: recheckOf() });
+  h.runner.script("challenge", String(ticket.id), { output: OVERTURNED });
+  await h.pass(2);
+  const item = h.setup.store.openBoardItem(ticket.id)!;
+  h.setup.store.recordAnswer({ boardItemId: item.id, answeredBy: "Ada", shape: "option", optionId: "R1" });
+  h.runner.script("criteria", String(ticket.id), {
+    output: { ...SETTLED_CRITERIA, criteria: [{ id: "C1", sentence: "`tally` counts `a-b` as one word.", source: { kind: "answer", ref: null }, checks: [], states_reading: null }] },
+  });
+  h.runner.script("challenge", String(ticket.id), { output: UPHELD });
+  await h.pass(3);
+  assert.equal(h.ticket().state, "cleared");
+
+  h.setPins([FORMAT_PIN]);
+  assert.equal(await h.vision.hold.held(h.ticket(), heldPass(h)), false);
+  await h.pass(2);
+  assert.equal(h.calls(1, "recheck").length, 1, "only the vision change's re-check");
+});
+
+test("another pin change before the re-check is recorded restarts it with every change so far", async (t) => {
+  const h = await harness(t);
+  const ticket = await h.clear();
+  h.setPins([FORMAT_PIN]);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  h.runner.script("re-check", String(ticket.id), { output: recheckOf(), until: gate });
+  await passUntil(h, "re-check");
+
+  h.setPins([FORMAT_PIN, NETWORK_PIN]);
+  await h.engine.runPass();
+  release();
+  await h.idle();
+  assert.equal(h.calls(1, "recheck").length, 0, "the re-check in flight is discarded");
+
+  h.runner.script("re-check", String(ticket.id), { output: recheckOf() });
+  h.runner.script("challenge", String(ticket.id), { output: UPHELD });
+  await h.pass();
+  assert.deepEqual(recheckCall(h).detail.recheck.pinsAdded, [FORMAT_PIN, NETWORK_PIN]);
+});
+
+test("a pin change withdraws the open board items it touches, and their tickets are decided again; removing a pin an item does not name leaves it", async (t) => {
+  const h = await harness(t);
+  h.setPins([FORMAT_PIN, NETWORK_PIN]);
+  h.forge.issues = [issue(1, { title: "Print counts as a table", body: "Change how counts are printed." })];
+  const raisedForPin = (reason: string) =>
+    settled({
+      verdict: "needs_the_owner",
+      citations: [],
+      pins_touched: [{ pin: FORMAT_PIN.topic, why: "It changes the printed output." }],
+      why_raised: "pin",
+      open_readings: ["R1", "R2"],
+      reason,
+    });
+  h.runner.script("verdict", "1", { output: raisedForPin("It touches the output format pin.") });
+  await h.pass(2);
+  const ticket = h.ticket();
+  assert.equal(ticket.state, "on-the-board");
+  const first = h.setup.store.openBoardItem(ticket.id)!;
+
+  // Removing a pin the item does not name leaves it open.
+  h.setPins([FORMAT_PIN]);
+  await h.pass(2);
+  assert.equal(h.setup.store.openBoardItem(ticket.id)?.id, first.id);
+  assert.deepEqual(h.calls(1, "recheck"), []);
+
+  // Removing the pin it names withdraws it, and the ticket is decided again at the current pins.
+  h.runner.script("verdict", "1", { output: settled({ verdict: "needs_the_owner", citations: [], why_raised: "consequential_readings", open_readings: ["R1", "R2"], reason: "Still open." }) });
+  h.setPins([]);
+  await h.pass(3);
+  assert.match(h.setup.store.boardItem(first.id)!.withdrawal?.reason ?? "", /^The pin “the output format” changed\.$/);
+  const withdrawal = h.calls(1, "recheck")[0]!;
+  assert.deepEqual(withdrawal.stateChange, { from: "on-the-board", to: "deciding" });
+  // The call records every pin change since the item was raised; the item names only the pin that touched it.
+  assert.match(withdrawal.reason, /^The pin change removing the pins “the output format” and “network access”, so the open board item is withdrawn and the ticket decided again/);
+  assert.deepEqual((withdrawal.detail as { withdrawn: { pinsRemoved: Pin[] } }).withdrawn.pinsRemoved, [FORMAT_PIN, NETWORK_PIN]);
+  const verdicts = h.calls(1, "verdict");
+  assert.equal(verdicts.length, 2, "decided again");
+  assert.deepEqual((verdicts[1]!.inputs?.pins as Pin[]).map((pin) => pin.topic), ["The product's vision, VISION.md"]);
+  assert.equal(h.ticket().state, "on-the-board", "and raised again on the new verdict");
+  const second = h.setup.store.openBoardItem(ticket.id)!;
+  assert.notEqual(second.id, first.id);
+
+  // Adding a pin touches every open item, as an added vision line does.
+  h.runner.script("verdict", "1", { output: raisedForPin("It touches the output format pin again.") });
+  h.setPins([FORMAT_PIN]);
+  await h.pass(3);
+  assert.match(h.setup.store.boardItem(second.id)!.withdrawal?.reason ?? "", /^The pin “the output format” changed\.$/);
+  assert.equal(h.calls(1, "verdict").length, 3);
+  assert.equal(h.setup.store.openBoardItem(ticket.id)?.whyRaised, "pin");
+  assert.equal(h.setup.logLines().some((line) => line.event === "board-item-withdrawn" && line.why === "pin-change"), true);
 });

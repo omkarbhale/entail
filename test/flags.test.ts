@@ -1,8 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CriteriaDetail } from "../src/criteria.ts";
-import { flagBasisOf, latestJudgment, visionChangeFlags, visionChangeTouchesItem, type FlagBasis } from "../src/flags.ts";
+import type { JudgedPin } from "../src/decider.ts";
+import {
+  flagBasisOf,
+  latestJudgment,
+  pinChange,
+  pinChangeFlags,
+  pinChangeTouchesItem,
+  pinsJudgedBy,
+  pinsNamedBy,
+  visionChangeFlags,
+  visionChangeTouchesItem,
+  type FlagBasis,
+} from "../src/flags.ts";
+import { VISION_PIN, type RepoSettings } from "../src/repo-settings.ts";
 import type { CallRecord, TicketRecord } from "../src/store.ts";
+import { passSetup } from "./pass-fixture.ts";
 
 const CITED = "A word is a run of characters between whitespace.";
 const OTHER = "tally never reaches the network.";
@@ -101,4 +115,65 @@ test("a clear written from the owner's answer is not automatic", () => {
   const answered = call(2, { kind: "criteria", answerId: 9, detail: criteria({ answerIds: [9], goAheadCallId: 1 }) });
   assert.equal(flagBasisOf(TICKET, [answered])?.automatic, false);
   assert.equal(visionChangeFlags(flagBasisOf(TICKET, [answered])!, { removed: [], added: ["A new line."] }), false);
+});
+
+// Pin changes (spec §12, §15, ADR-0018).
+
+const FORMAT: JudgedPin = { topic: "the output format", paths: ["src/format.js"], keywords: ["format"] };
+const NETWORK: JudgedPin = { topic: "network access", paths: [], keywords: ["http"] };
+
+test("a pin is compared whole: editing any part of it is one pin removed and one added, and reordering its paths changes nothing", () => {
+  assert.deepEqual(pinChange([FORMAT], [FORMAT]), { removed: [], added: [] });
+  const reordered = { ...FORMAT, paths: ["src/format.js", "src/print.js"] };
+  assert.deepEqual(pinChange([reordered], [{ ...reordered, topic: " the  output format", paths: ["src/print.js", "src/format.js"] }]), { removed: [], added: [] });
+  const edited = { ...FORMAT, keywords: ["format", "printf"] };
+  assert.deepEqual(pinChange([FORMAT, NETWORK], [edited, NETWORK]), { removed: [FORMAT], added: [edited] });
+  assert.deepEqual(pinChange([FORMAT], [FORMAT, NETWORK]), { removed: [], added: [NETWORK] });
+  assert.deepEqual(pinChange([FORMAT, NETWORK], [NETWORK]), { removed: [FORMAT], added: [] });
+});
+
+test("adding a pin flags a cleared or landing ticket cleared by an automatic verdict; removing one flags nothing", () => {
+  const added = { removed: [], added: [NETWORK] };
+  assert.equal(pinChangeFlags(basis(), added), true);
+  assert.equal(pinChangeFlags(basis({ state: "landing", cited: [] }), added), true);
+  assert.equal(pinChangeFlags(basis(), { removed: [FORMAT], added: [] }), false, "removing a pin flags nothing");
+  assert.equal(pinChangeFlags(basis(), { removed: [FORMAT], added: [{ ...FORMAT, paths: [] }] }), true, "an edit adds the new pin");
+  assert.equal(pinChangeFlags(basis({ automatic: false }), added), false, "a ticket cleared by the owner's answer is not flagged, as for a vision change");
+  for (const state of ["deciding", "investigating", "on-the-board", "merged", "cancelled", "declined"] as const) {
+    assert.equal(pinChangeFlags(basis({ state }), added), false, state);
+  }
+});
+
+test("a pin change touches an open board item when a pin was added, or a pin the item names was removed", () => {
+  assert.equal(pinChangeTouchesItem([], { removed: [], added: [NETWORK] }), true);
+  assert.equal(pinChangeTouchesItem(["the output format"], { removed: [FORMAT], added: [] }), true);
+  assert.equal(pinChangeTouchesItem(["the output format"], { removed: [NETWORK], added: [] }), false);
+  assert.equal(pinChangeTouchesItem([], { removed: [], added: [] }), false);
+  const named = pinsNamedBy({
+    why: {
+      kind: "landing_pin",
+      tag: "pin",
+      text: "t",
+      pins: [{ pin: "the output format", why: "w" }],
+      contradicted: [],
+      failedCheck: null,
+      objection: null,
+      pinnedPaths: [{ pin: "the output format", glob: "src/format.js", path: "src/format.js" }],
+    },
+    landing: { pullRequest: 3, url: "u", headSha: "h", landingCallId: 1, paths: [{ pin: "network access", glob: "src/**", path: "src/net.js" }] },
+  });
+  assert.deepEqual(named, ["the output format", "network access"]);
+});
+
+test("the pins a call judged are the pins its inputs recorded, else those of the settings version it recorded", (t) => {
+  const setup = passSetup(t);
+  const repo = setup.enroll();
+  const settings = setup.store.latestSettings(repo.id)!;
+  const saved = setup.store.saveSettings(repo.id, { ...(settings.settings as RepoSettings), pins: [FORMAT] }, "Ada");
+  const vision = { topic: VISION_PIN.topic, paths: [...VISION_PIN.paths], keywords: [] };
+  assert.deepEqual(pinsJudgedBy(setup.store, repo.id, { inputs: { pins: [vision, NETWORK] } }), [vision, NETWORK]);
+  assert.deepEqual(pinsJudgedBy(setup.store, repo.id, { inputs: { settingsVersionId: saved.id } }), [vision, FORMAT]);
+  assert.deepEqual(pinsJudgedBy(setup.store, repo.id, { inputs: { settingsVersionId: settings.id } }), [vision]);
+  assert.equal(pinsJudgedBy(setup.store, repo.id, { inputs: { prHeadSha: "h" } }), null);
+  assert.equal(pinsJudgedBy(setup.store, repo.id, { inputs: null }), null);
 });

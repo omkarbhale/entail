@@ -46,7 +46,7 @@ export const ONE_TIME_COMMENTS = {
   notCounted: "pr-not-counted",
   /** The PR links a ticket that is already merged, through another PR. */
   alreadyMerged: "pr-already-merged",
-  /** A re-check after a vision change raised the PR's ticket to the owner (ADR-0016). */
+  /** A re-check after a vision change or pin change raised the PR's ticket to the owner (ADR-0016, ADR-0018). */
   raisedAfterRecheck: "pr-raised-after-recheck",
   /** The owner answered "don't go ahead" on a ticket a re-check raised, so it was cancelled (ADR-0016). */
   cancelledAfterRecheck: "pr-cancelled-after-recheck",
@@ -174,7 +174,7 @@ async function followTicket(options: PullRequestOptions, ticket: TicketRecord, p
   // A PR whose pinned paths are on the board already said so in its landing comment (spec §11).
   if (NO_CRITERIA_YET.has(ticket.state) && landingItem === null) {
     for (const pr of counted) {
-      // A PR told its issue was raised to the owner after a vision change already knows why it is not checked.
+      // A PR told its issue was raised to the owner after a re-check already knows why it is not checked.
       if (ticket.state === "on-the-board" && commented(store, pass, ticket, pr, ONE_TIME_COMMENTS.raisedAfterRecheck)) continue;
       await commentOnce(options, pass, ticket, pr, ONE_TIME_COMMENTS.noCriteria, noCriteriaYetText(pass, ticket));
     }
@@ -402,12 +402,15 @@ export function alreadyMergedText(store: Store, pass: Pick<RepoPass, "forge">, t
 /**
  * The one comment on an open PR whose ticket a re-check raised to the owner,
  * after the owner answered "don't go ahead" (ADR-0016): the ticket is
- * cancelled, and entail neither checks nor closes the PR.
+ * cancelled, and entail neither checks nor closes the PR. It says what the
+ * re-check followed, a vision change or a change to the repo's pins, never
+ * naming a pin (ADR-0018).
  */
-export function cancelledAfterRecheckText(pass: Pick<RepoPass, "forge">, issueNumber: number): string {
+export function cancelledAfterRecheckText(pass: Pick<RepoPass, "forge">, issueNumber: number, change: { visionChange: string | null; pinChange: boolean }): string {
   const pr = pass.forge.wording.pullRequest;
+  const after = [...(change.visionChange !== null ? ["a vision change"] : []), ...(change.pinChange ? ["a change to the repo's pins"] : [])].join(" and ") || "a re-check";
   return [
-    `The owner decided not to go ahead with #${issueNumber} after a vision change, so its ticket is cancelled.`,
+    `The owner decided not to go ahead with #${issueNumber} after ${after}, so its ticket is cancelled.`,
     `entail does not check or merge this ${pr}, and does not close it.`,
   ].join("\n\n");
 }

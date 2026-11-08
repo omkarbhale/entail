@@ -15,11 +15,11 @@ import {
   type CriteriaDetail,
   type Criterion,
 } from "./criteria.ts";
-import { judgedPins, judgedRequest, matchPins, requestText, visionText, type DeciderMirror, type JudgedPin, type JudgedRequest, type PinMatch, type RecordedVerdict } from "./decider.ts";
-import { latestJudgment, VisionFlags, type VisionFlag } from "./flags.ts";
+import { judgedRequest, matchPins, requestText, visionText, type DeciderMirror, type JudgedPin, type JudgedRequest, type PinMatch, type RecordedVerdict } from "./decider.ts";
+import { currentPins, latestJudgment, samePins, VisionFlags, type TouchedItem, type VisionFlag } from "./flags.ts";
 import { RECENT_DEFAULT_BRANCH_COMMITS, reportedCheckNames } from "./generic-criteria.ts";
 import { readGlobalSettings } from "./global-settings.ts";
-import { CLEARED_LABEL, clearedNextText, intakeCommentText, shortSha, visionCheckOf } from "./intake-comment.ts";
+import { afterChangeText, CLEARED_LABEL, clearedNextText, intakeCommentText, recheckChangeOf, shortSha, visionCheckOf } from "./intake-comment.ts";
 import { findingsIds, findingsOf, findingsText, type FindingsDetail } from "./investigation.ts";
 import { recordLanding, type HeldLanding, type LandingHold, type LandingRunKey, type MechanicalPass } from "./landing.ts";
 import type { ProcessChanges } from "./merge.ts";
@@ -30,7 +30,6 @@ import { criteriaSchema, recheckSchema, type CriteriaOutput, type RecheckOutput 
 import type { OperationalLog } from "./operational-log.ts";
 import type { OwedStep, OwedStepPlanner, PassHook, RepoPass } from "./pass.ts";
 import { commentOnce, ONE_TIME_COMMENTS } from "./pull-requests.ts";
-import { repoSettingsOf } from "./repo-settings.ts";
 import type { CallRecord, JudgedInputs, NewModelRun, RepoRecord, Store, TicketRecord } from "./store.ts";
 import { checkVerdict, type VerdictChecks } from "./verdict-checks.ts";
 import { VisionWatch } from "./vision-change.ts";
@@ -74,10 +73,18 @@ import { withdrawOpenItem } from "./withdraw.ts";
  *   and its ticket decided again. A deciding ticket's verdict run in flight is
  *   discarded (`decider.ts`). An investigating ticket is decided at the vision
  *   current when its findings arrive, and a final one is left alone.
+ * - **Pin changes** (spec §15, ADR-0018) go through the same re-check. Adding
+ *   a pin flags cleared and landing tickets the way an added vision line does,
+ *   editing a pin counts as removing the old one and adding the new, and
+ *   removing a pin flags nothing. Any pin change withdraws the open board
+ *   items it touches, and their tickets are decided again. The pins are read
+ *   afresh from the latest settings version, so a save holds a merge at once.
+ *   A comment on the forge says only that the repo's pins changed, never which
+ *   pin, because pins are kept out of the project's repo (ADR-0018).
  */
 
 /** Bumped whenever the re-check prompt changes, and recorded with every re-check run (ADR-0009). */
-export const RECHECK_PROMPT_VERSION = "recheck-1";
+export const RECHECK_PROMPT_VERSION = "recheck-2";
 
 /** A re-check's outcome (ADR-0016). */
 export type RecheckOutcome = RecheckOutput["outcome"];
@@ -95,6 +102,9 @@ export interface RecheckInfo {
   /** The lines the vision changes removed and added since the prior call, net. */
   removed: string[];
   added: string[];
+  /** The pins removed and added since the prior call, net, compared whole; absent on re-checks recorded before pin changes flagged. */
+  pinsRemoved?: JudgedPin[];
+  pinsAdded?: JudgedPin[];
   /** The criteria version in force after the re-check, kept or new; null when it raised the ticket. */
   criteriaVersion: number | null;
   criteriaRewritten: boolean;
@@ -114,10 +124,54 @@ export interface RecheckInfo {
  */
 export type RecheckDetail = RecordedVerdict & { recheck: RecheckInfo; visionChangeIds: number[] };
 
-/** A board item withdrawn by a vision change, as the call that takes its ticket off the board records it. */
+/** A board item withdrawn by a vision change or a pin change, as the call that takes its ticket off the board records it. */
 export interface WithdrawnDetail {
-  withdrawn: { boardItemId: number; fromVisionSha: string; toVisionSha: string; removed: string[]; added: string[] };
+  withdrawn: {
+    boardItemId: number;
+    fromVisionSha: string;
+    toVisionSha: string;
+    removed: string[];
+    added: string[];
+    /** The pins removed and added since the item was raised, compared whole. */
+    pinsRemoved?: JudgedPin[];
+    pinsAdded?: JudgedPin[];
+  };
   visionChangeIds: number[];
+}
+
+/** What a flag or touched item covers: vision changes, pin changes or both. */
+type ChangeCovered = Pick<VisionFlag, "changes" | "toSha" | "pinsRemoved" | "pinsAdded">;
+
+/** Whether the pins changed: any pin removed or added. */
+function pinsChanged(change: Pick<ChangeCovered, "pinsRemoved" | "pinsAdded">): boolean {
+  return change.pinsRemoved.length > 0 || change.pinsAdded.length > 0;
+}
+
+/**
+ * The change a re-check or withdrawal was made after, in the words its call's
+ * reason uses, which the Calls page shows: the vision change at its sha, the
+ * pin change by the pins' topics, or both.
+ */
+export function changeWords(change: ChangeCovered): string {
+  const parts: string[] = [];
+  if (change.changes.length > 0) parts.push(`the vision change at ${shortSha(change.toSha)}`);
+  if (pinsChanged(change)) {
+    const named = (pins: readonly JudgedPin[]) => {
+      const names = pins.map((pin) => `“${pin.topic.trim()}”`);
+      return names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+    };
+    const what = [
+      ...(change.pinsAdded.length === 0 ? [] : [`adding ${change.pinsAdded.length === 1 ? "the pin" : "the pins"} ${named(change.pinsAdded)}`]),
+      ...(change.pinsRemoved.length === 0 ? [] : [`removing ${change.pinsRemoved.length === 1 ? "the pin" : "the pins"} ${named(change.pinsRemoved)}`]),
+    ];
+    parts.push(`the pin change ${what.join(" and ")}`);
+  }
+  return parts.join(" and ");
+}
+
+/** The public form of what changed, for a comment on the forge: the vision change's sha, and only that the pins changed. */
+function publicChange(change: ChangeCovered): { visionChange: string | null; pinChange: boolean } {
+  return { visionChange: change.changes.length > 0 ? change.toSha : null, pinChange: pinsChanged(change) };
 }
 
 /** The reading a verdict goes ahead with: the one its citations choose, or the one entail chose. */
@@ -185,18 +239,24 @@ export function recheckPrompt(input: {
   prior: Pick<RecordedVerdict, "verdict" | "readings" | "vision_check" | "citations" | "why_unopposed" | "reading_chosen" | "reason"> & { vision_sha: string };
   removed: readonly string[];
   added: readonly { line: string; origin: string }[];
+  /** The pins removed and added since the prior call, compared whole; an edited pin is one of each. */
+  pinsRemoved?: readonly JudgedPin[];
+  pinsAdded?: readonly JudgedPin[];
   findings?: FindingsDetail | null;
 }): string {
   const findings = input.findings ?? null;
   const chosen = readingGoneAheadWith(input.prior);
-  return `You are entail's decider, re-checking one ticket after a change to the vision of record. The ticket was cleared on the call below, at an earlier vision. The vision has changed since: the lines below were removed and added. Answer one narrow question: does this change alter that call? You can only read: your working directory is a read-only checkout of the repo's default branch at commit ${input.visionSha}, and you may read any file in it.
+  const pinsRemoved = input.pinsRemoved ?? [];
+  const pinsAdded = input.pinsAdded ?? [];
+  const pinJson = (pins: readonly JudgedPin[]) => pins.map((pin) => `- ${JSON.stringify({ topic: pin.topic, paths: pin.paths, keywords: pin.keywords })}`).join("\n");
+  return `You are entail's decider, re-checking one ticket after a change to the vision of record or to the repo's pins. The ticket was cleared on the call below, at an earlier vision and pins. They have changed since: the vision lines and pins below were removed and added. Answer one narrow question: does this change alter that call? You can only read: your working directory is a read-only checkout of the repo's default branch at commit ${input.visionSha}, and you may read any file in it.
 
-Judge only what the change does to the call. Do not reopen what the change does not touch: a line that was neither removed nor added says what it said when the call was made.
+Judge only what the change does to the call. Do not reopen what the change does not touch: a line that was neither removed nor added says what it said when the call was made, and a pin that was neither removed nor added was judged when the call was made.
 
 Return the call at the current vision, in the verdict's fields, and the outcome:
 - "stands": the change does not alter the call. Keep the same verdict ("${input.prior.verdict}") and the same reading${chosen === null ? "" : ` (${chosen.id}: "${chosen.reading}")`}, repeating the readings word for word. If a cited line was reworded, cite the new line instead.
 - "goes_ahead_differently": the current vision settles the ticket on another reading, with a new citation ("settled"), or a cited line was removed and the ticket is now unopposed with no consequential readings ("unopposed"), or a new line now settles an unopposed ticket ("settled").
-- "needs_the_owner": an added line contradicts the ticket, the ticket touches a pin, its readings are now consequential, or a removed cited line leaves readings that the vision no longer chooses between. Give "why_raised" and "open_readings".
+- "needs_the_owner": an added line contradicts the ticket, the ticket touches a pin (an added pin above all), its readings are now consequential, or a removed cited line leaves readings that the vision no longer chooses between. Give "why_raised" and "open_readings".
 
 The fields follow the verdict's rules:
 - "vision_check" lists each vision line that bears on the ticket at the current vision, and only those, quoted whole and word for word, marked "matches", "contradicts" or "does_not_settle".
@@ -229,6 +289,15 @@ ${input.removed.length === 0 ? "None." : input.removed.map((line) => `- ${JSON.s
 Added lines, each with its recorded origin:
 ${input.added.length === 0 ? "None." : input.added.map((line) => `- ${JSON.stringify(line.line)} (origin: ${line.origin})`).join("\n")}
 
+## What changed in the pins since the prior call
+A pin is compared whole: an edited pin is one removed and one added.
+
+Removed pins:
+${pinsRemoved.length === 0 ? "None." : pinJson(pinsRemoved)}
+
+Added pins:
+${pinsAdded.length === 0 ? "None." : pinJson(pinsAdded)}
+
 ## The vision of record now (${VISION_PATH} at ${input.visionSha})
 ${visionText(input.visionLines)}
 
@@ -243,11 +312,16 @@ ${requestText(input.request)}
 `;
 }
 
-/** The one comment on an open PR whose ticket a re-check raised to the owner (ADR-0016). */
-export function raisedAfterRecheckText(wording: { pullRequest: string }, issueNumber: number, visionSha: string): string {
+/**
+ * The one comment on an open PR whose ticket a re-check raised to the owner
+ * (ADR-0016): after the vision change at its sha, or after a change to the
+ * repo's pins, which it does not name.
+ */
+export function raisedAfterRecheckText(wording: { pullRequest: string }, issueNumber: number, change: { visionChange: string | null; pinChange?: boolean }): string {
   const pr = wording.pullRequest;
+  const after = afterChangeText(change) ?? "after a re-check";
   return [
-    `entail raised #${issueNumber} to the owner after the vision change at \`${shortSha(visionSha)}\`.`,
+    `entail raised #${issueNumber} to the owner ${after}.`,
     `This ${pr} will not merge unless the owner's answer lets the issue go ahead. If it does, this ${pr} is checked again against the new criteria.`,
   ].join("\n\n");
 }
@@ -272,7 +346,7 @@ export function owedRecheckRaise(ticket: TicketRecord, calls: readonly CallRecor
 /** The raise a re-check that needs the owner asks for (ADR-0016). */
 export function raiseFromRecheck(ticket: TicketRecord, call: CallRecord): RaiseRequest {
   const detail = call.detail as RecheckDetail;
-  const visionChangeSha = detail.recheck.toVisionSha;
+  const { visionChange: visionChangeSha, pinChange } = recheckChangeOf(detail);
   const productCall = detail.recheck.productCall ?? null;
   if (productCall !== null) {
     return {
@@ -285,9 +359,10 @@ export function raiseFromRecheck(ticket: TicketRecord, call: CallRecord): RaiseR
       inputs: call.inputs,
       basedOnCallId: call.id,
       visionChangeSha,
+      pinChange,
     };
   }
-  return { ...raiseFromVerdict(ticket, call), visionChangeSha };
+  return { ...raiseFromVerdict(ticket, call), visionChangeSha, pinChange };
 }
 
 export interface VisionChangeOptions {
@@ -365,8 +440,9 @@ export function visionChanges(options: VisionChangeOptions): VisionChanges {
       if (owed !== null) return { name: "raise-after-recheck", run: () => raiseAfterRecheck(context, ticket, owed, pass) };
       if (flags.flag(ticket.id) !== null) return { name: "re-check", run: () => recheck(context, ticket, pass) };
     }
-    if (ticket.state === "on-the-board" && flags.touched(ticket.id) !== null) {
-      return { name: "withdraw-for-vision-change", run: () => withdrawTouched(context, ticket, pass) };
+    const touched = ticket.state === "on-the-board" ? flags.touched(ticket.id) : null;
+    if (touched !== null) {
+      return { name: touched.byVision ? "withdraw-for-vision-change" : "withdraw-for-pin-change", run: () => withdrawTouched(context, ticket, pass) };
     }
     return null;
   };
@@ -425,14 +501,15 @@ interface Rechecked {
   modelRuns: NewModelRun[];
 }
 
-/** Whether a re-check is still owed for the same flag: the ticket has not moved, nor its judgment, and no vision change was recorded since. */
+/** Whether a re-check is still owed for the same flag: the ticket has not moved, nor its judgment, and no vision change or pin change was recorded since. */
 function stillOwed(context: Context, ticket: TicketRecord, flag: VisionFlag): boolean {
   const { store } = context.options;
   const now = store.getTicket(ticket.id);
   if (now === null || now.state !== ticket.state || now.stateCallId !== ticket.stateCallId) return false;
   if (latestJudgment(store.callsForTicket(ticket.id))?.id !== flag.judgmentCallId) return false;
+  if (!samePins(currentPins(store, ticket.repoId).pins, flag.pins)) return false;
   const latest = store.visionChanges(ticket.repoId).at(-1)?.id ?? null;
-  return latest === (flag.changes.at(-1)?.id ?? null);
+  return latest === flag.latestVisionChangeId;
 }
 
 /** The call at the current vision as a re-check records it: the run's output in a verdict's shape, with what entail adds. */
@@ -454,10 +531,10 @@ function verdictOf(run: ScheduledRun<RecheckOutput>, visionSha: string, pinMatch
 }
 
 /**
- * Re-checks a flagged ticket (spec §12, ADR-0016). A ticket the flag no
- * longer holds for, or that moved, a vision change recorded meanwhile
- * included, is left for the next pass, which works out its flag again with
- * every change so far.
+ * Re-checks a flagged ticket (spec §12, §15, ADR-0016, ADR-0018) at the
+ * current vision and pins. A ticket the flag no longer holds for, or that
+ * moved, a vision change or pin change recorded meanwhile included, is left
+ * for the next pass, which works out its flag again with every change so far.
  */
 async function recheck(context: Context, ticket: TicketRecord, pass: RepoPass): Promise<void> {
   const { store, log } = context.options;
@@ -482,7 +559,8 @@ async function recheck(context: Context, ticket: TicketRecord, pass: RepoPass): 
     return;
   }
   const checkout = await mirror.checkout(vision.commit);
-  const pins = judgedPins(repoSettingsOf(pass.settings).pins);
+  // The pins the flag was worked out against: the latest saved, which take effect at once.
+  const pins = flag.pins;
   const pinMatches = matchPins(pins, request.parts.map((part) => part.text));
   const findings = findingsOf(calls);
   const model = readGlobalSettings(store).settings.model;
@@ -500,6 +578,8 @@ async function recheck(context: Context, ticket: TicketRecord, pass: RepoPass): 
       prior,
       removed: flag.removed.map((line) => line.text),
       added: flag.added.map((line) => ({ line: line.text, origin: store.visionLineOrigin(pass.repo.id, line.identity)?.origin ?? "owner-stated" })),
+      pinsRemoved: flag.pinsRemoved,
+      pinsAdded: flag.pinsAdded,
       findings,
     }),
     promptVersion: RECHECK_PROMPT_VERSION,
@@ -515,7 +595,7 @@ async function recheck(context: Context, ticket: TicketRecord, pass: RepoPass): 
     return;
   }
   const verdict = verdictOf(run, vision.commit, pinMatches);
-  const inputs: JudgedInputs = { issueTitle: request.title, issueBody: request.body, visionSha: vision.commit, pins, settingsVersionId: pass.settings.id };
+  const inputs: JudgedInputs = { issueTitle: request.title, issueBody: request.body, visionSha: vision.commit, pins, settingsVersionId: flag.settingsVersionId ?? pass.settings.id };
   const base: Rechecked = { flag, judgment, prior, criteria, verdict, vision, inputs, judged: run.output.outcome, modelRuns: [modelRunRecord(runRequest, run)] };
 
   const outcome = recheckOutcome(prior, run.output);
@@ -620,6 +700,8 @@ function recheckDetail(base: Rechecked, info: Pick<RecheckInfo, "outcome" | "cri
       toVisionSha: base.flag.toSha,
       removed: base.flag.removed.map((line) => line.text),
       added: base.flag.added.map((line) => line.text),
+      pinsRemoved: base.flag.pinsRemoved,
+      pinsAdded: base.flag.pinsAdded,
       ...info,
     },
     visionChangeIds: base.flag.changes.map((change) => change.id),
@@ -661,7 +743,7 @@ async function recordGoingAhead(
     criteriaRewritten: written !== null,
   });
   const words = { stands: "stands", goes_ahead_differently: "goes ahead differently" }[result.outcome];
-  const at = shortSha(base.flag.toSha);
+  const after = changeWords(base.flag);
 
   const done = store.transaction(() => {
     if (!stillOwed(context, ticket, base.flag)) return null;
@@ -670,7 +752,7 @@ async function recordGoingAhead(
     const call = store.recordCall({
       ticketId: ticket.id,
       kind: "recheck",
-      reason: `Re-checked after the vision change at ${at}: the call ${words}. ${written === null ? `The criteria stay at version ${criteria.version}.` : `New criteria version ${version}.`} ${verdict.reason.trim()}`.trim(),
+      reason: `Re-checked after ${after}: the call ${words}. ${written === null ? `The criteria stay at version ${criteria.version}.` : `New criteria version ${version}.`} ${verdict.reason.trim()}`.trim(),
       citation: cleared.citation,
       noContradictionFound: verdict.verdict === "unopposed",
       checks: result.checks,
@@ -697,7 +779,7 @@ async function recordGoingAhead(
       store.recordCall({
         ticketId: ticket.id,
         kind: "criteria",
-        reason: `New criteria version ${version}, written after the re-check at ${at}.`,
+        reason: `New criteria version ${version}, written after the re-check after ${after}.`,
         citation: cleared.citation,
         noContradictionFound: verdict.verdict === "unopposed",
         checks: written.checks,
@@ -712,7 +794,7 @@ async function recordGoingAhead(
       const inForce = criteriaInForce(store.callsForTicket(ticket.id))!;
       const next = clearedNextText({ criteria: inForce.criteria, genericCriteria: inForce.genericCriteria, why: cleared.why });
       const visionCheck = visionCheckOf(result.location, vision.commit, vision.lines, verdict.vision_check);
-      body = composeComment(ownerName, ticket.id, intakeCommentText({ visionCheck, next, replaces: latestIntakeComment(before), visionChange: base.flag.toSha }));
+      body = composeComment(ownerName, ticket.id, intakeCommentText({ visionCheck, next, replaces: latestIntakeComment(before), ...publicChange(base.flag) }));
       store.recordForgeWriteIntent({ repoId: pass.repo.id, ticketId: ticket.id, callId: call.id, kind: "comment", target: "issue", number: ticket.issueNumber, payload: { body } });
     }
     return { call, body, version };
@@ -753,7 +835,7 @@ async function recordRaised(
     return store.recordCall({
       ticketId: ticket.id,
       kind: "recheck",
-      reason: `Re-checked after the vision change at ${shortSha(base.flag.toSha)}: it needs the owner, because ${why}`,
+      reason: `Re-checked after ${changeWords(base.flag)}: it needs the owner, because ${why}`,
       checks: result.checks,
       challenge: result.challenge,
       inputs: base.inputs,
@@ -790,7 +872,7 @@ async function raiseAfterRecheck(context: Context, ticket: TicketRecord, recheck
   const { store, log } = options;
   const request = raiseFromRecheck(ticket, recheckCall);
   const mirror = await context.mirror(pass.repo);
-  const toSha = (recheckCall.detail as RecheckDetail).recheck.toVisionSha;
+  const change = recheckChangeOf(recheckCall.detail);
   await raiseToBoard(
     { store, log, dataDirectory: options.dataDirectory, notifier: options.board.notifier, boardOrigin: options.board.boardOrigin },
     request,
@@ -814,7 +896,7 @@ async function raiseAfterRecheck(context: Context, ticket: TicketRecord, recheck
         const raised = store.getTicket(ticket.id)!;
         for (const pr of await pass.forge.linkedPullRequests(ticket.issueNumber)) {
           if (pr.state !== "open") continue;
-          await commentOnce({ store, log }, pass, raised, pr, ONE_TIME_COMMENTS.raisedAfterRecheck, raisedAfterRecheckText(pass.forge.wording, ticket.issueNumber, toSha));
+          await commentOnce({ store, log }, pass, raised, pr, ONE_TIME_COMMENTS.raisedAfterRecheck, raisedAfterRecheckText(pass.forge.wording, ticket.issueNumber, change));
         }
       },
     },
@@ -822,9 +904,10 @@ async function raiseAfterRecheck(context: Context, ticket: TicketRecord, recheck
 }
 
 /**
- * Withdraws an open board item a vision change touched (spec §13, ADR-0008):
- * in one transaction, the call that takes the ticket back to deciding, which
- * the decider then decides at the current vision, and the withdrawal.
+ * Withdraws an open board item a vision change or a pin change touched (spec
+ * §13, §15, ADR-0008, ADR-0018): in one transaction, the call that takes the
+ * ticket back to deciding, which the decider then decides at the current
+ * vision and pins, and the withdrawal.
  */
 async function withdrawTouched(context: Context, ticket: TicketRecord, pass: RepoPass): Promise<void> {
   const { store, log } = context.options;
@@ -833,10 +916,7 @@ async function withdrawTouched(context: Context, ticket: TicketRecord, pass: Rep
     context.flags.forget(ticket.id);
     return;
   }
-  const what =
-    touched.added.length > 0
-      ? `added ${touched.added.length === 1 ? "a line" : `${touched.added.length} lines`}`
-      : "removed or reworded a line its vision check quotes";
+  const reason = withdrawnReason(touched);
   const call = store.transaction(() => {
     const now = store.getTicket(ticket.id);
     if (now === null || now.state !== ticket.state || now.stateCallId !== ticket.stateCallId) return null;
@@ -848,18 +928,21 @@ async function withdrawTouched(context: Context, ticket: TicketRecord, pass: Rep
         toVisionSha: touched.toSha,
         removed: touched.removed.map((line) => line.text),
         added: touched.added.map((line) => line.text),
+        pinsRemoved: touched.pinsRemoved,
+        pinsAdded: touched.pinsAdded,
       },
       visionChangeIds: touched.changes.map((change) => change.id),
     };
     const recorded = store.recordCall({
       ticketId: ticket.id,
       kind: "recheck",
-      reason: `The vision change at ${shortSha(touched.toSha)} ${what}, so the open board item is withdrawn and the ticket decided again at the current vision.`,
-      inputs: { visionSha: touched.toSha, settingsVersionId: pass.settings.id },
+      reason,
+      inputs: { visionSha: touched.toSha, pins: touched.pins, settingsVersionId: touched.settingsVersionId ?? pass.settings.id },
       detail,
       stateTo: "deciding",
     });
-    withdrawOpenItem(store, { ticketId: ticket.id, callId: recorded.id, basis: { kind: "vision-change" } });
+    const basis = touched.byVision ? ({ kind: "vision-change" } as const) : ({ kind: "pin-change", pins: touched.pinsTouching } as const);
+    withdrawOpenItem(store, { ticketId: ticket.id, callId: recorded.id, basis });
     return recorded;
   });
   context.flags.forget(ticket.id);
@@ -867,5 +950,22 @@ async function withdrawTouched(context: Context, ticket: TicketRecord, pass: Rep
     log.info("withdraw-discarded", { ticketId: ticket.id });
     return;
   }
-  log.info("board-item-withdrawn", { ticketId: ticket.id, callId: call.id, boardItemId: touched.boardItemId, why: "vision-change" });
+  log.info("board-item-withdrawn", { ticketId: ticket.id, callId: call.id, boardItemId: touched.boardItemId, why: touched.byVision ? "vision-change" : "pin-change" });
+}
+
+/** Why a touched item is withdrawn, in the words its call's reason uses: what the vision change did to it, and the pin change. */
+function withdrawnReason(touched: TouchedItem): string {
+  const parts: string[] = [];
+  if (touched.byVision) {
+    const what =
+      touched.added.length > 0
+        ? `added ${touched.added.length === 1 ? "a line" : `${touched.added.length} lines`}`
+        : "removed or reworded a line its vision check quotes";
+    parts.push(`The vision change at ${shortSha(touched.toSha)} ${what}`);
+  }
+  if (touched.pinsTouching.length > 0) {
+    const pins = changeWords({ changes: [], toSha: touched.toSha, pinsRemoved: touched.pinsRemoved, pinsAdded: touched.pinsAdded });
+    parts.push(parts.length === 0 ? pins.charAt(0).toUpperCase() + pins.slice(1) : pins);
+  }
+  return `${parts.join(", and ")}, so the open board item is withdrawn and the ticket decided again at the current vision and pins.`;
 }

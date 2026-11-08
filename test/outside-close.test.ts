@@ -448,11 +448,11 @@ test("withdrawing gives each basis its reason, and does nothing for a ticket wit
     { kind: "issue-gone" },
     { kind: "issue-edited" },
     { kind: "vision-change" },
-    { kind: "pin-change", pin: "src/**" },
+    { kind: "pin-change", pins: ["the output format"] },
     { kind: "new-push" },
     { kind: "repo-unenrolled" },
   ];
   const reasons = bases.map(withdrawalReason);
   assert.equal(new Set(reasons).size, bases.length, "each basis has its own reason");
-  assert.match(withdrawalReason({ kind: "pin-change", pin: "src/**" }), /src\/\*\*/);
+  assert.match(withdrawalReason({ kind: "pin-change", pins: ["the output format"] }), /“the output format”/);
 });

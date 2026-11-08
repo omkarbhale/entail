@@ -22,8 +22,8 @@ export type WithdrawalBasis =
   | { kind: "issue-edited" }
   /** A vision change removed or reworded a line in the item's vision check, or added a line (ADR-0016). */
   | { kind: "vision-change" }
-  /** A pin change touched the item (ADR-0018). */
-  | { kind: "pin-change"; pin: string }
+  /** A pin change touched the item: a pin was added, or a pin it names was removed or edited (ADR-0018). */
+  | { kind: "pin-change"; pins: readonly string[] }
   /** A new push arrived on the PR a landing pin item was about (ADR-0014). */
   | { kind: "new-push" }
   /** The repo was unenrolled, so the ticket is cancelled (ADR-0018). */
@@ -40,8 +40,11 @@ export function withdrawalReason(basis: WithdrawalBasis): string {
       return "The issue was edited, and this item's options were written for the old text.";
     case "vision-change":
       return "VISION.md changed in a way that touches this item's vision check.";
-    case "pin-change":
-      return `The pin ${basis.pin} changed.`;
+    case "pin-change": {
+      const names = basis.pins.map((pin) => `“${pin.trim()}”`);
+      const listed = names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+      return names.length === 0 ? "The repo's pins changed." : `The ${names.length === 1 ? "pin" : "pins"} ${listed} changed.`;
+    }
     case "new-push":
       return "A new push arrived on the pull request this item was about.";
     case "repo-unenrolled":
