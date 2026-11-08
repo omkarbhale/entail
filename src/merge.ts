@@ -47,8 +47,7 @@ import { readVision } from "./vision.ts";
  *   criteria in force of every ticket it links. A run for one of them that
  *   passes first records its landing call and waits for the others; one
  *   whose other issue has no criteria in force does not merge.
- * - **A pinned path touched.** A passing PR that would merge, or waits only
- *   for the other tickets it links, but changes a pinned path the owner has
+ * - **A pinned path touched.** A passing PR that would merge, but changes a pinned path the owner has
  *   not seen for a ticket whose criteria do not fence it off the pins, is not
  *   merged: its landing call raises the ticket to the owner
  *   ({@link MergeOptions.raiseForPins}, in `landing-pin.ts`). Answered "Merge
@@ -459,7 +458,7 @@ async function takeToMerge(context: MergeContext, passed: GradedPass): Promise<"
           ? { decision: "shadow" }
           : { decision: "merging" };
   // Only a PR that passed everything else goes to the owner for a touched pin, with the pins as they are now (spec §11).
-  if (decision.decision === "merging" || decision.decision === "waiting") {
+  if (decision.decision === "merging") {
     const paths = pinnedPathsAtLanding(store, ticket, criteria, passed.changedPaths);
     if (paths.length > 0) decision = { decision: "owner", paths };
   }

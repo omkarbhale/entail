@@ -674,3 +674,20 @@ test("a new push withdraws the item, and the landing check runs again on the new
     "the withdrawn item takes no answer",
   );
 });
+
+test("a PR waiting on a second linked ticket raises no item; the item is raised on the run where the last linked ticket passes", async (t) => {
+  const h = await harness(t);
+  const first = h.cleared(1);
+  const second = h.cleared(2);
+  h.forge.open(12, [1, 2]);
+  await h.pass(4);
+
+  const decisions = [first, second].map((ticket) => ({ ticket, decision: (h.calls(ticket.id, "landing")[0]!.detail as PassingLandingDetail).merge.decision }));
+  const waiting = decisions.find((d) => d.decision === "waiting")!;
+  const owner = decisions.find((d) => d.decision === "owner")!;
+  assert.ok(waiting && owner, "the first to pass waits, the last to pass decides");
+  assert.equal(h.setup.store.boardItemsForTicket(waiting.ticket.id).length, 0, "no item while waiting on the other ticket");
+  assert.equal(h.setup.store.boardItemsForTicket(owner.ticket.id).length, 1, "the item is raised by the run that decides");
+  assert.equal(h.notices().length, 1);
+  assert.deepEqual(h.forge.merges, []);
+});
