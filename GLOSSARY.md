@@ -130,4 +130,12 @@ One decision entail made itself about a ticket, recorded with its reason and, wh
 _Avoid_: Event, action
 
 **Audit log**:
-The append-only record of every call, readable by the owner.
+The append-only record of every call, readable by the owner on a page of its own, apart from the board. Reading it changes nothing; a wrong call is fixed through the issue, the vision or a pin.
+
+**Records**:
+Everything entail keeps about the repos it serves: tickets, calls, answers, origins and vision changes. They are append-only, so a ticket's state changes only through a new call, and they are kept by entail, never in a project's repo or on its issues.
+_Avoid_: Database, history
+
+**Records repo**:
+The git repository where entail keeps a copy of its records so they outlive the machine it runs on, pushed to a remote the owner chooses and never to one known to be public.
+_Avoid_: Backup
