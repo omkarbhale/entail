@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { CommentRuleError, composeComment } from "../src/comment-rules.ts";
 import { MergePendingError } from "../src/forge/forge.ts";
-import { ForgeWriter, settleUnconfirmedWrites } from "../src/forge-writer.ts";
+import { ForgeWriter, InFlightWrites, settleUnconfirmedWrites } from "../src/forge-writer.ts";
 import { Store, type RepoRecord, type TicketRecord } from "../src/store.ts";
 import { StateForge, type StateForgeOptions, type WriteName } from "./forge/state-forge.ts";
 
@@ -261,4 +261,34 @@ test("a halted host's writes wait, and a write that fails to settle holds back i
       [halted.id, "applied again"],
     ],
   );
+});
+
+test("each write counts as in flight until it settles, and stopping waits for them up to a limit", async (t) => {
+  const { store, repo, ticket } = world(t);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const forge = new StateForge();
+  const postComment = forge.postComment.bind(forge);
+  forge.postComment = async (...args) => {
+    await held;
+    return postComment(...args);
+  };
+  const inFlight = new InFlightWrites();
+  const writer = new ForgeWriter(store, forge, repo, OWNER, inFlight);
+
+  const comment = writer.comment({ ticketId: ticket.id }, "issue", 2, composeComment(OWNER, ticket.id, "Cleared."));
+  assert.equal(inFlight.count, 1);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const waited = inFlight.settle(10_000);
+  t.mock.timers.tick(10_000);
+  assert.equal(await waited, 1, "a write still in flight after the limit is left to settle on the next start");
+  assert.equal(store.unconfirmedForgeWrites().length, 1);
+
+  const settled = inFlight.settle(10_000);
+  release();
+  await comment;
+  assert.equal(await settled, 0, "a write that confirms within the limit ends the wait");
+  assert.equal(store.unconfirmedForgeWrites().length, 0);
+  await assert.rejects(writer.comment({ ticketId: ticket.id }, "issue", 2, "no attribution"), CommentRuleError);
+  assert.equal(inFlight.count, 0, "a refused write is not left in flight");
 });

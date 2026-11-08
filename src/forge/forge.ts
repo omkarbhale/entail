@@ -344,6 +344,13 @@ export interface Forge {
    */
   changesSince(cursor: ChangeCursor | null): Promise<ChangeBatch>;
 
+  /**
+   * Whether the issue came into this repo from another one: transferred on
+   * GitHub, moved on GitLab. Such an issue is not a new issue here, so it
+   * enters only by being pulled in (ADR-0020).
+   */
+  transferredIn(issueNumber: number): Promise<boolean>;
+
   // The four writes (ADR-0015). They go out only through entail's forge
   // writer, which records each as an intent first and enforces the comment
   // rules; nothing else calls them.

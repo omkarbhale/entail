@@ -105,6 +105,18 @@ const CLOSING_ISSUES_QUERY = `query ($owner: String!, $name: String!, $number: I
 }`;
 
 /**
+ * Whether an issue has a transferred event: GitHub records one on an issue
+ * moved in from another repo. REST has no field for it.
+ */
+const TRANSFERRED_QUERY = `query ($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      timelineItems(itemTypes: [TRANSFERRED_EVENT], first: 1, after: $after) { totalCount }
+    }
+  }
+}`;
+
+/**
  * The GitHub adapter of the {@link Forge} interface, read side.
  *
  * Change detection uses ETag-conditional reads of the repo's issues, issue and
@@ -213,6 +225,13 @@ export class GitHubForge implements Forge {
       path = next;
     }
     return numbers.sort((a, b) => a - b);
+  }
+
+  async transferredIn(issueNumber: number): Promise<boolean> {
+    const repository = await this.#graphqlRepository(TRANSFERRED_QUERY, pathNumber(issueNumber), null);
+    const items = graphqlField(graphqlField(repository, "issue"), "timelineItems");
+    if (typeof items.totalCount !== "number") throw this.#malformed(200, "graphql", "no totalCount for the transferred events");
+    return items.totalCount > 0;
   }
 
   /** github.com is the only GitHub host, with no version to read, so it is always served. */

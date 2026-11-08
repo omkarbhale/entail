@@ -12,7 +12,9 @@ import { startRun, type RunningEntail } from "../src/run.ts";
 import { BoardPortTakenError } from "../src/server.ts";
 import { SETTINGS_PATH } from "../src/settings-page.ts";
 import { Store } from "../src/store.ts";
+import { enrollmentSettings } from "../src/repo-settings.ts";
 import { freePort, send } from "./http-client.ts";
+import { IntakeForge, issue, STILL_HEAD } from "./pass-fixture.ts";
 
 const running = new WeakMap<TestContext, RunningEntail[]>();
 
@@ -109,4 +111,79 @@ test("entail run sends notices through the connector the global settings name", 
   const notices = readFileSync(join(dir, NOTICES_FILE), "utf8").split("\n").filter((line) => line !== "");
   assert.equal(notices.length, 1);
   assert.equal(JSON.parse(notices[0]!).text, "entail keeps stopping.");
+});
+
+function logEvents(dir: string): string[] {
+  return readFileSync(join(dir, OPERATIONAL_LOG_FILE), "utf8")
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => (JSON.parse(line) as { event: string }).event);
+}
+
+async function until(condition: () => boolean): Promise<void> {
+  for (let n = 0; n < 200 && !condition(); n++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(condition(), "the condition was met in time");
+}
+
+test("entail starts in spec order: lock, store, settle intents, the server, then the passes", async (t) => {
+  const dir = dataDirectory(t);
+  saveSettings(dir, { boardPort: await freePort() });
+  const store = Store.openIn(dir);
+  const { repo } = store.enroll({
+    repo: { forge: "github", host: "github.com", projectId: 5001, path: "acme/tally", ownerAccountId: 1001, ownerLogin: "owner" },
+    settings: enrollmentSettings("owner-stated", "squash"),
+    savedBy: "Ada",
+    visionSha: "c0ffee",
+    visionLines: ["Tally counts words in text."],
+    visionOrigin: "owner-stated",
+    openIssueNumbers: [],
+  });
+  // A label left unconfirmed by the last run.
+  const ticket = store.takeIn({ repoId: repo.id, issueNumber: 3 });
+  store.recordForgeWriteIntent({ repoId: repo.id, ticketId: ticket.id, kind: "label", target: "issue", number: 3, payload: { action: "add", label: "entail:cleared" } });
+  store.close();
+
+  const forge = new IntakeForge();
+  forge.issues = [issue(5, { createdAt: new Date(Date.now() + 60_000).toISOString() })];
+  const entail = await startRun({
+    dataDirectory: dir,
+    log: { echo: null },
+    passes: { forgeFor: () => forge, defaultBranchFor: async () => STILL_HEAD },
+  });
+  running.get(t)!.push(entail);
+  await until(() => logEvents(dir).includes("poll"));
+
+  const events = logEvents(dir);
+  const at = (event: string) => events.indexOf(event);
+  assert.ok(at("intent-settled") >= 0 && at("intent-settled") < at("intents-settled"));
+  assert.ok(at("intents-settled") < at("started"), "intents are settled before the server starts");
+  assert.ok(at("started") < at("poll"), "the passes start after the server");
+  assert.deepEqual(entail.store.unconfirmedForgeWrites(), []);
+  assert.deepEqual(forge.state.labels[3], ["entail:cleared"], "the label was applied again");
+  assert.ok(entail.store.latestTicketForIssue(repo.id, 5), "the pass took the owner's new issue in");
+});
+
+test("stopping starts no new work, waits for in-flight forge writes up to the limit, then releases the lock", async (t) => {
+  const dir = dataDirectory(t);
+  saveSettings(dir, { boardPort: await freePort() });
+  const entail = await startRun({ dataDirectory: dir, log: { echo: null }, stopWaitMs: 200 });
+  let confirmed = false;
+  entail.inFlight.track(new Promise<void>((resolve) => setTimeout(() => {
+    confirmed = true;
+    resolve();
+  }, 50)));
+  entail.stop("SIGTERM");
+  await entail.stopped;
+  assert.ok(confirmed, "the write in flight confirmed before the lock was released");
+  assert.ok(!existsSync(join(dir, LOCK_FILE)));
+  assert.ok(!logEvents(dir).includes("writes-unconfirmed-at-stop"));
+
+  const again = await startRun({ dataDirectory: dir, log: { echo: null }, stopWaitMs: 100 });
+  again.inFlight.track(new Promise<void>(() => {}));
+  again.stop("SIGINT");
+  await again.stopped;
+  assert.ok(logEvents(dir).includes("writes-unconfirmed-at-stop"), "a write still unconfirmed at the limit is left for the next start");
+  assert.ok(!existsSync(join(dir, LOCK_FILE)), "the lock is released after the limit");
+  const events = logEvents(dir);
+  assert.ok(events.lastIndexOf("stopping") < events.lastIndexOf("stopped"));
 });

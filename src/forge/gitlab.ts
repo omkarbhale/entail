@@ -49,6 +49,8 @@ export const MINIMUM_GITLAB_VERSION = { major: 15, minor: 6 } as const;
 export const CHANGE_OVERLAP_MS = 2 * 60_000;
 
 const PAGE_SIZE = 100;
+/** The system note GitLab puts on an issue moved in from another project. */
+const MOVED_FROM = /^moved from \S/;
 /** How long to wait on a rate limit that names no reset time. */
 const DEFAULT_RATE_LIMIT_WAIT_MS = 60_000;
 /** GitLab's access levels, as its API reports them. */
@@ -177,6 +179,20 @@ export class GitLabForge implements Forge {
     const params = new URLSearchParams({ state: "opened", per_page: String(PAGE_SIZE) });
     const raw = await this.#readPages(`${this.#projectRef}/issues`, params, () => false);
     return raw.map((issue) => this.#field(issue, "iid", "number", "issue")).sort((a, b) => a - b);
+  }
+
+  /**
+   * GitLab moves an issue by creating it afresh in the new project, with a
+   * system note on it saying where it was moved from.
+   */
+  async transferredIn(issueNumber: number): Promise<boolean> {
+    const params = new URLSearchParams({ order_by: "created_at", sort: "asc", per_page: String(PAGE_SIZE) });
+    let moved = false;
+    await this.#readPages(`${this.#projectRef}/issues/${pathNumber(issueNumber)}/notes`, params, (raw) => {
+      moved = isObject(raw) && raw.system === true && typeof raw.body === "string" && MOVED_FROM.test(raw.body);
+      return moved;
+    });
+    return moved;
   }
 
   /**

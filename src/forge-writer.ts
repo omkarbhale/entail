@@ -52,16 +52,20 @@ export class ForgeWriter {
   readonly #forge: Forge;
   readonly #repo: RepoRecord;
   readonly #ownerName: string;
+  readonly #inFlight: InFlightWrites | undefined;
 
   /**
    * @param ownerName The owner's display name from settings, which the
    *   attribution line carries.
+   * @param inFlight Where each write is counted while it is in flight, so
+   *   stopping can wait for it to confirm.
    */
-  constructor(store: Store, forge: Forge, repo: RepoRecord, ownerName: string) {
+  constructor(store: Store, forge: Forge, repo: RepoRecord, ownerName: string, inFlight?: InFlightWrites) {
     this.#store = store;
     this.#forge = forge;
     this.#repo = repo;
     this.#ownerName = ownerName;
+    this.#inFlight = inFlight;
   }
 
   /**
@@ -70,7 +74,11 @@ export class ForgeWriter {
    * @throws {CommentRuleError} when the body lacks the attribution line or the
    *   ticket's hidden marker, or has a line starting with `/`.
    */
-  async comment(write: WriteFor, target: ForgeTarget, number: number, body: string): Promise<PostedComment> {
+  comment(write: WriteFor, target: ForgeTarget, number: number, body: string): Promise<PostedComment> {
+    return this.#track(this.#comment(write, target, number, body));
+  }
+
+  async #comment(write: WriteFor, target: ForgeTarget, number: number, body: string): Promise<PostedComment> {
     assertCommentRules(body, this.#ownerName, write.ticketId);
     const payload: CommentPayload = { body };
     const { intent, resumed } = this.#intend(write, "comment", target, number, payload);
@@ -87,17 +95,21 @@ export class ForgeWriter {
   }
 
   /** Adds an `entail:` label to an issue, creating the label on first use. */
-  async addLabel(write: WriteFor, issueNumber: number, label: string): Promise<void> {
-    await this.#label(write, issueNumber, { action: "add", label });
+  addLabel(write: WriteFor, issueNumber: number, label: string): Promise<void> {
+    return this.#track(this.#label(write, issueNumber, { action: "add", label }));
   }
 
   /** Removes an `entail:` label from an issue. */
-  async removeLabel(write: WriteFor, issueNumber: number, label: string): Promise<void> {
-    await this.#label(write, issueNumber, { action: "remove", label });
+  removeLabel(write: WriteFor, issueNumber: number, label: string): Promise<void> {
+    return this.#track(this.#label(write, issueNumber, { action: "remove", label }));
   }
 
   /** Closes an issue, as not planned on GitHub when `reason` says so. */
-  async closeIssue(write: WriteFor, issueNumber: number, reason: CloseReason): Promise<void> {
+  closeIssue(write: WriteFor, issueNumber: number, reason: CloseReason): Promise<void> {
+    return this.#track(this.#closeIssue(write, issueNumber, reason));
+  }
+
+  async #closeIssue(write: WriteFor, issueNumber: number, reason: CloseReason): Promise<void> {
     const payload: ClosePayload = { reason };
     const { intent } = this.#intend(write, "close", "issue", issueNumber, payload);
     await applyAgain(this.#forge, intent);
@@ -108,7 +120,11 @@ export class ForgeWriter {
    * Merges a PR pinned to `sha`. Anything other than merged comes back as a
    * refusal, recorded with the intent's confirmation.
    */
-  async merge(write: WriteFor, prNumber: number, sha: string, method?: MergeMethod): Promise<MergeOutcome> {
+  merge(write: WriteFor, prNumber: number, sha: string, method?: MergeMethod): Promise<MergeOutcome> {
+    return this.#track(this.#merge(write, prNumber, sha, method));
+  }
+
+  async #merge(write: WriteFor, prNumber: number, sha: string, method?: MergeMethod): Promise<MergeOutcome> {
     const payload: MergePayload = { sha, method: method ?? null };
     const { intent, resumed } = this.#intend(write, "merge", "pr", prNumber, payload);
     if (resumed) {
@@ -129,6 +145,10 @@ export class ForgeWriter {
         : { outcome: "refused", refusal: outcome.refusal },
     });
     return outcome;
+  }
+
+  #track<T>(write: Promise<T>): Promise<T> {
+    return this.#inFlight ? this.#inFlight.track(write) : write;
   }
 
   async #label(write: WriteFor, issueNumber: number, payload: LabelPayload): Promise<void> {
@@ -184,6 +204,46 @@ export class ForgeWriter {
       comment: { id: String(comment.id), url: comment.url },
       result: settled === null ? { outcome: "posted" } : { outcome: "posted", settled },
     });
+  }
+}
+
+/**
+ * The forge writes in flight across entail. Stopping waits for them to
+ * confirm, up to a limit; any left unconfirmed are settled on the next start
+ * (ADR-0017).
+ */
+export class InFlightWrites {
+  readonly #pending = new Set<Promise<unknown>>();
+
+  /** How many writes are in flight now. */
+  get count(): number {
+    return this.#pending.size;
+  }
+
+  /** Counts `write` as in flight until it settles, and returns it. */
+  track<T>(write: Promise<T>): Promise<T> {
+    const settled = write.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.#pending.add(settled);
+    void settled.then(() => this.#pending.delete(settled));
+    return write;
+  }
+
+  /**
+   * Waits until every write in flight now has settled, or `waitMs` has
+   * passed, whichever is first. Resolves to how many are still in flight.
+   */
+  async settle(waitMs: number): Promise<number> {
+    if (this.#pending.size === 0) return 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, waitMs);
+    });
+    await Promise.race([Promise.all([...this.#pending]), timeout]);
+    clearTimeout(timer);
+    return this.#pending.size;
   }
 }
 

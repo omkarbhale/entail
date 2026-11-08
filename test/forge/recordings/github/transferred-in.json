@@ -1,0 +1,79 @@
+{
+  "host": "github.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "graphql",
+        "body": {
+          "query": "query ($owner: String!, $name: String!, $number: Int!, $after: String) {\n  repository(owner: $owner, name: $name) {\n    issue(number: $number) {\n      timelineItems(itemTypes: [TRANSFERRED_EVENT], first: 1, after: $after) { totalCount }\n    }\n  }\n}",
+          "variables": {
+            "owner": "acme",
+            "name": "tally",
+            "number": 3,
+            "after": null
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v4; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4979",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "graphql"
+        },
+        "body": {
+          "data": {
+            "repository": {
+              "issue": {
+                "timelineItems": {
+                  "totalCount": 0
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "graphql",
+        "body": {
+          "query": "query ($owner: String!, $name: String!, $number: Int!, $after: String) {\n  repository(owner: $owner, name: $name) {\n    issue(number: $number) {\n      timelineItems(itemTypes: [TRANSFERRED_EVENT], first: 1, after: $after) { totalCount }\n    }\n  }\n}",
+          "variables": {
+            "owner": "acme",
+            "name": "tally",
+            "number": 8,
+            "after": null
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v4; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4979",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "graphql"
+        },
+        "body": {
+          "data": {
+            "repository": {
+              "issue": {
+                "timelineItems": {
+                  "totalCount": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
