@@ -10,6 +10,18 @@ entail lets an owner own the vision of a product while implementation and decisi
 Where an enrolled repo and its issues and PRs live: GitHub (github.com), or a GitLab instance, either gitlab.com or a self-hosted one at its own host. GitHub and GitLab are equal: everything entail does on one it does the same way on the other, acting through the owner's own account on that host.
 _Avoid_: Host, platform, provider
 
+**Enrolled repo**:
+A repo the owner has added to entail, with a VISION.md on its default branch. entail takes in the owner's new issues there and lands their PRs. Only issues opened after enrollment enter on their own; any other issue enters only when the owner pulls it in. Unenrolling a repo cancels its tickets in flight and keeps its records.
+_Avoid_: Project, watched repo, registered repo
+
+**Repo settings**:
+What the owner sets for one enrolled repo: its forge, its generic criteria, shadow, who counts as an executor, its pins, the merge method where the forge has no default, and whether it is paused. They are kept in entail's records as versions, never in the repo, and each call records the version it used.
+_Avoid_: Config, repo config, preferences
+
+**Paused**:
+A repo setting under which entail neither reads nor writes on the repo's forge, while its tickets keep their states and its issues keep their labels. On resume, entail catches up on everything that changed meanwhile.
+_Avoid_: Disabled, suspended, frozen
+
 **Ticket**:
 entail's own record about one issue it has taken into intake, holding its verdicts, criteria, board items, PRs, calls and state. An issue entail never took in has no ticket, and an issue has at most one.
 _Avoid_: Task, item, story
@@ -144,7 +156,7 @@ A PR linking the issue is open and is being checked against the criteria and gen
 Final: the ticket's PR has merged, whether entail merged it or someone else did.
 
 **Cancelled**:
-Final: the owner's answer said not to go ahead; someone other than entail closed the issue before its PR merged; or entail closed it because the repo's state or an investigation's findings settle that nothing is to be done, such as a duplicate, an already-fixed report or a problem that cannot be reproduced.
+Final: the owner's answer said not to go ahead; someone other than entail closed the issue before its PR merged; or entail closed it because the repo's state or an investigation's findings settle that nothing is to be done, such as a duplicate, an already-fixed report or a problem that cannot be reproduced. A ticket in flight when its repo is unenrolled is cancelled too, and its issue is left open.
 
 ### Decisions and records
 
