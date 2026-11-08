@@ -1,5 +1,6 @@
 import { readGlobalSettings, type GlobalSettings } from "./global-settings.ts";
 import { acquireLock, type HeldLock } from "./lock.ts";
+import { Notifier } from "./notice.ts";
 import { OperationalLog, type OperationalLogOptions } from "./operational-log.ts";
 import { startServer, type BoardPortTakenError, type LocalServer } from "./server.ts";
 import { globalSettingsPage } from "./settings-page.ts";
@@ -22,6 +23,8 @@ export interface RunningEntail {
    * exception: the server keeps the port it started on until the next start.
    */
   globalSettings(): GlobalSettings;
+  /** Sends notices through the connector the global settings name at each notice. */
+  notifier: Notifier;
   /** Stops entail and releases the lock. Calling it again does nothing. */
   stop(reason: string): void;
   /** Settles once entail has stopped. */
@@ -81,6 +84,12 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     board: `${server.info.origin}/`,
   });
 
+  const notifier = new Notifier({
+    connectorName: () => readGlobalSettings(store).settings.noticeConnector,
+    dataDirectory: options.dataDirectory,
+    log,
+  });
+
   let resolveStopped!: () => void;
   const stopped = new Promise<void>((resolve) => {
     resolveStopped = resolve;
@@ -94,6 +103,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     server,
     stopped,
     globalSettings: () => readGlobalSettings(store).settings,
+    notifier,
     stop(reason: string) {
       if (stopping) return;
       stopping = true;
