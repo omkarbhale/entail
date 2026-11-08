@@ -88,23 +88,17 @@ const T1: PreparedChange = {
     {
       subject: "Read from standard input when no file is given",
       apply(tree) {
-        edit(tree, "src/cli.js", (text) => {
-          let next = replaceOnce(
+        // Only what the issue asks: --help is left as it is (ADR-0014 merges only what was asked).
+        // The first push trims the input, so the line count comes out wrong
+        // and CI fails: the path where the executor's first PR fails (#28).
+        edit(tree, "src/cli.js", (text) =>
+          replaceOnce(
             text,
-            "Counts the words, lines and characters in each file.\n",
-            "Counts the words, lines and characters in each file, or in standard\ninput when no file is given.\n",
-            "T1 help",
-          );
-          // The first push trims the input, so the line count comes out wrong
-          // and CI fails: the path where the executor's first PR fails (#28).
-          next = replaceOnce(
-            next,
             "function readInputs(files) {\n",
             `function readInputs(files) {\n  if (files.length === 0) return [{ text: ${STDIN_READ}.trim() }];\n`,
             "T1 input",
-          );
-          return next;
-        });
+          ),
+        );
         addFile(
           tree,
           "test/stdin.test.js",
@@ -152,8 +146,9 @@ const T2: PreparedChange = {
     {
       subject: "Print an error instead of a stack trace when a file is missing",
       apply(tree) {
-        edit(tree, "src/cli.js", (text) => {
-          let next = replaceOnce(
+        // Where tally crashed, it now prints the error and exits: nothing else changes.
+        edit(tree, "src/cli.js", (text) =>
+          replaceOnce(
             text,
             "function readFile(file) {\n  return readFileSync(file, 'utf8');\n}\n",
             `function readFile(file) {
@@ -162,21 +157,13 @@ const T2: PreparedChange = {
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
     process.stderr.write(\`tally: \${file}: no such file\\n\`);
-    process.exitCode = 1;
-    return undefined;
+    process.exit(1);
   }
 }
 `,
             "T2 read",
-          );
-          next = replaceOnce(
-            next,
-            "    inputs.push({ name: file, text: readFile(file) });\n",
-            "    const text = readFile(file);\n    if (text !== undefined) inputs.push({ name: file, text });\n",
-            "T2 inputs",
-          );
-          return next;
-        });
+          ),
+        );
         addFile(
           tree,
           "test/missing-file.test.js",
@@ -187,13 +174,6 @@ test('a missing file prints an error to standard error and exits non-zero', () =
   assert.equal(result.stderr, 'tally: does-not-exist.txt: no such file\\n');
   assert.doesNotMatch(result.stderr, /\\bat /);
   assert.equal(result.stdout, '');
-});
-
-test('the other files are still counted', () => {
-  const present = file('one two\\n');
-  const result = tally(['does-not-exist.txt', present]);
-  assert.equal(result.status, 1);
-  assert.deepEqual(counts(result.stdout), [1, 2, 8]);
 });
 `,
         );
@@ -208,10 +188,6 @@ test('the other files are still counted', () => {
     {
       keywords: ["status", "exit", "non-zero"],
       text: "test/missing-file.test.js checks the exit status is 1",
-    },
-    {
-      keywords: ["other", "remaining", "still"],
-      text: "test/missing-file.test.js checks that a file given after the missing one is still counted",
     },
   ],
 };
@@ -285,7 +261,7 @@ test('counts an empty text as zero', () => {
 
 const T5: PreparedChange = {
   id: "T5",
-  summary: "tally shows its output in colour when standard output is a terminal, and prints plain text when it is piped or redirected.",
+  summary: "tally shows the counts in colour when standard output is a terminal, and prints plain text when it is piped or redirected.",
   steps: [
     {
       subject: "Show the counts in colour in a terminal",
@@ -297,9 +273,10 @@ const T5: PreparedChange = {
             `const COLOUR = '\\x1b[36m';
 const RESET = '\\x1b[0m';
 
-// Colour only in a terminal, so piped output stays plain text.
+// Colour only the counts, and only in a terminal, so piped output stays plain text.
 function output(line) {
-  const shown = process.stdout.isTTY ? COLOUR + line + RESET : line;
+  const counts = process.stdout.isTTY ? /^(?: *\\d+){3}/.exec(line) : null;
+  const shown = counts ? COLOUR + counts[0] + RESET + line.slice(counts[0].length) : line;
   process.stdout.write(shown + '\\n');
 }
 `,
@@ -323,7 +300,7 @@ test('output to a terminal is in colour', (t) => {
   const path = file('one two\\n');
   const result = spawnSync('script', ['-qec', \`"\${process.execPath}" "\${CLI}" "\${path}"\`, '/dev/null'], { encoding: 'utf8' });
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /\\x1b\\[36m/);
+  assert.match(result.stdout, /\\x1b\\[36m +1 +2 +8\\x1b\\[0m /);
 });
 `,
         );
@@ -337,7 +314,7 @@ test('output to a terminal is in colour', (t) => {
     },
     {
       keywords: ["colour", "color", "terminal", "tty"],
-      text: "test/colour.test.js runs tally under script(1), so its output is a terminal, and checks the counts are coloured",
+      text: "test/colour.test.js runs tally under script(1), so its output is a terminal, and checks the counts, and only the counts, are coloured",
     },
   ],
 };
@@ -360,12 +337,6 @@ const T6: PreparedChange = {
           );
           next = replaceOnce(
             next,
-            "  -h, --help  Show this help.\n",
-            "  -h, --help  Show this help.\n  --json      Print each input's counts as one JSON object per line.\n",
-            "T6 help",
-          );
-          next = replaceOnce(
-            next,
             "      options.help = true;\n    } else {\n",
             "      options.help = true;\n    } else if (arg === '--json') {\n      options.json = true;\n    } else {\n",
             "T6 flag",
@@ -373,7 +344,7 @@ const T6: PreparedChange = {
           next = replaceOnce(
             next,
             "    output(formatCounts(countText(input.text), input.name));\n",
-            "    const counts = countText(input.text);\n    output(options.json ? formatJson(counts, input.name) : formatCounts(counts, input.name));\n",
+            "    const counts = countText(input.text);\n    output(options.json ? formatJson(counts) : formatCounts(counts, input.name));\n",
             "T6 main",
           );
           return next;
@@ -382,8 +353,8 @@ const T6: PreparedChange = {
           tree,
           "src/json.js",
           `/** Formats one input's counts as one JSON object on one line. */
-export function formatJson(counts, name) {
-  return JSON.stringify({ name, lines: counts.lines, words: counts.words, characters: counts.characters });
+export function formatJson(counts) {
+  return JSON.stringify({ lines: counts.lines, words: counts.words, characters: counts.characters });
 }
 `,
         );
@@ -398,8 +369,8 @@ test('--json prints one JSON object per input, one per line', () => {
   assert.equal(result.status, 0);
   const lines = result.stdout.trimEnd().split('\\n');
   assert.equal(lines.length, 2);
-  assert.deepEqual(JSON.parse(lines[0]), { name: first, lines: 1, words: 2, characters: 8 });
-  assert.deepEqual(JSON.parse(lines[1]), { name: second, lines: 1, words: 1, characters: 6 });
+  assert.deepEqual(JSON.parse(lines[0]), { lines: 1, words: 2, characters: 8 });
+  assert.deepEqual(JSON.parse(lines[1]), { lines: 1, words: 1, characters: 6 });
 });
 
 test('without --json the output is unchanged', () => {
@@ -414,15 +385,11 @@ test('without --json the output is unchanged', () => {
   facts: [
     {
       keywords: ["json", "object", "line", "per input", "parse"],
-      text: "test/json.test.js runs `tally --json` on two files and checks it prints two lines, each one JSON object with the file name and its lines, words and characters",
+      text: "test/json.test.js runs `tally --json` on two files and checks it prints two lines, each one JSON object with that input's lines, words and characters",
     },
     {
       keywords: ["without", "default", "plain", "unchanged"],
       text: "test/json.test.js checks that without `--json` the plain output is unchanged",
-    },
-    {
-      keywords: ["help", "flag", "usage"],
-      text: "`tally --help` lists the `--json` flag",
     },
   ],
 };
@@ -542,7 +509,8 @@ const T13: PreparedChange = {
         let found = false;
         for (const [path, text] of tree) {
           if (path.startsWith("src/") && ANY_SPLIT.test(text)) {
-            tree.set(path, text.replace(ANY_SPLIT, "line.split(/\\s+/).filter(Boolean).length"));
+            // \p{White_Space}, not \s: \s also matches U+FEFF, which is not whitespace.
+            tree.set(path, text.replace(ANY_SPLIT, "line.split(/\\p{White_Space}+/u).filter(Boolean).length"));
             found = true;
           }
         }
