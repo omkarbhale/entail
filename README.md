@@ -20,3 +20,5 @@ npm run typecheck
 npm test        # node:test, running the TypeScript sources directly
 npm run build   # compiles to dist/ for the published command
 ```
+
+The acceptance harness (fixture repos, reset, scripted executor and board driver) is described in [test/acceptance/README.md](test/acceptance/README.md).

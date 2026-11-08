@@ -20,6 +20,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --test \"test/**/*.test.ts\"",
+    "acceptance:harness": "node test/acceptance/harness.ts",
     "prepack": "npm run build"
   },
   "devDependencies": {
