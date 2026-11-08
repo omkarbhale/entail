@@ -1,5 +1,6 @@
 import { answerComment, answerWords, goesAhead, type GivenAnswer } from "./answer.ts";
 import type { BoardItemSnapshot } from "./board-item.ts";
+import { isLandingMergeAnswer } from "./landing-pin.ts";
 import type { CriteriaDetail } from "./criteria.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import type { OperationalLog } from "./operational-log.ts";
@@ -17,6 +18,8 @@ import type { AnswerRecord, BoardItemRecord, CallRecord, Store, TicketRecord } f
  *   usual checks and challenge run (src/criteria.ts).
  * - "Don't go ahead" cancels the ticket, and entail comments and closes the
  *   issue, as not planned on GitHub.
+ * - "Merge this PR as it is", on an item raised at landing for a touched pin,
+ *   is the merge's to act on (`merge.ts`), not this step's.
  *
  * Owed work is a function of the records (ADR-0017), so an answer recorded
  * while its host is halted is acted on by the first pass that reaches the
@@ -58,12 +61,18 @@ export function owedAnswer(store: Store, ticket: TicketRecord, calls: readonly C
 }
 
 /**
- * The verdict call a raise rests on: the verdict itself, or the verdict a
- * criteria call that raised the ticket was written for.
+ * The verdict call a raise rests on: the verdict itself, the verdict a
+ * criteria call that raised the ticket was written for, or, for a landing
+ * call that raised it for a touched pin, the verdict of the criteria version
+ * it checked.
  */
 export function verdictCallOfRaise(raise: CallRecord | null, calls: readonly CallRecord[]): CallRecord | null {
   const basedOn = (raise?.detail as { basedOnCallId?: unknown } | null)?.basedOnCallId;
-  const call = calls.find((c) => c.id === basedOn);
+  let call = calls.find((c) => c.id === basedOn);
+  if (call?.kind === "landing") {
+    const version = (call.detail as { criteriaVersion?: unknown } | null)?.criteriaVersion;
+    call = calls.findLast((c) => c.kind === "criteria" && (c.detail as Partial<CriteriaDetail> | null)?.version === version);
+  }
   if (call === undefined) return null;
   if (call.kind === "verdict") return call;
   if (call.kind === "criteria") {
@@ -83,7 +92,8 @@ export function answersInForce(store: Store, ticketId: number, calls: readonly C
   const since = calls.findLast((call) => call.kind === "verdict")?.id ?? 0;
   return store
     .boardItemsForTicket(ticketId)
-    .filter(({ item, answer }) => item.callId > since && answer !== null && goesAhead(answer))
+    // "Merge this PR as it is" decides a merge, not what the criteria say.
+    .filter(({ item, answer }) => item.callId > since && answer !== null && goesAhead(answer) && !isLandingMergeAnswer(answer, item.snapshot as Partial<BoardItemSnapshot> | null))
     .map(({ item, answer }) => ({ answer: answer!, snapshot: (item.snapshot ?? {}) as Partial<BoardItemSnapshot> }));
 }
 
@@ -114,7 +124,7 @@ export interface AfterAnswerOptions {
 export function afterAnswerPlanner(options: AfterAnswerOptions): OwedStepPlanner {
   return (ticket, pass): OwedStep | null => {
     const owed = owedAnswer(options.store, ticket, options.store.callsForTicket(ticket.id));
-    if (owed === null) return null;
+    if (owed === null || isLandingMergeAnswer(owed.answer, owed.item.snapshot as Partial<BoardItemSnapshot> | null)) return null;
     return { name: "answer", run: () => actOnAnswer(options, ticket, owed, pass) };
   };
 }

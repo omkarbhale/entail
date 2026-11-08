@@ -402,7 +402,7 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 - **Shadow.** A passing PR gets the landing comment ending "would merge at `<sha>`; this repo is in shadow, so the merge is left to the owner", recorded as a call. There is no merge, no board item and no notice. Switching shadow off does not merge a PR that already got that comment. [ADR-0014], [ADR-0018]
 - **Merges by others.** A PR merged by the owner or anyone else records its ticket as merged, including a PR that failed. [ADR-0014], [GLOSSARY.md](../../GLOSSARY.md)
 - **Several PRs for one ticket.** Each is checked on its own against the same frozen criteria, and the first to pass merges. entail then comments once on each other open PR that the ticket is already merged, stops checking them and does not close them. [ADR-0014]
-- **One PR linking several tickets** merges only when it passes the criteria of every ticket it links. If any linked issue has no criteria in force, it does not merge, and the landing comment says so. [ADR-0014]
+- **One PR linking several tickets** merges only when it passes the criteria of every ticket it links. If any linked issue has no criteria in force, it does not merge, and the landing comment says so. The pinned-path check runs only once the merge would go ahead, covers every ticket the merge would end, and raises one item; the owner's going-ahead answer to it covers those paths for every linked ticket at that head. [ADR-0014]
 - **A PR closed without merging** returns the ticket to cleared if no other PR for it is open. [ADR-0014]
 
 ### 12. Flags and re-checks
@@ -564,7 +564,9 @@ taken in ─▶ deciding ─┬─ oversized ───────────�
 investigating ── findings arrive ─▶ deciding  (at most once)
 on the board ─┬─ answer goes ahead ─▶ deciding (criteria only) ─▶ cleared
               ├─ "don't go ahead" ─▶ cancelled ■ (issue closed as not planned)
-              └─ item withdrawn (edit, vision or pin change) ─▶ deciding
+              ├─ item withdrawn (edit, vision or pin change) ─▶ deciding
+              └─ landing pin item: a new push, or "Merge this PR as it is"
+                 and the merge does not go through ─▶ landing
 cleared ── a PR linking the issue is open and being checked ─▶ landing
 landing ─┬─ landing check passes, merged ─▶ merged ■
          ├─ landing check fails ─▶ stays landing (checked again on a new head,

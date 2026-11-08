@@ -3,6 +3,7 @@ import type { Change, PullRequest } from "./forge/forge.ts";
 import type { CommentPayload } from "./forge-writer.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import { CLEARED_LABEL } from "./intake-comment.ts";
+import { openLandingItem, withdrawOnNewPush } from "./landing-pin.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import type { ChangeHandler, OwedStep, OwedStepPlanner, RepoPass } from "./pass.ts";
 import { repoSettingsOf } from "./repo-settings.ts";
@@ -19,6 +20,8 @@ import { countsAsExecutor } from "./who-counts.ts";
  *   never parsed for links.
  * - A cleared ticket moves to landing once a linking PR from an account that
  *   counts is open, and a landing ticket goes back to cleared once none is.
+ * - A new push to the PR of an open landing pin item withdraws the item, and
+ *   the ticket goes back to landing to be checked again (`landing-pin.ts`).
  * - A linking PR merged by anyone other than entail, the owner included and
  *   whether or not it would have passed, records the ticket as merged; entail
  *   then closes the issue and removes its label, which changes nothing where
@@ -141,6 +144,14 @@ async function followTicket(options: PullRequestOptions, ticket: TicketRecord, p
     return;
   }
 
+  // A new push to the PR an open landing pin item is about withdraws it, and the landing check runs again (spec §11).
+  const landingItem = openLandingItem(store, ticket);
+  const pushed = landingItem === null ? undefined : pullRequests.find((pr) => pr.number === landingItem.landing.pullRequest);
+  if (landingItem !== null && pushed !== undefined && pushed.state === "open" && pushed.headSha !== landingItem.landing.headSha) {
+    await withdrawOnNewPush(options, ticket, landingItem, pushed, pass);
+    return;
+  }
+
   const settings = repoSettingsOf(pass.settings);
   const open = pullRequests.filter((pr) => pr.state === "open");
   const counted = open.filter((pr) => countsAsExecutor(pass.repo, settings, pr.author));
@@ -156,7 +167,8 @@ async function followTicket(options: PullRequestOptions, ticket: TicketRecord, p
   for (const pr of excluded) {
     await commentOnce(options, pass, ticket, pr, ONE_TIME_COMMENTS.notCounted, notCountedText(pass, ticket.issueNumber));
   }
-  if (NO_CRITERIA_YET.has(ticket.state)) {
+  // A PR whose pinned paths are on the board already said so in its landing comment (spec §11).
+  if (NO_CRITERIA_YET.has(ticket.state) && landingItem === null) {
     for (const pr of counted) {
       await commentOnce(options, pass, ticket, pr, ONE_TIME_COMMENTS.noCriteria, noCriteriaYetText(pass, ticket));
     }

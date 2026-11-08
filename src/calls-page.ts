@@ -38,6 +38,7 @@ export const CALL_KIND_LABELS: Readonly<Record<(typeof CALL_KINDS)[number], stri
   "pr-opened": "PR opened",
   "pr-closed": "PR closed unmerged",
   "merged-by-others": "merged by others",
+  "new-push": "new push on a PR on the board",
 };
 
 /** The query parameters the Calls page filters by. */

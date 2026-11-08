@@ -1,3 +1,5 @@
+import { owedAnswer } from "./after-answer.ts";
+import type { BoardItemSnapshot, PinnedPathTouched } from "./board-item.ts";
 import { criteriaInForce, type CriteriaDetail } from "./criteria.ts";
 import { composeComment } from "./comment-rules.ts";
 import { MergePendingError, type CheckReport, type Issue, type MergeMethod, type MergeOutcome, type PullRequest } from "./forge/forge.ts";
@@ -16,12 +18,13 @@ import {
   type MechanicalPass,
 } from "./landing.ts";
 import { failingClosing, gradedLandingText, type GradedLandingDetail, type GradedPass } from "./landing-grade.ts";
+import { isLandingMergeAnswer, ownerClosing, pinnedPathsAtLanding, pinsCoveredAtHead } from "./landing-pin.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import type { OwedStep, OwedStepPlanner, RepoPass } from "./pass.ts";
 import { alreadyMergedText, commentOnce, ONE_TIME_COMMENTS, type PullRequestDetail } from "./pull-requests.ts";
 import { repoSettingsOf } from "./repo-settings.ts";
-import type { CallRecord, RepoRecord, Store, TicketRecord } from "./store.ts";
+import type { AnswerRecord, BoardItemRecord, CallRecord, RepoRecord, Store, TicketRecord } from "./store.ts";
 import { readVision } from "./vision.ts";
 
 /**
@@ -44,6 +47,16 @@ import { readVision } from "./vision.ts";
  *   criteria in force of every ticket it links. A run for one of them that
  *   passes first records its landing call and waits for the others; one
  *   whose other issue has no criteria in force does not merge.
+ * - **A pinned path touched.** A passing PR that would merge, but changes a pinned path the owner has
+ *   not seen for a ticket whose criteria do not fence it off the pins, is not
+ *   merged, and the check covers every ticket the merge would end: the
+ *   unseen pinned paths of all the tickets the PR links are raised on the run
+ *   that decides to merge, so none merges unasked; a pin an answered going-ahead
+ *   item listed for this PR at this head counts as seen for every ticket it links. Its landing call raises the ticket to the owner
+ *   ({@link MergeOptions.raiseForPins}, in `landing-pin.ts`). Answered "Merge
+ *   this PR as it is", entail verifies the same head again through the merge
+ *   guard and merges it; a merge that does not go through then takes the
+ *   ticket back to landing.
  * - **Shadow.** A passing PR in a repo in shadow gets the landing comment
  *   ending "would merge at `<sha>`", recorded as a "would merge" call, with
  *   no merge, no board item and no notice. The run-once rule keeps switching
@@ -63,7 +76,9 @@ export type MergeDecision =
   /** Linked tickets whose criteria this PR has not passed yet at this head. */
   | { decision: "waiting"; issues: number[] }
   /** Linked issues with no criteria in force. */
-  | { decision: "no-criteria"; issues: number[] };
+  | { decision: "no-criteria"; issues: number[] }
+  /** The PR changes pinned paths the owner has not seen for the ticket, so it goes to the owner (spec §11). */
+  | { decision: "owner"; paths: PinnedPathTouched[] };
 
 /** A passing landing call's detail: the graded run, and what it decided about the merge. */
 export type PassingLandingDetail = GradedLandingDetail & { merge: MergeDecision };
@@ -81,6 +96,8 @@ export interface MergeDetail extends PullRequestDetail {
   mergeCommitSha?: string | null;
   /** Why the forge refused, or why entail did not merge after all. */
   refusal?: Refusal;
+  /** The board item answered "Merge this PR as it is", when the owner's answer asked for the merge. */
+  boardItemId?: number;
 }
 
 /** Why a passing PR was not merged: the forge refused the merge, or entail found, reading afresh, that it may no longer merge it. */
@@ -185,6 +202,12 @@ export interface MergeOptions {
    * is only logged.
    */
   processChanges?: ProcessChanges;
+  /**
+   * Raises the ticket of a passing run whose PR touches a pinned path the
+   * owner has not seen, once its landing call is recorded (spec §11). With
+   * none wired in, the raise is left to its owed step on a later pass.
+   */
+  raiseForPins?: (ticket: TicketRecord, landing: CallRecord, pass: RepoPass) => Promise<void>;
 }
 
 /** The merge, as the landing check's last stage and as the step a passing run that has not merged yet is owed. */
@@ -197,7 +220,12 @@ export interface LandingMerger {
    * (ADR-0016).
    */
   reusingHeld(grade: (run: MechanicalPass) => Promise<void>): (run: MechanicalPass) => Promise<void>;
-  /** The step a landing ticket owes when its passing landing call has no merge recorded after it, as after a restart. */
+  /**
+   * The step a landing ticket owes when its passing landing call has no merge
+   * recorded after it, as after a restart; and the merge an on-the-board
+   * ticket owes when the owner answered its landing pin item "Merge this PR as
+   * it is".
+   */
   planner: OwedStepPlanner;
 }
 
@@ -255,6 +283,10 @@ export function landingMerger(options: MergeOptions): LandingMerger {
     };
 
   const planner: OwedStepPlanner = (ticket, pass): OwedStep | null => {
+    if (ticket.state === "on-the-board") {
+      const answered = owedLandingMerge(store, ticket);
+      return answered === null ? null : { name: "merge-on-answer", run: () => mergeOnAnswer(context, ticket, answered, pass) };
+    }
     if (ticket.state !== "landing") return null;
     const owed = owedMerge(store.callsForTicket(ticket.id));
     if (owed === null) return null;
@@ -356,6 +388,8 @@ export function passingClosing(wording: { pullRequest: string }, headSha: string
       const many = decision.issues.length > 1;
       return `This ${pr} also links ${issueList(decision.issues)}, which ${many ? "have" : "has"} no criteria in force, so entail does not merge it at ${code(headSha)}.`;
     }
+    case "owner":
+      return ownerClosing(wording, headSha, decision.paths);
   }
 }
 
@@ -418,7 +452,7 @@ async function takeToMerge(context: MergeContext, passed: GradedPass): Promise<"
   const noCriteria = others.filter((o) => o.ticket === null).map((o) => o.issueNumber);
   const waiting = others.filter((o) => o.ticket !== null && o.passed === null).map((o) => o.issueNumber);
   const shadow = repoSettingsOf(pass.settings).shadow;
-  const decision: MergeDecision =
+  let decision: MergeDecision =
     noCriteria.length > 0
       ? { decision: "no-criteria", issues: noCriteria }
       : waiting.length > 0
@@ -426,6 +460,16 @@ async function takeToMerge(context: MergeContext, passed: GradedPass): Promise<"
         : shadow
           ? { decision: "shadow" }
           : { decision: "merging" };
+  // Only a PR that passed everything else goes to the owner for a touched pin, with the pins as they are now (spec §11).
+  if (decision.decision === "merging") {
+    const linkedTickets = [{ ticket, criteria }, ...others.flatMap((o) => (o.ticket === null ? [] : [{ ticket: o.ticket, criteria: criteriaInForce(store.callsForTicket(o.ticket.id)) }]))];
+    const covered = pinsCoveredAtHead(store, linkedTickets.map((t) => t.ticket.id), live.number, pinned);
+    const paths = linkedTickets
+      .flatMap((t) => (t.criteria === null ? [] : pinnedPathsAtLanding(store, t.ticket, t.criteria, passed.changedPaths)))
+      .filter((p) => !covered.has(p.pin.trim()))
+      .filter((p, i, all) => all.findIndex((q) => q.pin === p.pin && q.path === p.path) === i);
+    if (paths.length > 0) decision = { decision: "owner", paths };
+  }
 
   const short = pinned.slice(0, 12);
   const reasons: Record<MergeDecision["decision"], string> = {
@@ -433,6 +477,9 @@ async function takeToMerge(context: MergeContext, passed: GradedPass): Promise<"
     shadow: `Landing check of PR #${live.number} at ${short} passed: would merge at ${short}; the repo is in shadow, so the merge is left to the owner.`,
     waiting: `Landing check of PR #${live.number} at ${short} passed #${ticket.issueNumber}'s criteria; it merges once it also passes ${issueList(waiting)}'s.`,
     "no-criteria": `Landing check of PR #${live.number} at ${short} passed, but it does not merge: ${issueList(noCriteria)} ${noCriteria.length === 1 ? "has" : "have"} no criteria in force.`,
+    owner: `Landing check of PR #${live.number} at ${short} passed, but it changes pinned paths the owner has not seen for this ticket (${
+      decision.decision === "owner" ? decision.paths.map((p) => `${p.path}, pin “${p.pin.trim()}”`).join("; ") : ""
+    }), so it goes to the owner and is not merged.`,
   };
   const detail: PassingLandingDetail = { ...passed.detail, checkReport: report, merge: decision };
   const call = await recordLanding(context.options, {
@@ -455,7 +502,12 @@ async function takeToMerge(context: MergeContext, passed: GradedPass): Promise<"
       closing: passingClosing(pass.forge.wording, pinned, decision),
     }),
   });
-  if (call === null || decision.decision !== "merging") return "done";
+  if (call === null) return "done";
+  if (decision.decision === "owner") {
+    await context.options.raiseForPins?.(ticket, call, pass);
+    return "done";
+  }
+  if (decision.decision !== "merging") return "done";
   await mergeFor(context, ticket, call, live, pass);
   return "done";
 }
@@ -510,7 +562,14 @@ function mergeMethodFor(pass: RepoPass): MergeMethod | null {
  * when the wait ends has no outcome yet: the owed step settles it on a later
  * pass by the PR's state.
  */
-async function mergeFor(context: MergeContext, ticket: TicketRecord, landing: CallRecord, pr: Pick<PullRequest, "number" | "url">, pass: RepoPass): Promise<void> {
+async function mergeFor(
+  context: MergeContext,
+  ticket: TicketRecord,
+  landing: CallRecord,
+  pr: Pick<PullRequest, "number" | "url">,
+  pass: RepoPass,
+  answer: AnsweredMerge | null = null,
+): Promise<void> {
   const { log } = context.options;
   const detail = landing.detail as PassingLandingDetail;
   const method = mergeMethodFor(pass);
@@ -522,8 +581,8 @@ async function mergeFor(context: MergeContext, ticket: TicketRecord, landing: Ca
     log.info("merge-pending", { ticketId: ticket.id, pullRequest: pr.number, headSha: detail.headSha });
     return;
   }
-  if (outcome.merged) await recordMerged(context, ticket, landing, pr, pass, method, outcome.mergeCommitSha);
-  else await recordRefused(context, ticket, landing, pr, pass, method, { by: "forge", why: outcome.refusal });
+  if (outcome.merged) await recordMerged(context, ticket, landing, pr, pass, method, outcome.mergeCommitSha, answer);
+  else await recordRefused(context, ticket, landing, pr, pass, method, { by: "forge", why: outcome.refusal }, true, answer);
 }
 
 /**
@@ -594,6 +653,7 @@ async function recordMerged(
   pass: RepoPass,
   method: string | null,
   mergeCommitSha: string | null,
+  answer: AnsweredMerge | null = null,
 ): Promise<void> {
   const { store, log } = context.options;
   const detail = landing.detail as PassingLandingDetail;
@@ -604,6 +664,7 @@ async function recordMerged(
   const recorded = store.transaction(() =>
     ending.flatMap(({ ticket: t, landingCallId }) => {
       if (!unmoved(store, t)) return [];
+      const onAnswer = answer !== null && t.id === ticket.id ? answer : null;
       const mergeDetail: MergeDetail = {
         pullRequests: [pr.number],
         url: pr.url,
@@ -612,11 +673,16 @@ async function recordMerged(
         outcome: "merged",
         method,
         mergeCommitSha,
+        ...(onAnswer === null ? {} : { boardItemId: onAnswer.item.id }),
       };
       const call = store.recordCall({
         ticketId: t.id,
         kind: "merge",
-        reason: `Merged: entail merged PR #${pr.number} at ${detail.headSha.slice(0, 12)}, the head its landing check verified.`,
+        reason:
+          onAnswer === null
+            ? `Merged: entail merged PR #${pr.number} at ${detail.headSha.slice(0, 12)}, the head its landing check verified.`
+            : `Merged on the owner's answer "Merge this PR as it is": entail verified PR #${pr.number} at ${detail.headSha.slice(0, 12)} again and merged it.`,
+        ...(onAnswer === null ? {} : { answerId: onAnswer.answer.id }),
         inputs: { prHeadSha: detail.headSha, settingsVersionId: pass.settings.id },
         detail: mergeDetail,
         stateTo: "merged",
@@ -675,6 +741,7 @@ async function recordRefused(
   method: string | null,
   refusal: Refusal,
   comment = true,
+  answer: AnsweredMerge | null = null,
 ): Promise<void> {
   const { store, log } = context.options;
   const detail = landing.detail as PassingLandingDetail;
@@ -683,18 +750,101 @@ async function recordRefused(
   const body = composeComment(ownerName, ticket.id, refusalText(pass.forge.wording, detail.headSha, refusal));
   const recorded = store.transaction(() => {
     if (!unmoved(store, ticket)) return null;
-    const mergeDetail: MergeDetail = { pullRequests: [pr.number], url: pr.url, headSha: detail.headSha, landingCallId: landing.id, outcome: "refused", method, refusal };
+    const mergeDetail: MergeDetail = {
+      pullRequests: [pr.number],
+      url: pr.url,
+      headSha: detail.headSha,
+      landingCallId: landing.id,
+      outcome: "refused",
+      method,
+      refusal,
+      ...(answer === null ? {} : { boardItemId: answer.item.id }),
+    };
     const call = store.recordCall({
       ticketId: ticket.id,
       kind: "merge",
-      reason: `Not merged: PR #${pr.number} at ${detail.headSha.slice(0, 12)} passed its landing check, but ${refusal.by === "forge" ? "the forge refused the merge" : "entail did not merge it"}: ${sentence(refusal.why)}`,
+      reason: `Not merged: PR #${pr.number} at ${detail.headSha.slice(0, 12)} passed its landing check, but ${refusal.by === "forge" ? "the forge refused the merge" : "entail did not merge it"}: ${sentence(refusal.why)}${
+        answer === null ? "" : " The owner had answered “Merge this PR as it is”, so the ticket goes back to landing."
+      }`,
       inputs: { prHeadSha: detail.headSha, settingsVersionId: pass.settings.id },
       detail: mergeDetail,
+      // A merge the owner asked for that does not go through takes the ticket off the board, back to landing.
+      ...(answer === null ? {} : { answerId: answer.answer.id, stateTo: "landing" as const }),
     });
-    if (comment) store.recordForgeWriteIntent({ repoId: pass.repo.id, ticketId: ticket.id, callId: call.id, kind: "comment", target: "pr", number: pr.number, payload: { body } });
+    const write = { repoId: pass.repo.id, ticketId: ticket.id, callId: call.id };
+    if (comment) store.recordForgeWriteIntent({ ...write, kind: "comment", target: "pr", number: pr.number, payload: { body } });
+    if (answer !== null) {
+      store.recordForgeWriteIntent({ ...write, kind: "label", target: "issue", number: ticket.issueNumber, payload: { action: "add", label: CLEARED_LABEL } });
+    }
     return call;
   });
   if (recorded === null) return;
   log.info("merge-refused", { ticketId: ticket.id, callId: recorded.id, pullRequest: pr.number, headSha: detail.headSha, by: refusal.by, why: refusal.why });
-  if (comment) await pass.writer().comment({ ticketId: ticket.id, callId: recorded.id }, "pr", pr.number, body);
+  const write = { ticketId: ticket.id, callId: recorded.id };
+  if (comment) await pass.writer().comment(write, "pr", pr.number, body);
+  if (answer !== null) await pass.writer().addLabel(write, ticket.issueNumber, CLEARED_LABEL);
+}
+
+/** A landing pin item the owner answered "Merge this PR as it is", with that answer. */
+export interface AnsweredMerge {
+  item: BoardItemRecord;
+  answer: AnswerRecord;
+}
+
+/** The answer "Merge this PR as it is" an on-the-board ticket owes its merge for: no call cites it yet. Null when none is owed. */
+export function owedLandingMerge(store: Store, ticket: TicketRecord): AnsweredMerge | null {
+  const owed = owedAnswer(store, ticket, store.callsForTicket(ticket.id));
+  if (owed === null || !isLandingMergeAnswer(owed.answer, owed.item.snapshot as Partial<BoardItemSnapshot> | null)) return null;
+  return owed;
+}
+
+/**
+ * The merge the owner asked for by answering a landing pin item "Merge this
+ * PR as it is" (spec §11, ADR-0014): entail verifies the same head again
+ * through the merge guard, read live, with the criteria version it passed,
+ * every other linked ticket having passed too, and the re-read of VISION.md
+ * and the issue; then merges pinned to that head. A guard that cannot say yet
+ * holds the merge for a later pass. Anything else that stops it records a
+ * refused merge citing the answer, which takes the ticket back to landing with
+ * one comment on the PR, if open, saying why.
+ */
+async function mergeOnAnswer(context: MergeContext, ticket: TicketRecord, answered: AnsweredMerge, pass: RepoPass): Promise<void> {
+  const { store, log } = context.options;
+  const landingItem = (answered.item.snapshot as Partial<BoardItemSnapshot>).landing!;
+  const landing = store.getCall(landingItem.landingCallId);
+  if (landing === null) throw new Error(`board item ${answered.item.id} names landing call ${landingItem.landingCallId}, which is not recorded`);
+  const detail = landing.detail as PassingLandingDetail;
+  const pr = { number: landingItem.pullRequest, url: landingItem.url };
+  const method = mergeMethodFor(pass);
+  const state = await pass.forge.pullRequestState(pr.number);
+  if (!unmoved(store, ticket)) return;
+  if (state.state === "merged") {
+    // A merge entail began on this answer that the forge finished after it was asked.
+    await recordMerged(context, ticket, landing, pr, pass, method, state.mergeCommitSha, answered);
+    return;
+  }
+
+  const criteria = criteriaInForce(store.callsForTicket(ticket.id));
+  const live = await pass.forge.pullRequest(pr.number);
+  const report = await pass.forge.checks(live.number, detail.headSha, criteria === null ? [] : namedChecks(criteria));
+  const guard = mergeGuard({ pinnedSha: detail.headSha, pr: live, report });
+  const at = { ticketId: ticket.id, pullRequest: live.number, headSha: detail.headSha, answerId: answered.answer.id };
+  if (guard.verdict === "hold") {
+    log.info("merge-guard-hold", { ...at, why: guard.why });
+    return;
+  }
+  const refuse = (why: string) => recordRefused(context, ticket, landing, pr, pass, method, { by: "entail", why }, live.state === "open", answered);
+  if (criteria?.version !== detail.criteriaVersion) return refuse("the criteria in force changed since the landing check");
+  if (guard.verdict !== "merge") return refuse(guard.verdict === "stale" ? `the ${pass.forge.wording.pullRequest} ${guard.why}` : guard.failures.join(" "));
+  const others = otherTickets(store, ticket, await pass.forge.linkedIssues(live.number), live);
+  const notPassed = others.filter((o) => o.ticket === null || o.passed === null).map((o) => o.issueNumber);
+  if (notPassed.length > 0) {
+    return refuse(`it also links ${issueList(notPassed)}, whose criteria it has not passed at ${detail.headSha.slice(0, 12)}`);
+  }
+  if (await flaggedBeforeMerge(context, [ticket, ...withCriteria(others)], pass)) {
+    log.info("merge-held-for-flag", at);
+    return;
+  }
+  log.info("merge-on-answer", at);
+  await mergeFor(context, ticket, landing, pr, pass, answered);
 }

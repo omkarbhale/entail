@@ -407,7 +407,7 @@ test("ticket states and transitions follow spec §17, and final states cannot be
   const expected: Record<TicketState, TicketState[]> = {
     deciding: ["declined", "investigating", "cancelled", "cleared", "on-the-board", "merged"],
     investigating: ["deciding", "cancelled", "merged"],
-    "on-the-board": ["deciding", "cancelled", "merged"],
+    "on-the-board": ["deciding", "landing", "cancelled", "merged"],
     cleared: ["landing", "on-the-board", "cancelled", "merged"],
     landing: ["merged", "on-the-board", "cleared", "cancelled"],
     declined: [],
@@ -686,6 +686,30 @@ test("an answer records the item version it was given to, and one from before sc
   db.close();
   const store = openStore(t, dir);
   assert.equal(store.answerFor(versioned.boardItemId)?.itemVersion, 1);
+});
+
+test("a store from before schema 8 lets an on-the-board ticket go back to landing once migrated", (t) => {
+  const dir = tempDirectory(t);
+  const first = Store.openIn(dir);
+  const repo = enroll(first);
+  const ticket = first.takeIn({ repoId: repo.id, issueNumber: 1 });
+  first.recordCall({ ticketId: ticket.id, kind: "raise", reason: "r", stateTo: "on-the-board" });
+  first.close();
+
+  // Take the store back to schema 7, whose transitions had no on the board -> landing.
+  const db = new DatabaseSync(join(dir, STORE_FILE));
+  const trigger = (db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'trigger' AND name = 'ticket_states_transition'").get() as { sql: string }).sql;
+  db.exec("DROP TRIGGER ticket_states_transition");
+  const before = trigger.replace("('on-the-board', 'landing'), ", "");
+  assert.notEqual(before, trigger);
+  db.exec(before);
+  db.exec("PRAGMA user_version = 7");
+  db.close();
+
+  const store = openStore(t, dir);
+  assert.equal(rawConnection(t, store).prepare("PRAGMA user_version").get()?.user_version, SCHEMA_VERSION);
+  store.recordCall({ ticketId: ticket.id, kind: "new-push", reason: "a new push", stateTo: "landing" });
+  assert.equal(store.getTicket(ticket.id)?.state, "landing");
 });
 
 test("enrolling records the repo, its first settings version, every vision line's origin and the open issues at once", (t) => {

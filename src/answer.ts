@@ -1,6 +1,7 @@
 import { BOARD_ITEM_VERSION, type BoardItemSnapshot, type BoardOption } from "./board-item.ts";
 import { composeComment } from "./comment-rules.ts";
 import { EXECUTOR_LINE, visionCheckSection } from "./intake-comment.ts";
+import { isLandingMergeAnswer } from "./landing-pin.ts";
 import type { AnswerRecord, AnswerShape, BoardItemHistory, Store } from "./store.ts";
 import type { TicketState } from "./ticket-states.ts";
 
@@ -138,9 +139,16 @@ export interface AnswerOutcome {
 /**
  * What an answer does (spec §13 "After an answer", ADR-0008): going ahead
  * returns the ticket to deciding only to write criteria; "don't go ahead"
- * cancels it and closes the issue, as not planned on GitHub.
+ * cancels it and closes the issue, as not planned on GitHub. On an item raised
+ * at landing for a touched pin (spec §11), "Merge this PR as it is" has entail
+ * verify the same head again and merge it, and the owner's own words give a
+ * new criteria version, after which the PR is checked again.
  */
-export function answerOutcome(answer: Pick<ChosenAnswer, "shape" | "note" | "showNoteOnIssue">, forge: string | undefined): AnswerOutcome {
+export function answerOutcome(
+  answer: Pick<ChosenAnswer, "shape" | "optionId" | "note" | "showNoteOnIssue">,
+  forge: string | undefined,
+  snapshot?: Partial<BoardItemSnapshot>,
+): AnswerOutcome {
   const note =
     answer.note === null
       ? []
@@ -150,6 +158,30 @@ export function answerOutcome(answer: Pick<ChosenAnswer, "shape" | "note" | "sho
       state: "cancelled",
       stateWords: "cancelled",
       next: [`entail cancels the ticket, comments on the issue and closes it${notPlanned(forge)}.`, "Nothing is taken forward.", ...note],
+    };
+  }
+  const landing = snapshot?.landing;
+  if (landing !== undefined && isLandingMergeAnswer(answer, snapshot)) {
+    return {
+      state: "merged",
+      stateWords: "merged, once entail has verified the same head again",
+      next: [
+        `entail verifies PR #${landing.pullRequest} at ${landing.headSha.slice(0, 12)} again through the merge guard, then merges it pinned to that head, which closes the issue.`,
+        "If the merge does not go through, the ticket goes back to landing and the PR gets one comment saying why.",
+        ...note,
+      ],
+    };
+  }
+  if (landing !== undefined) {
+    return {
+      state: "deciding",
+      stateWords: "deciding, to write a new criteria version",
+      next: [
+        "entail writes a new version of the criteria from your words, without running the verdict again. They cite your answer, and the usual checks and challenge run.",
+        `It then posts a new intake comment quoting your decision, with the criteria, and labels the issue entail:cleared again. PR #${landing.pullRequest} is then checked again against the new criteria.`,
+        "A product call your answer does not cover comes back as a new item for that call alone.",
+        ...note,
+      ],
     };
   }
   return {
@@ -189,6 +221,11 @@ export type QuotedAnswer = Pick<ChosenAnswer, "shape" | "optionId" | "text" | "n
 export interface GivenAnswer {
   answer: AnswerRecord;
   snapshot: Partial<BoardItemSnapshot>;
+}
+
+/** Whether entail posts a comment on the issue for an answer: for any but "Merge this PR as it is", whose merge closes the issue. */
+export function answerPostsComment(answer: Pick<ChosenAnswer, "shape" | "optionId">, snapshot: Partial<BoardItemSnapshot>): boolean {
+  return !isLandingMergeAnswer(answer, snapshot);
 }
 
 /** Whether an answer lets its ticket go ahead: any answer but "don't go ahead" (ADR-0008). */

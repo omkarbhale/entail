@@ -1,7 +1,7 @@
 import { FINAL_STATES, INITIAL_STATE, TICKET_STATES, TICKET_TRANSITIONS } from "./ticket-states.ts";
 
 /** Bumped whenever the schema below changes; a store from a newer entail is refused. */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 /**
  * Every table of the store except `ticket_states`. The store itself refuses
@@ -46,6 +46,12 @@ const FINALS = list(FINAL_STATES);
 const TRANSITIONS = Object.entries(TICKET_TRANSITIONS)
   .flatMap(([from, tos]) => tos.map((to) => `('${from}', '${to}')`))
   .join(", ");
+
+/** Holds every ticket state change to spec §17's transitions, as {@link TICKET_TRANSITIONS} lists them. */
+const TRANSITION_TRIGGER = `CREATE TRIGGER ticket_states_transition BEFORE UPDATE ON ticket_states
+WHEN (OLD.state, NEW.state) NOT IN (VALUES ${TRANSITIONS})
+BEGIN SELECT RAISE(ABORT, 'spec §17 does not allow this ticket state change'); END;
+`;
 
 /**
  * Each table's primary and unique keys. An insert that would replace a row
@@ -425,10 +431,7 @@ WHEN NEW.ticket_id IS NOT OLD.ticket_id
       AND state_from = OLD.state AND state_to = NEW.state AND made_at = NEW.changed_at
   )
 BEGIN SELECT RAISE(ABORT, 'a ticket''s state changes only with the call that changes it'); END;
-CREATE TRIGGER ticket_states_transition BEFORE UPDATE ON ticket_states
-WHEN (OLD.state, NEW.state) NOT IN (VALUES ${TRANSITIONS})
-BEGIN SELECT RAISE(ABORT, 'spec §17 does not allow this ticket state change'); END;
-
+${TRANSITION_TRIGGER}
 -- A call that records a state change makes it, in the same statement.
 CREATE TRIGGER calls_state_from BEFORE INSERT ON calls
 WHEN NEW.state_from IS NOT NULL
@@ -520,4 +523,6 @@ export const MIGRATIONS: Readonly<Record<number, string>> = {
   5: [FRESH_STARTS_TABLE, appendOnly("fresh_starts"), noReplace(["fresh_starts", KEYS.fresh_starts])].join(""),
   // 6 -> 7: unenrollments.
   6: [UNENROLLMENTS_TABLE, appendOnly("unenrollments"), UNENROLLMENTS_OF_LATEST, noReplace(["unenrollments", KEYS.unenrollments])].join(""),
+  // 7 -> 8: on the board -> landing, for a landing pin item withdrawn by a new push or a merge on its answer that did not go through.
+  7: `DROP TRIGGER ticket_states_transition;\n${TRANSITION_TRIGGER}`,
 };
