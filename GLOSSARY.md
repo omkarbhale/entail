@@ -1,0 +1,90 @@
+# entail
+
+entail lets an owner own the vision of a product while implementation and decisions happen automatically: it judges each ticket against the vision of record and brings only the calls the vision cannot settle to the owner.
+
+## Language
+
+### Tickets and the forge
+
+**Ticket**:
+entail's own record about one issue it has taken into intake, holding its verdicts, criteria, board items, PRs, calls and state. An issue entail never took in has no ticket, and an issue has at most one.
+_Avoid_: Task, item, story
+
+**Issue**:
+The GitHub or GitLab issue a ticket is about; it stays the reporter's words on the forge.
+_Avoid_: Ticket (for the forge object)
+
+**PR**:
+A GitHub pull request or a GitLab merge request. entail may say "merge request" in a comment it posts on GitLab.
+_Avoid_: MR, merge request, pull request, change
+
+**Executor**:
+Whatever picks up a cleared issue and does its work, such as firstmate, a Claude Code action or a person; entail never executes.
+
+### Judging a ticket
+
+**Vision of record**:
+The repo's statement of what the product is and what the owner has said should be in it, each line with a recorded origin.
+_Avoid_: Spec, roadmap
+
+**Verdict**:
+The decider's answer to whether one ticket needs the owner: **settled**, **small** or **needs the owner**. A ticket keeps every verdict it has been given, each with its reason.
+
+**Settled**:
+The verdict that the vision of record settles the ticket; it carries a citation.
+
+**Small**:
+The verdict that the ticket is small and reasonable, so it goes ahead even where the vision is silent; it carries why it is both.
+
+**Needs the owner**:
+The verdict that the vision cannot settle the ticket, so it goes to the board.
+
+**Citation**:
+The vision passage a settled verdict, or any call that says the vision settles something, relies on.
+
+**Pin**:
+A topic the owner has said must always come to them, even where no decision exists yet.
+
+**Criteria**:
+What one ticket's PR must contain, written at intake or after the owner's answer, and published on the issue when the ticket is cleared.
+_Avoid_: Acceptance criteria, requirements
+
+**Generic criteria**:
+The checks every PR in a repo must pass, fixed once per repo.
+
+### Ticket states
+
+**Deciding**:
+The ticket has been taken in and has no verdict yet.
+
+**Declined**:
+Final: the ticket is too large for one PR, so entail will not take it forward. Size is checked before any verdict, so a declined ticket has none.
+
+**On the board**:
+The ticket has an open board item and waits for an answer.
+
+**Cleared**:
+The ticket needs no product decision from the owner, or the owner has answered it, and its criteria are published on the issue for any executor.
+_Avoid_: Started, approved, ready
+
+**Landing**:
+A PR linking the issue is open and is being checked against the criteria and generic criteria; a failed landing check leaves the ticket landing.
+
+**Merged**:
+Final: the ticket's PR has merged, whether entail merged it or someone else did.
+
+**Cancelled**:
+Final: the owner's answer said not to go ahead, or someone other than entail closed the issue before its PR merged.
+
+### Decisions and records
+
+**Board item**:
+One product decision raised to the owner about one ticket, carrying what the ticket was, what happened and why it was raised. A ticket has at most one open board item at a time.
+_Avoid_: Question, card, escalation
+
+**Call**:
+One decision entail made itself about a ticket, recorded with its reason and, where the vision settled it, its citation. A board answer is not a call; the change it causes is a call that cites the answer.
+_Avoid_: Event, action
+
+**Audit log**:
+The append-only record of every call, readable by the owner.
