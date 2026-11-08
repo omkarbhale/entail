@@ -53,7 +53,7 @@ Every answer is recorded under the name of whoever gave it, through a single pat
 
 At intake, a ticket is checked against the vision and answered with what its PR must contain.
 At landing, the PR is checked for everything the ticket required, plus the repo's generic criteria, such as whether the tests ran.
-When a PR fails its criteria, entail decides whether to fix it itself, raise it again, or cancel it.
+When a PR fails its criteria, entail decides whether to comment on the PR with what needs to change, raise it again, or cancel it, and it never fixes the PR itself.
 Cancelling a ticket whose PR keeps failing is entail's call, logged with its reason, and does not need the owner.
 Generic per-repo criteria are a setting fixed once per repo, not a question asked per ticket.
 A check the model grades on itself can be bypassed, so entail prefers mechanical checks wherever a criterion allows one.
@@ -64,5 +64,5 @@ Every verdict persists with its reason.
 entail works with or without firstmate; without it quality may drop and firstmate's own features are missing, but everything entail does stays possible.
 Personal use and local-first operation are acceptable.
 
-A change aligns when it lets a ticket the vision settles or does not contradict move from intake through a criteria-checked merge without the owner, or when it brings a call the vision does not allow to the owner with what the ticket was, what happened, and why it was raised.
+A change aligns when it lets a ticket the vision settles or does not contradict move from intake through a criteria-checked merge without the owner, or close with a recorded reason after investigation, or when it brings a call the vision does not allow to the owner with what the ticket was, what happened, and why it was raised.
 A change should be resisted when it lets entail clear a ticket that contradicts the vision, touches a pin, or has readings the vision makes consequential, without the owner's answer or a ruling learned from repeated answers, records anyone's words as the owner's, grows the vision with rulings that are not general statements, settles a call without citing the vision passage or past answers it relies on, or without logging the reason, moves a question or its answer into chat, makes entail depend on firstmate, or puts work-management traffic on the board.
