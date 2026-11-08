@@ -82,23 +82,12 @@ export function repoSettingsPage(options: RepoSettingsPageOptions): Page {
       const current = readRepoSettings(store, repo.id);
       if (current === null) return noSettings(request, repo);
       const typed = readRepoSettingsForm(request.form);
-      const refuse = (errors: RepoSettingsErrors, status: number, form = typed) =>
-        settingsView(request, options, repo, current.version, form, errors, "", status);
+      const refuse = (errors: RepoSettingsErrors, status: number, form = typed, version = current.version) =>
+        settingsView(request, options, repo, version, form, errors, "", status);
 
       const parsed = parseRepoSettingsForm(typed, repo.forge);
       if (!parsed.ok) return refuse(parsed.errors, 400);
       const { draft } = parsed;
-      if (draft.basedOn !== current.version.version) {
-        return refuse(
-          {
-            form:
-              `These settings were saved again (version ${current.version.version}) since you opened this page, so nothing was saved. ` +
-              `Your changes are kept below; check them against the version in force, then save again.`,
-          },
-          409,
-          { ...typed, basedOn: String(current.version.version) },
-        );
-      }
       const owner = readGlobalSettings(store).settings.ownerDisplayName;
       if (owner === null) {
         return refuse({ form: "Your display name is not set, and every settings version carries it. Set it in the global settings first." }, 409);
@@ -107,17 +96,32 @@ export function repoSettingsPage(options: RepoSettingsPageOptions): Page {
       const resolved = await resolveExecutors(repo, current.settings.executors, draft.executorUsernames, createForge);
       if (!resolved.ok) return refuse({ executors: resolved.error }, 422);
 
+      const confirmed = await confirmedAt(options, repo, current.settings, draft);
+      const latest = readRepoSettings(store, repo.id);
+      if (latest === null) return noSettings(request, repo);
+      if (draft.basedOn !== latest.version.version) {
+        return refuse(
+          {
+            form:
+              `These settings were saved again (version ${latest.version.version}) since you opened this page, so nothing was saved. ` +
+              `Your changes are kept below; check them against the version in force, then save again.`,
+          },
+          409,
+          { ...typed, basedOn: String(latest.version.version) },
+          latest.version,
+        );
+      }
       const next: RepoSettings = {
-        ...current.settings,
+        ...latest.settings,
         mergeMethod: draft.mergeMethod,
         shadow: draft.shadow,
         whoCounts: draft.whoCounts,
         executors: resolved.executors,
         genericCriteria: draft.genericCriteria,
-        genericCriteriaConfirmedAt: await confirmedAt(options, repo, current.settings, draft),
+        genericCriteriaConfirmedAt: confirmed,
         pins: draft.pins,
       };
-      if (settingsChanges(current.settings, next).length === 0) {
+      if (settingsChanges(latest.settings, next).length === 0) {
         return { redirect: `${REPO_SETTINGS_PATH}?${REPO_FIELDS.repo}=${repo.id}&unchanged=1` };
       }
       const saved = store.saveSettings(repo.id, next, owner);

@@ -16,7 +16,11 @@ interface Served extends EnrollmentSetup {
 }
 
 /** A repo enrolled through the fixture, served with its settings page. */
-async function serveEnrolled(t: TestContext, options: Parameters<typeof enrollmentSetup>[1] = {}): Promise<Served> {
+async function serveEnrolled(
+  t: TestContext,
+  options: Parameters<typeof enrollmentSetup>[1] = {},
+  duringLookup: () => void = () => {},
+): Promise<Served> {
   const setup = enrollmentSetup(t, options);
   const forge = options.forge ?? "github";
   const host = forge === "github" ? "github.com" : "gitlab.example.org";
@@ -27,7 +31,15 @@ async function serveEnrolled(t: TestContext, options: Parameters<typeof enrollme
     mergeMethod: forge === "github" ? "squash" : null,
   });
   assert.ok(confirmed.ok);
-  const pages = reposPages({ store: setup.store, enroller: setup.enroller, dataDirectory: setup.dataDirectory, createForge: (setting) => new FakeForge(setting, setup.world) });
+  const pages = reposPages({ store: setup.store, enroller: setup.enroller, dataDirectory: setup.dataDirectory, createForge: (setting) =>
+      new (class extends FakeForge {
+        override async actorByUsername(username: string) {
+          const actor = await super.actorByUsername(username);
+          duringLookup();
+          return actor;
+        }
+      })(setting, setup.world),
+  });
   const server = await startServer({ port: 0, pages });
   t.after(() => server.close());
   return { ...setup, server, enrolled: confirmed.repo };
@@ -325,6 +337,25 @@ test("a save from a page opened before another save is refused, keeping what was
   assert.equal(served.store.settingsHistory(served.enrolled.id).length, 2);
   assert.equal((await postForm(served.server.info.port, REPO_SETTINGS_PATH, again)).status, 303);
   assert.equal(settingsOf(served).mergeMethod, "merge");
+});
+
+test("a save that lands while executors are being looked up is not overwritten", async (t) => {
+  let served: Served | undefined;
+  let landed = false;
+  served = await serveEnrolled(t, {}, () => {
+    if (landed || served === undefined) return;
+    landed = true;
+    const current = readRepoSettings(served.store, served.enrolled.id)!;
+    served.store.saveSettings(served.enrolled.id, { ...current.settings, paused: true }, "Omkar");
+  });
+  const form = formFrom((await page(served)).body);
+  form[REPO_FIELDS.executors] = "executor";
+  const refused = await postForm(served.server.info.port, REPO_SETTINGS_PATH, form);
+  assert.equal(refused.status, 409);
+  assert.match(refused.body, /saved again \(version 2\)/);
+  assert.equal(settingsOf(served).paused, true, "the other write survives");
+  assert.deepEqual(settingsOf(served).executors, []);
+  assert.equal(served.store.settingsHistory(served.enrolled.id).length, 2);
 });
 
 test("the settings form needs the per-start token, and an unknown repo is not found", async (t) => {
