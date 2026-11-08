@@ -24,8 +24,19 @@ Whatever picks up a cleared issue and does its work, such as firstmate, a Claude
 ### Judging a ticket
 
 **Vision of record**:
-The repo's statement of what the product is and what the owner has said should be in it, each line with a recorded origin.
+The repo's statement of what the product is and what the owner has said should be in it, each line with a recorded origin: VISION.md on the default branch, and nothing proposed elsewhere until it lands there.
 _Avoid_: Spec, roadmap
+
+**Vision line**:
+One line of the vision of record, normally one sentence, identified by its exact text; changing its words makes a new line.
+_Avoid_: Clause, rule
+
+**Origin**:
+How a vision line came to be in the vision: stated by the owner, proposed by an agent and approved by the owner, or added automatically with the owner notified. It is kept in entail's records, never in the vision's prose.
+_Avoid_: Provenance, author
+
+**Vision change**:
+A new version of the vision of record, seen as the vision lines it removed and the ones it added.
 
 **Decider**:
 The part of entail that gives a ticket its verdict, judged against the vision of record and the repo's pins.
@@ -46,10 +57,10 @@ The verdict that a ticket the vision does not settle is small and reasonable, so
 The verdict that the ticket goes to the board: the vision cannot settle it and it is not small, it contradicts a vision passage, or it touches a pin.
 
 **Citation**:
-The vision passage, quoted word for word, that a settled verdict, or any call that says the vision settles something, relies on.
+The vision passage that a settled verdict, or any call that says the vision settles something, relies on: one or more whole vision lines, quoted word for word, at the vision's commit.
 
 **Pin**:
-A topic the owner has said must always come to them, even where the vision settles it or no decision exists yet, optionally with paths and keywords that also mark it as touched.
+A topic the owner has said must always come to them, even where the vision settles it or no decision exists yet, optionally with paths and keywords that also mark it as touched. The vision itself is always pinned, in every repo.
 
 **Challenge**:
 An independent second judgment that tries to overturn an automatic verdict by finding another reading, an uncited assumption, a touched pin or a high-stakes area; if it succeeds, the ticket needs the owner.
@@ -68,6 +79,7 @@ The ticket has been taken in and has no verdict yet.
 
 **Declined**:
 Final: the ticket is too large for one PR, so entail will not take it forward. Size is checked before any verdict, so a declined ticket has none.
+Declining is a deliberate, owner-approved shortfall in MVP-1: VISION.md says entail breaks a ticket too large for one PR into smaller tickets, and splitting is the next effort.
 
 **On the board**:
 The ticket has an open board item and waits for an answer.
