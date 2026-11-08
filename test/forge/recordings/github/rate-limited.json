@@ -1,0 +1,28 @@
+{
+  "host": "github.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues?state=all&sort=updated&direction=desc&per_page=100"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "0",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "message": "API rate limit exceeded for user ID 1001. If you reach out to GitHub Support for help, please include the request ID.",
+          "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api",
+          "status": "403"
+        }
+      }
+    }
+  ]
+}

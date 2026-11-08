@@ -1,0 +1,25 @@
+{
+  "host": "github.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "user"
+      },
+      "error": {
+        "message": "gh api GET user on github.com: To get started with GitHub CLI, please run:  gh auth login",
+        "loggedOut": true
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues?state=all&sort=updated&direction=desc&per_page=100"
+      },
+      "error": {
+        "message": "gh api GET repos/acme/tally/issues?state=all&sort=updated&direction=desc&per_page=100 on github.com: To get started with GitHub CLI, please run:  gh auth login",
+        "loggedOut": true
+      }
+    }
+  ]
+}
