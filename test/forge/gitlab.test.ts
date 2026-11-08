@@ -400,3 +400,51 @@ test("a commit run more than once on the default branch keeps its newest pipelin
     ["4f1c passed", "1c1c failed"],
   );
 });
+
+function accessOn(t: TestContext, user: Record<string, unknown>, project: Record<string, unknown>) {
+  return forgeOn(t, [
+    { request: { method: "GET", path: "user" }, response: { status: 200, body: { ...OWNER, ...user } } },
+    { request: { method: "GET", path: PROJECT }, response: { status: 200, body: { id: 5001, issues_enabled: true, ...project } } },
+  ]).forge;
+}
+const level = (project: number | null, group: number | null = null) => ({
+  permissions: {
+    project_access: project === null ? null : { access_level: project, notification_level: 3 },
+    group_access: group === null ? null : { access_level: group, notification_level: 3 },
+  },
+});
+
+test("a Maintainer, through the project or its group, can label, comment and merge", async (t) => {
+  assert.deepEqual(await accessOn(t, {}, level(40)).access(), { cannotLabelAndComment: null, mayLackMerge: null });
+  assert.deepEqual(await accessOn(t, {}, level(20, 50)).access(), { cannotLabelAndComment: null, mayLackMerge: null });
+});
+
+test("a Developer or Reporter can label and comment, and may lack permission to merge", async (t) => {
+  const developer = await accessOn(t, {}, level(30)).access();
+  assert.equal(developer.cannotLabelAndComment, null);
+  assert.match(developer.mayLackMerge ?? "", /Developer access/);
+  const reporter = await accessOn(t, {}, level(20)).access();
+  assert.equal(reporter.cannotLabelAndComment, null);
+  assert.match(reporter.mayLackMerge ?? "", /less than Developer/);
+});
+
+test("a Guest, a non-member, or a project with issues turned off cannot label and comment", async (t) => {
+  assert.match((await accessOn(t, {}, level(10)).access()).cannotLabelAndComment ?? "", /Guest access only/);
+  assert.match((await accessOn(t, {}, level(null)).access()).cannotLabelAndComment ?? "", /not a member/);
+  const off = await accessOn(t, {}, { ...level(50), issues_enabled: false, issues_access_level: "disabled" }).access();
+  assert.match(off.cannotLabelAndComment ?? "", /issues turned off/);
+});
+
+test("an instance administrator can do everything without being a member", async (t) => {
+  assert.deepEqual(await accessOn(t, { is_admin: true }, level(null)).access(), { cannotLabelAndComment: null, mayLackMerge: null });
+});
+
+test("GitLab has no merge method setting, and its open issues are read page by page", async (t) => {
+  const open = `${PROJECT}/issues?state=opened&per_page=100`;
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: open }, response: list([{ iid: 9 }, { iid: 4 }], "2") },
+    { request: { method: "GET", path: `${open}&page=2` }, response: list([{ iid: 1 }]) },
+  ]);
+  assert.equal(await forge.mergeMethods(), null);
+  assert.deepEqual(await forge.openIssueNumbers(), [1, 4, 9]);
+});

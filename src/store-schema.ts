@@ -1,7 +1,7 @@
 import { FINAL_STATES, INITIAL_STATE, TICKET_STATES, TICKET_TRANSITIONS } from "./ticket-states.ts";
 
 /** Bumped whenever the schema below changes; a store from a newer entail is refused. */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /**
  * Every table of the store except `ticket_states`. The store itself refuses
@@ -19,6 +19,7 @@ export const APPEND_ONLY_TABLES = [
   "answers",
   "vision_line_origins",
   "vision_changes",
+  "enrollments",
   "forge_write_intents",
   "forge_write_confirmations",
 ] as const;
@@ -61,6 +62,7 @@ const KEYS: Readonly<Record<(typeof APPEND_ONLY_TABLES)[number] | "ticket_states
   answers: [["id"], ["board_item_id"]],
   vision_line_origins: [["id"]],
   vision_changes: [["id"]],
+  enrollments: [["id"]],
   forge_write_intents: [["id"]],
   forge_write_confirmations: [["intent_id"]],
 };
@@ -96,6 +98,28 @@ const GLOBAL_SETTINGS_IN_ORDER = `
 CREATE TRIGGER global_settings_versions_in_order BEFORE INSERT ON global_settings_versions
 WHEN NEW.version <> coalesce((SELECT max(version) FROM global_settings_versions), 0) + 1
 BEGIN SELECT RAISE(ABORT, 'a global settings version must follow the latest version'); END;
+`;
+
+// What enrolling a repo recorded beside the repo, its first settings version
+// and its vision line origins: the VISION.md commit the owner reviewed, and
+// the issues already open, which are not taken in (ADR-0018).
+const ENROLLMENTS_TABLE = `
+CREATE TABLE enrollments (
+  id INTEGER PRIMARY KEY,
+  repo_id INTEGER NOT NULL REFERENCES repos(id),
+  enrolled_at TEXT NOT NULL,
+  vision_sha TEXT NOT NULL CHECK (vision_sha <> ''),
+  settings_version_id INTEGER NOT NULL REFERENCES settings_versions(id),
+  open_issue_numbers TEXT NOT NULL ${jsonArray("open_issue_numbers")}
+) STRICT;
+CREATE INDEX enrollments_by_repo ON enrollments (repo_id, id);
+`;
+
+const ENROLLMENTS_SETTINGS_OF_REPO = `
+-- An enrollment's settings version is its own repo's.
+CREATE TRIGGER enrollments_settings_of_repo BEFORE INSERT ON enrollments
+WHEN (SELECT repo_id FROM settings_versions WHERE id = NEW.settings_version_id) IS NOT NEW.repo_id
+BEGIN SELECT RAISE(ABORT, 'an enrollment''s settings version must be its repo''s'); END;
 `;
 
 /**
@@ -256,6 +280,7 @@ CREATE TABLE vision_changes (
   seen_at TEXT NOT NULL
 ) STRICT;
 
+${ENROLLMENTS_TABLE}
 -- A forge write recorded before it is sent; confirmed by a row in
 -- forge_write_confirmations once sent or settled on start (ADR-0017).
 CREATE TABLE forge_write_intents (
@@ -288,6 +313,7 @@ WHEN NEW.version <> coalesce((SELECT max(version) FROM settings_versions WHERE r
 BEGIN SELECT RAISE(ABORT, 'a settings version must follow the repo''s latest version'); END;
 
 ${GLOBAL_SETTINGS_IN_ORDER}
+${ENROLLMENTS_SETTINGS_OF_REPO}
 -- An issue has at most one ticket in flight; a ticket pulled in again links
 -- to the issue's latest ticket, and a first ticket links to none (ADR-0020).
 CREATE TRIGGER tickets_link_predecessor BEFORE INSERT ON tickets
@@ -409,4 +435,6 @@ export const MIGRATIONS: Readonly<Record<number, string>> = {
     GLOBAL_SETTINGS_IN_ORDER,
     noReplace(["global_settings_versions", KEYS.global_settings_versions]),
   ].join(""),
+  // 2 -> 3: enrollments.
+  2: [ENROLLMENTS_TABLE, appendOnly("enrollments"), ENROLLMENTS_SETTINGS_OF_REPO, noReplace(["enrollments", KEYS.enrollments])].join(""),
 };

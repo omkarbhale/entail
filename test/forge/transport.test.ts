@@ -189,3 +189,17 @@ test("glab failing for another reason fails, not as logged out", async (t) => {
     (error: unknown) => error instanceof TransportError && !error.loggedOut && /no such host/.test(error.message),
   );
 });
+
+test("a CLI that is not installed fails as missing, not as logged out", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "entail-cli-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  await assert.rejects(
+    new CliTransport("glab", { executable: join(dir, "glab") }).request({ host: "gitlab.com", method: "GET", path: "user" }),
+    (error: unknown) => error instanceof TransportError && error.cliMissing && !error.loggedOut,
+  );
+  const cli = fakeCli(t, "", 1, "error connecting to api.github.com\n");
+  await assert.rejects(
+    new CliTransport("gh", { executable: cli.path }).request({ host: "github.com", method: "GET", path: "user" }),
+    (error: unknown) => error instanceof TransportError && !error.cliMissing,
+  );
+});

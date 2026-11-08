@@ -32,6 +32,7 @@ import {
   type PullRequest,
   type PullRequestComment,
   RateLimitedError,
+  type RepoAccess,
 } from "./forge.ts";
 import { type ForgeMethod, type ForgeResponse, type Transport, TransportError } from "./transport.ts";
 
@@ -153,6 +154,65 @@ export class GitHubForge implements Forge {
       path: this.setting.path,
       defaultBranch: field(repo, "default_branch", "string", path),
     };
+  }
+
+  /**
+   * Read from the repo's `permissions` for the logged-in account. Labelling
+   * needs triage access; commenting needs only read access, unless the repo
+   * has issues turned off. Merging needs push access, and branch rules may
+   * still refuse it, so push access is all entail can see.
+   */
+  async access(): Promise<RepoAccess> {
+    const path = `repos/${this.setting.path}`;
+    const repo = await this.#getJson(path);
+    const permissions = isObject(repo) && isObject(repo.permissions) ? repo.permissions : null;
+    const can = (role: string) => permissions !== null && permissions[role] === true;
+    const push = can("admin") || can("maintain") || can("push");
+    let cannotLabelAndComment: string | null = null;
+    if (permissions === null) {
+      cannotLabelAndComment = "GitHub did not report what the logged-in account may do in this repo";
+    } else if (isObject(repo) && repo.has_issues === false) {
+      cannotLabelAndComment = "the repo has issues turned off";
+    } else if (!push && !can("triage")) {
+      cannotLabelAndComment = "the logged-in account has read access only; adding labels needs triage access or more";
+    }
+    return {
+      cannotLabelAndComment,
+      mayLackMerge: push ? null : "the logged-in account has no push access, which merging needs",
+    };
+  }
+
+  /** The methods the repo allows; GitHub reports them only to accounts with push access. */
+  async mergeMethods(): Promise<MergeMethod[]> {
+    const path = `repos/${this.setting.path}`;
+    const repo = await this.#getJson(path);
+    const allowed: Record<MergeMethod, string> = {
+      squash: "allow_squash_merge",
+      merge: "allow_merge_commit",
+      rebase: "allow_rebase_merge",
+    };
+    return (Object.keys(allowed) as MergeMethod[]).filter((method) => isObject(repo) && repo[allowed[method]] === true);
+  }
+
+  async openIssueNumbers(): Promise<number[]> {
+    const params = new URLSearchParams({ state: "open", per_page: String(PAGE_SIZE) });
+    let path = `repos/${this.setting.path}/issues?${params}`;
+    const numbers: number[] = [];
+    for (;;) {
+      const page = await this.#get(path, {});
+      this.#ensureOk(page, path, "GET");
+      const body = parseJson(page, this.setting.host, path, "GET");
+      if (!Array.isArray(body)) throw this.#malformed(page.status, path, "expected a list");
+      for (const raw of body) {
+        // The issues list also carries pull requests.
+        if (isObject(raw) && "pull_request" in raw) continue;
+        numbers.push(field(raw, "number", "number", "issue"));
+      }
+      const next = nextPagePath(page.headers.link);
+      if (next === null) break;
+      path = next;
+    }
+    return numbers.sort((a, b) => a - b);
   }
 
   /** github.com is the only GitHub host, with no version to read, so it is always served. */

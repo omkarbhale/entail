@@ -409,3 +409,52 @@ test("a GraphQL error is a request error, and a GraphQL rate limit is surfaced w
     return error instanceof RateLimitedError && error.resetAt.toISOString() === "2026-11-08T12:00:00.000Z";
   });
 });
+
+const REPO = "repos/acme/tally";
+const repoWith = (body: Record<string, unknown>) => [{ request: { method: "GET" as const, path: REPO }, response: { status: 200, body: { id: 5001, ...body } } }];
+const ALL = { admin: false, maintain: false, push: false, triage: false, pull: true };
+
+test("an account with push access can label, comment and merge", async (t) => {
+  const { forge } = forgeOn(t, repoWith({ has_issues: true, permissions: { ...ALL, push: true, triage: true } }));
+  assert.deepEqual(await forge.access(), { cannotLabelAndComment: null, mayLackMerge: null });
+});
+
+test("an account with triage access can label and comment, and may lack permission to merge", async (t) => {
+  const { forge } = forgeOn(t, repoWith({ has_issues: true, permissions: { ...ALL, triage: true } }));
+  const access = await forge.access();
+  assert.equal(access.cannotLabelAndComment, null);
+  assert.match(access.mayLackMerge ?? "", /no push access/);
+});
+
+test("an account with read access only, or a repo with issues turned off, cannot label and comment", async (t) => {
+  const readOnly = forgeOn(t, repoWith({ has_issues: true, permissions: ALL })).forge;
+  assert.match((await readOnly.access()).cannotLabelAndComment ?? "", /read access only/);
+  const noIssues = forgeOn(t, repoWith({ has_issues: false, permissions: { ...ALL, admin: true } })).forge;
+  assert.match((await noIssues.access()).cannotLabelAndComment ?? "", /issues turned off/);
+  const unknown = forgeOn(t, repoWith({ has_issues: true })).forge;
+  assert.match((await unknown.access()).cannotLabelAndComment ?? "", /did not report/);
+});
+
+test("the merge methods are the ones the repo allows, and none when GitHub does not say", async (t) => {
+  const some = forgeOn(t, repoWith({ allow_squash_merge: false, allow_merge_commit: true, allow_rebase_merge: true })).forge;
+  assert.deepEqual(await some.mergeMethods(), ["merge", "rebase"]);
+  const hidden = forgeOn(t, repoWith({ allow_squash_merge: null, allow_merge_commit: null, allow_rebase_merge: null })).forge;
+  assert.deepEqual(await hidden.mergeMethods(), []);
+});
+
+test("the open issues are read page by page, leaving pull requests out", async (t) => {
+  const first = "repos/acme/tally/issues?state=open&per_page=100";
+  const page2 = "repositories/5001/issues?state=open&per_page=100&page=2";
+  const { forge } = forgeOn(t, [
+    {
+      request: { method: "GET", path: first },
+      response: {
+        status: 200,
+        headers: { Link: `<https://api.github.com/${page2}>; rel="next"` },
+        body: [{ number: 7 }, { number: 6, pull_request: {} }],
+      },
+    },
+    { request: { method: "GET", path: page2 }, response: { status: 200, body: [{ number: 2 }] } },
+  ]);
+  assert.deepEqual(await forge.openIssueNumbers(), [2, 7]);
+});

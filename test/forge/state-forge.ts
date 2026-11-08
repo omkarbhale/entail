@@ -13,7 +13,9 @@ import {
   MergePendingError,
   type MergeOutcome,
   type PostedComment,
+  type MergeMethod,
   type Project,
+  type RepoAccess,
   type PullRequestState,
 } from "../../src/forge/forge.ts";
 
@@ -146,6 +148,15 @@ export class StateForge implements Forge {
     throw new Error("not supported");
   }
   async instance(): Promise<ForgeInstance> {
+    throw new Error("not supported");
+  }
+  async access(): Promise<RepoAccess> {
+    throw new Error("not supported");
+  }
+  async mergeMethods(): Promise<MergeMethod[] | null> {
+    throw new Error("not supported");
+  }
+  async openIssueNumbers(): Promise<number[]> {
     throw new Error("not supported");
   }
   async changesSince(): Promise<ChangeBatch> {

@@ -14,6 +14,8 @@ entail run
 
 While it runs, entail serves its pages on `http://127.0.0.1:7419/` (the board port, a global setting) and exits if that port is taken. Set your display name and the other entail-wide settings on the global settings page, `http://127.0.0.1:7419/settings`; a changed board port takes effect on the next start.
 
+Enroll a repo on the Repos page, `http://127.0.0.1:7419/repos`, once your display name is set. State its forge (`github` or `gitlab`), host and path. entail checks the repo through your own `gh` or `glab` login, and refuses it if the CLI is missing or logged out, the project cannot be read, your account cannot add labels and comment, GitLab is older than 15.6, or the default branch has no VISION.md or an empty one. You then confirm one review screen. Issues already open stay out of intake.
+
 ## Development
 
 ```sh

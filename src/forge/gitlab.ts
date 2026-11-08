@@ -30,6 +30,7 @@ import {
   type PullRequest,
   type PullRequestComment,
   RateLimitedError,
+  type RepoAccess,
 } from "./forge.ts";
 import { type ForgeMethod, type ForgeRequest, type ForgeResponse, type Transport, TransportError } from "./transport.ts";
 
@@ -50,6 +51,9 @@ export const CHANGE_OVERLAP_MS = 2 * 60_000;
 const PAGE_SIZE = 100;
 /** How long to wait on a rate limit that names no reset time. */
 const DEFAULT_RATE_LIMIT_WAIT_MS = 60_000;
+/** GitLab's access levels, as its API reports them. */
+const ACCESS = { planner: 15, reporter: 20, developer: 30, maintainer: 40 } as const;
+
 /** A host only, as `glab api --hostname` takes it: no scheme, port or path, so never a base URL. */
 const HOST = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 /** A namespace path and project name, with any depth of subgroups. */
@@ -128,6 +132,51 @@ export class GitLabForge implements Forge {
       path: this.setting.path,
       defaultBranch: this.#field(project, "default_branch", "string", path),
     };
+  }
+
+  /**
+   * Read from the project's `permissions` for the logged-in account: the
+   * higher of its project and group access level, or everything for an
+   * instance administrator. Labelling an issue needs Planner or Reporter
+   * access, and commenting needs issues to be turned on. A Developer may merge
+   * only where the default branch's protection allows it, so anything below
+   * Maintainer may lack permission to merge.
+   */
+  async access(): Promise<RepoAccess> {
+    const path = this.#projectRef;
+    const [user, project] = [await this.#getJson("user"), await this.#getJson(path)];
+    const admin = isObject(user) && user.is_admin === true;
+    const permissions = isObject(project) && isObject(project.permissions) ? project.permissions : {};
+    const level = Math.max(accessLevel(permissions.project_access), accessLevel(permissions.group_access));
+    const issuesOff =
+      isObject(project) && (project.issues_enabled === false || project.issues_access_level === "disabled");
+
+    let cannotLabelAndComment: string | null = null;
+    if (issuesOff) cannotLabelAndComment = "the project has issues turned off";
+    else if (!admin && level < ACCESS.planner) {
+      cannotLabelAndComment =
+        level === 0
+          ? "the logged-in account is not a member of the project; adding labels needs Planner or Reporter access or more"
+          : "the logged-in account has Guest access only; adding labels needs Planner or Reporter access or more";
+    }
+    let mayLackMerge: string | null = null;
+    if (!admin && level < ACCESS.developer) {
+      mayLackMerge = "the logged-in account has less than Developer access, and merging needs at least that";
+    } else if (!admin && level < ACCESS.maintainer) {
+      mayLackMerge = "the logged-in account has Developer access, which merges only where the default branch's protection allows Developers";
+    }
+    return { cannotLabelAndComment, mayLackMerge };
+  }
+
+  /** GitLab applies the project's own merge method and squash default, so entail picks none. */
+  async mergeMethods(): Promise<MergeMethod[] | null> {
+    return null;
+  }
+
+  async openIssueNumbers(): Promise<number[]> {
+    const params = new URLSearchParams({ state: "opened", per_page: String(PAGE_SIZE) });
+    const raw = await this.#readPages(`${this.#projectRef}/issues`, params, () => false);
+    return raw.map((issue) => this.#field(issue, "iid", "number", "issue")).sort((a, b) => a - b);
   }
 
   /**
@@ -593,6 +642,11 @@ export function unsupportedGitLabVersion(version: string): string | null {
 }
 
 const EMPTY_CURSOR: GitLabCursor = { since: null, mergeRequestsSince: null };
+
+/** The access level in a `project_access` or `group_access` entry, 0 when there is none. */
+function accessLevel(entry: unknown): number {
+  return isObject(entry) && typeof entry.access_level === "number" ? entry.access_level : 0;
+}
 
 function parseCursor(cursor: ChangeCursor): GitLabCursor {
   let parsed: unknown;

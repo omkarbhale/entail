@@ -214,6 +214,24 @@ export interface ForgeInstance {
   unsupported: string | null;
 }
 
+/** A way GitHub merges a PR. GitLab has no such setting: the project's own merge method applies. */
+export type MergeMethod = "squash" | "merge" | "rebase";
+
+/** Every merge method, in the order enrollment offers them. */
+export const MERGE_METHODS: readonly MergeMethod[] = ["squash", "merge", "rebase"];
+
+/**
+ * What the logged-in account may do in a repo, read at enrollment (ADR-0018).
+ * Enrollment refuses an account that cannot add labels and comment, and warns,
+ * but still enrolls, when it may lack permission to merge.
+ */
+export interface RepoAccess {
+  /** Why the account cannot add labels to issues and comment on them, or null when it can. */
+  cannotLabelAndComment: string | null;
+  /** Why the account may lack permission to merge into the default branch, or null when it has it. */
+  mayLackMerge: string | null;
+}
+
 /** What changed since a cursor, and the cursor to ask from next time. */
 export interface ChangeBatch {
   /** May repeat changes reported before; the core deduplicates them. */
@@ -246,9 +264,6 @@ export interface PostedComment {
  * planned where asked; GitLab has no reason to record.
  */
 export type CloseReason = "completed" | "not-planned";
-
-/** How GitHub merges a PR: the method set at enrollment. GitLab uses the project's own. */
-export type MergeMethod = "merge" | "squash" | "rebase";
 
 /**
  * What a merge came to. Anything other than merged is a refusal, with the
@@ -304,6 +319,20 @@ export interface Forge {
 
   /** The instance the repo lives on, read so enrollment can refuse one entail cannot serve. */
   instance(): Promise<ForgeInstance>;
+
+  /** What the logged-in account may do in the repo. */
+  access(): Promise<RepoAccess>;
+
+  /**
+   * The merge methods the repo allows, for a forge where entail must pick one:
+   * GitHub, which has no repo default. Null on GitLab, where the project's own
+   * merge method applies. An empty list means the forge did not say, as GitHub
+   * does for an account without push access.
+   */
+  mergeMethods(): Promise<MergeMethod[] | null>;
+
+  /** The numbers of the repo's open issues, which enrollment leaves alone (ADR-0018). */
+  openIssueNumbers(): Promise<number[]>;
 
   /**
    * What changed in the repo's issues, PRs and their comments since `cursor`,
