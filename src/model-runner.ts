@@ -31,7 +31,7 @@ export interface ModelRunRequest<T = unknown> {
   promptVersion: string;
   /** The output's schema, emitted as JSON Schema for the run. */
   schema: Schema<T>;
-  /** A read-only checkout of the default branch made by the git mirror, which the run reads. */
+  /** A read-only checkout made by the git mirror, which the run reads: of the default branch, or of a PR's head for a landing check's runs. */
   checkout: string;
   /** The commit the checkout is at, as recorded on the call. */
   sha: string;

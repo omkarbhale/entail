@@ -3,13 +3,13 @@ import { posix } from "node:path";
 import { composeComment } from "./comment-rules.ts";
 import { criteriaInForce, type CriteriaDetail } from "./criteria.ts";
 import { latestEvidence, type Evidence, type EvidenceSource } from "./evidence.ts";
-import { allChecksFinished, requiredChecksReported, type CheckReport, type PullRequest } from "./forge/forge.ts";
+import { allChecksFinished, requiredChecksReported, type CheckReport, type PullRequest, type PullRequestComment } from "./forge/forge.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import type { OwedStep, OwedStepPlanner, RepoPass } from "./pass.ts";
 import { repoSettingsOf, type MechanicalCheck } from "./repo-settings.ts";
-import type { CallRecord, RepoRecord, Store, TicketRecord } from "./store.ts";
+import type { CallRecord, NewModelRun, RepoRecord, Store, TicketRecord } from "./store.ts";
 import { countsAsExecutor } from "./who-counts.ts";
 
 /**
@@ -30,16 +30,19 @@ import { countsAsExecutor } from "./who-counts.ts";
  *   used: entail records the landing call and posts one landing comment on
  *   the PR, never on the issue. A failed landing leaves the ticket landing.
  * - **Later stages.** A run whose first stage passes goes on to the grader
- *   and its challenge, then the merge; those stages plug in through
- *   {@link LandingOptions.afterMechanical}.
+ *   and its challenge (`landing-grade.ts`), then the merge; those stages plug
+ *   in through {@link LandingOptions.afterMechanical}.
  */
 
-/** Every check stage one runs, by the name the Calls page shows it under. */
+/** Every check a landing check runs, by the name the Calls page shows it under: stage one's, then the checks on the grade. */
 export const LANDING_CHECKS = {
   checksPassed: "every check at the head passed",
   noConflicts: "the PR does not conflict with its base",
   criteria: "every criterion's mechanical checks pass",
   genericCriteria: "every generic criterion's mechanical check passes",
+  everyIdGraded: "the grade has one result for every id",
+  quotesWordForWord: "every quoted piece of evidence appears word for word in the PR at the head",
+  metHasEntry: "every id marked met has an entry in the evidence section",
 } as const;
 
 export type LandingCheckName = (typeof LANDING_CHECKS)[keyof typeof LANDING_CHECKS];
@@ -51,7 +54,7 @@ export interface LandingCheckResult {
   failure: string | null;
 }
 
-/** Stage one's results, as recorded on the landing call. */
+/** The landing check's results, as recorded on the landing call: stage one's, then the checks on the grade once it was graded. */
 export interface LandingChecks {
   passed: boolean;
   results: LandingCheckResult[];
@@ -84,6 +87,15 @@ export interface IdResult {
   met: false | null;
 }
 
+/** One C or G id after grading and the challenge. */
+export interface GradedId extends Omit<IdResult, "met"> {
+  met: boolean;
+  /** For met: the evidence quoted word for word from the PR at the head. */
+  evidence: string[];
+  /** For not met: why, in plain words; for met, the grader's reason. */
+  reason: string;
+}
+
 /** What a landing call records as its detail. */
 export interface LandingDetail {
   pullRequest: number;
@@ -97,10 +109,12 @@ export interface LandingDetail {
   criteriaVersion: number;
   /** The settings version the generic criteria were frozen from with that criteria version (ADR-0014). */
   genericCriteriaVersion: number;
-  /** The stage the run ended at. */
-  stage: "mechanical";
-  outcome: "not-met";
-  ids: IdResult[];
+  /** The stage the run ended at: a passing run ends at the challenge. */
+  stage: "mechanical" | "grade" | "challenge";
+  outcome: "not-met" | "met";
+  ids: IdResult[] | GradedId[];
+  /** What users can observe that the change does beyond its criteria, by the grader or the challenge; absent before grading. */
+  beyondCriteria?: string[];
   /** The checks at the head as the forge reported them. */
   checkReport: CheckReport;
   /** Every path the PR changes at the head. */
@@ -129,7 +143,8 @@ export function landingRuns(calls: readonly CallRecord[]): LandingRunKey[] {
   });
 }
 
-function sameRun(a: LandingRunKey, b: LandingRunKey): boolean {
+/** Whether two keys name the same landing run. */
+export function sameRun(a: LandingRunKey, b: LandingRunKey): boolean {
   return a.pullRequest === b.pullRequest && a.headSha === b.headSha && a.evidence === b.evidence && a.criteriaVersion === b.criteriaVersion;
 }
 
@@ -257,12 +272,12 @@ export function mechanicalStage(input: {
   return { checks: { passed: results.every((r) => r.passed), results }, ids: [...criteria, ...generic] };
 }
 
-function result(check: LandingCheckName, failures: readonly string[]): LandingCheckResult {
+export function result(check: LandingCheckName, failures: readonly string[]): LandingCheckResult {
   return { check, passed: failures.length === 0, failure: failures.length === 0 ? null : failures.join(" ") };
 }
 
 /** Text as a markdown code span, fenced with more backticks than it holds. */
-function code(text: string): string {
+export function code(text: string): string {
   const oneLine = text.replace(/\s+/g, " ");
   const longest = Math.max(0, ...[...oneLine.matchAll(/`+/g)].map((m) => m[0].length));
   const fence = "`".repeat(longest + 1);
@@ -270,12 +285,13 @@ function code(text: string): string {
   return `${fence}${pad}${oneLine}${pad}${fence}`;
 }
 
-function oneLine(text: string): string {
+/** Text on one line, with runs of whitespace as single spaces. */
+export function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
 /** How a mechanical check reads in the landing comment. */
-function checkLabel(check: Pick<MechanicalResult, "kind" | "argument">): string {
+export function checkLabel(check: Pick<MechanicalResult, "kind" | "argument">): string {
   const kind = { changes_path: "changes path", leaves_path: "leaves path", check_passes: "check passes" }[check.kind] ?? String(check.kind);
   return `${kind} ${code(check.argument)}`;
 }
@@ -342,6 +358,8 @@ export interface MechanicalPass {
   key: LandingRunKey;
   criteria: CriteriaDetail;
   evidence: Evidence | null;
+  /** The comments on the PR as read for the run. */
+  comments: PullRequestComment[];
   report: CheckReport;
   baseSha: string;
   changedPaths: string[];
@@ -411,7 +429,7 @@ export function landingPlanner(options: LandingOptions): OwedStepPlanner {
 }
 
 /** Whether the ticket is where it was when the step began. */
-function unmoved(store: Store, ticket: TicketRecord): boolean {
+export function unmoved(store: Store, ticket: TicketRecord): boolean {
   const now = store.getTicket(ticket.id);
   return now !== null && now.state === ticket.state && now.stateCallId === ticket.stateCallId;
 }
@@ -432,7 +450,8 @@ async function checkPullRequest(
   if (!countsAsExecutor(pass.repo, repoSettingsOf(pass.settings), pr.author)) return;
 
   const report = await pass.forge.checks(pr.number, pr.headSha, namedChecks(criteria));
-  const evidence = latestEvidence(pr, await pass.forge.pullRequestComments(pr.number));
+  const comments = await pass.forge.pullRequestComments(pr.number);
+  const evidence = latestEvidence(pr, comments);
   const trigger = landingTrigger({
     pr,
     defaultBranch: pass.head.branch,
@@ -455,7 +474,7 @@ async function checkPullRequest(
   if (stage.checks.passed) {
     log.info("landing-mechanical-passed", { ticketId: ticket.id, pullRequest: pr.number, headSha: pr.headSha, criteriaVersion: key.criteriaVersion });
     if (options.afterMechanical) {
-      await options.afterMechanical({ ticket, pr, pass, key, criteria, evidence, report, baseSha, changedPaths, stage });
+      await options.afterMechanical({ ticket, pr, pass, key, criteria, evidence, comments, report, baseSha, changedPaths, stage });
     } else {
       handedOn.push(key);
     }
@@ -466,61 +485,103 @@ async function checkPullRequest(
 
 /**
  * Records a landing run that failed its first stage, and posts its landing
- * comment on the PR (spec §11, ADR-0014). In one transaction it records the
- * landing call, which leaves the ticket landing, with the comment's intent;
- * then it posts the comment, which a restart settles by its hidden marker.
+ * comment on the PR (spec §11, ADR-0014). It uses no model.
  */
 async function recordFailedLanding(
   options: LandingOptions,
   ticket: TicketRecord,
   pr: PullRequest,
   pass: RepoPass,
-  run: Omit<MechanicalPass, "ticket" | "pr" | "pass">,
+  run: Omit<MechanicalPass, "ticket" | "pr" | "pass" | "comments">,
 ): Promise<void> {
-  const { store, log } = options;
-  const ownerName = readGlobalSettings(store).settings.ownerDisplayName;
-  if (ownerName === null) throw new Error("the owner's display name is not set, so entail cannot attribute a comment");
-  const { key, criteria, stage } = run;
+  const { key, stage } = run;
   const notMet = stage.ids.filter((id) => id.met === false).map((id) => id.id);
   const forgeFailed = stage.checks.results.filter((r) => !r.passed && (r.check === LANDING_CHECKS.checksPassed || r.check === LANDING_CHECKS.noConflicts));
   const why = [...(notMet.length > 0 ? [`${notMet.join(", ")} not met`] : []), ...forgeFailed.map((r) => r.failure ?? r.check)];
-  const body = composeComment(
-    ownerName,
-    ticket.id,
-    failingLandingText({ wording: pass.forge.wording, issueNumber: ticket.issueNumber, headSha: pr.headSha, criteriaVersion: key.criteriaVersion, stage }),
-  );
+  await recordLanding(options, {
+    ticket,
+    pr,
+    pass,
+    detail: landingDetail({ ...run, pr }, { stage: "mechanical", outcome: "not-met", ids: stage.ids }),
+    reason: `Landing check of PR #${pr.number} at ${pr.headSha.slice(0, 12)} failed its mechanical checks: ${why.join("; ")}.`,
+    checks: stage.checks,
+    text: failingLandingText({ wording: pass.forge.wording, issueNumber: ticket.issueNumber, headSha: pr.headSha, criteriaVersion: key.criteriaVersion, stage }),
+  });
+}
+
+/** A landing call's detail for a run, with how it ended. */
+export function landingDetail(
+  run: Pick<MechanicalPass, "pr" | "key" | "criteria" | "evidence" | "report" | "baseSha" | "changedPaths">,
+  ended: Pick<LandingDetail, "stage" | "outcome" | "ids" | "beyondCriteria">,
+): LandingDetail {
+  const { pr, key } = run;
+  return {
+    pullRequest: pr.number,
+    url: pr.url,
+    headSha: pr.headSha,
+    baseSha: run.baseSha,
+    evidence: run.evidence === null ? null : { key: key.evidence!, source: run.evidence.source, section: run.evidence.section },
+    criteriaVersion: key.criteriaVersion,
+    genericCriteriaVersion: run.criteria.settingsVersionId,
+    ...ended,
+    checkReport: run.report,
+    changedPaths: run.changedPaths,
+  };
+}
+
+/**
+ * Records a landing run that does not pass, and posts its landing comment on
+ * the PR, never on the issue (spec §11, ADR-0014). In one transaction it
+ * records the landing call, which leaves the ticket landing, with the
+ * comment's intent; then it posts the comment, which a restart settles by its
+ * hidden marker. Nothing is recorded when the ticket moved since the step
+ * began, or the run was already recorded.
+ *
+ * @returns the call recorded, or null when nothing was.
+ */
+export async function recordLanding(
+  options: Pick<LandingOptions, "store" | "log">,
+  run: {
+    ticket: TicketRecord;
+    pr: Pick<PullRequest, "number" | "headSha">;
+    pass: RepoPass;
+    detail: LandingDetail;
+    reason: string;
+    checks: LandingChecks;
+    challenge?: unknown;
+    modelRuns?: NewModelRun[];
+    /** The landing comment's text, without the attribution line or hidden marker. */
+    text: string;
+  },
+): Promise<CallRecord | null> {
+  const { store, log } = options;
+  const { ticket, pr, pass, detail } = run;
+  const ownerName = readGlobalSettings(store).settings.ownerDisplayName;
+  if (ownerName === null) throw new Error("the owner's display name is not set, so entail cannot attribute a comment");
+  const body = composeComment(ownerName, ticket.id, run.text);
+  const key: LandingRunKey = { pullRequest: detail.pullRequest, headSha: detail.headSha, evidence: detail.evidence?.key ?? null, criteriaVersion: detail.criteriaVersion };
 
   const recorded = store.transaction(() => {
     if (!unmoved(store, ticket)) return null;
     if (landingRuns(store.callsForTicket(ticket.id)).some((done) => sameRun(done, key))) return null;
-    const detail: LandingDetail = {
-      pullRequest: pr.number,
-      url: pr.url,
-      headSha: pr.headSha,
-      baseSha: run.baseSha,
-      evidence: run.evidence === null ? null : { key: key.evidence!, source: run.evidence.source, section: run.evidence.section },
-      criteriaVersion: key.criteriaVersion,
-      genericCriteriaVersion: criteria.settingsVersionId,
-      stage: "mechanical",
-      outcome: "not-met",
-      ids: stage.ids,
-      checkReport: run.report,
-      changedPaths: run.changedPaths,
-    };
     const call = store.recordCall({
       ticketId: ticket.id,
       kind: "landing",
-      reason: `Landing check of PR #${pr.number} at ${pr.headSha.slice(0, 12)} failed its mechanical checks: ${why.join("; ")}.`,
+      reason: run.reason,
       inputs: { prHeadSha: pr.headSha, settingsVersionId: pass.settings.id },
-      checks: stage.checks,
+      checks: run.checks,
+      ...(run.challenge === undefined ? {} : { challenge: run.challenge }),
       detail,
+      ...(run.modelRuns === undefined ? {} : { modelRuns: run.modelRuns }),
     });
     store.recordForgeWriteIntent({ repoId: pass.repo.id, ticketId: ticket.id, callId: call.id, kind: "comment", target: "pr", number: pr.number, payload: { body } });
     return call;
   });
-  if (recorded === null) return;
-  log.info("landing-failed", { ticketId: ticket.id, callId: recorded.id, pullRequest: pr.number, headSha: pr.headSha, notMet });
+  if (recorded === null) return null;
+  const notMet = detail.ids.filter((id) => id.met === false).map((id) => id.id);
+  log.info("landing-failed", { ticketId: ticket.id, callId: recorded.id, pullRequest: pr.number, headSha: pr.headSha, stage: detail.stage, notMet });
 
   // Resumes the intent recorded above; the comment is found by its hidden marker if it was already posted.
   await pass.writer().comment({ ticketId: ticket.id, callId: recorded.id }, "pr", pr.number, body);
+  return recorded;
 }

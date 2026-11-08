@@ -15,6 +15,7 @@ import { InFlightWrites, settleUnconfirmedWrites } from "./forge-writer.ts";
 import { outsideCloses } from "./outside-close.ts";
 import { Passes, repoForge, type PassesOptions } from "./pass.ts";
 import { landingPlanner } from "./landing.ts";
+import { landingGrader } from "./landing-grade.ts";
 import { pullRequestFollowing } from "./pull-requests.ts";
 import { boardPages } from "./board-page.ts";
 import { callsPages } from "./calls-page.ts";
@@ -185,7 +186,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
       criteriaPlanner({ store, log, dataDirectory: options.dataDirectory }),
       boardPlanner({ store, log, dataDirectory: options.dataDirectory, notifier, boardOrigin: server.info.origin }),
       pullRequests.planner,
-      landingPlanner({ store, log, dataDirectory: options.dataDirectory }),
+      landingPlanner({ store, log, dataDirectory: options.dataDirectory, afterMechanical: landingGrader({ store, log, dataDirectory: options.dataDirectory }) }),
       // Last, so reading an issue live never delays a step the ticket owes.
       closes.planner,
     ],
