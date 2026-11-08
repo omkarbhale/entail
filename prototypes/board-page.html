@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>entail board (prototype)</title>
+<!--
+  PROTOTYPE, throwaway. Answers "How should the board page look and behave when the owner answers an item?"
+  Three structurally different layouts of entail's local board page, switchable with ?variant=A|B|C
+  or the floating bar at the bottom (or the left/right arrow keys).
+  Data is the MVP-1 acceptance-test fixture `tally` (ADR-0010). Nothing is sent anywhere; state lives in memory.
+-->
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e3e2dd;
+    --accent: #2f5bd3; --accent-soft: #e8eefc; --ok: #1f7a4d; --ok-soft: #e4f3ea;
+    --bad: #b3261e; --bad-soft: #fbe9e7; --warn: #8a5a00; --warn-soft: #fbf1dc;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  button { font: inherit; cursor: pointer; }
+  textarea { font: inherit; width: 100%; min-height: 70px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; resize: vertical; }
+  .top { display: flex; align-items: center; gap: 18px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .top .brand { font-weight: 700; letter-spacing: .2px; }
+  .top nav a { margin-right: 14px; text-decoration: none; color: var(--muted); }
+  .top nav a.on { color: var(--ink); font-weight: 600; }
+  .top .who { margin-left: auto; color: var(--muted); font-size: 13px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 18px 20px 120px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; background: #eeede8; color: var(--muted); white-space: nowrap; }
+  .tag.pin { background: var(--warn-soft); color: var(--warn); }
+  .tag.contra { background: var(--bad-soft); color: var(--bad); }
+  .tag.silent { background: var(--accent-soft); color: var(--accent); }
+  .tag.withdrawn { background: #ececec; color: #555; }
+  .tag.answered { background: var(--ok-soft); color: var(--ok); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  h1 { font-size: 22px; line-height: 1.3; margin: 0 0 6px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 22px 0 8px; }
+  .decision { font-size: 20px; font-weight: 650; line-height: 1.35; }
+  .vline { border-left: 3px solid var(--line); padding: 4px 10px; margin: 6px 0; }
+  .vline q { quotes: none; font-style: italic; }
+  .vline .mark { font-size: 12px; font-weight: 600; margin-right: 6px; }
+  .vline.matches { border-color: var(--ok); } .vline.matches .mark { color: var(--ok); }
+  .vline.contradicts { border-color: var(--bad); } .vline.contradicts .mark { color: var(--bad); }
+  .vline.silent { border-color: var(--accent); } .vline.silent .mark { color: var(--accent); }
+  blockquote.req { margin: 6px 0; padding: 8px 12px; background: #f3f2ee; border-radius: 6px; white-space: pre-wrap; }
+  ol.calls { list-style: none; padding: 0; margin: 0; }
+  ol.calls li { padding: 6px 0; border-bottom: 1px dashed var(--line); }
+  ol.calls li:last-child { border: 0; }
+  ol.calls .when { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-right: 8px; }
+  .why { background: var(--warn-soft); border-radius: 8px; padding: 10px 12px; }
+  .btn { border: 1px solid var(--line); background: var(--panel); border-radius: 7px; padding: 7px 14px; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.stop { color: var(--bad); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .opt { display: block; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; background: var(--panel); }
+  .opt:hover { border-color: #c9c8c1; }
+  .opt.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .opt .t { font-weight: 600; }
+  .opt .o { color: var(--muted); font-size: 14px; }
+  .opt input[type=radio] { margin-right: 8px; }
+  .opt.stopopt .t { color: var(--bad); }
+  .exception { margin-top: 6px; font-size: 13px; color: var(--bad); }
+  .review { border: 1px solid var(--accent); border-radius: 10px; padding: 14px; background: #fbfcff; }
+  pre.comment { white-space: pre-wrap; background: #f6f8fa; border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; font: 13px/1.45 var(--mono); margin: 8px 0; }
+  .receipt { border: 1px solid var(--ok); background: var(--ok-soft); border-radius: 10px; padding: 14px; }
+  .withdrawnbox { border: 1px solid #bbb; background: #f1f1f1; border-radius: 10px; padding: 14px; }
+  ul.steps { margin: 6px 0 0; padding-left: 20px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  details > summary { cursor: pointer; color: var(--accent); margin: 10px 0 4px; }
+  .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
+
+  /* Variant A: inbox */
+  .A { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 18px; }
+  .A .list { padding: 6px; align-self: start; position: sticky; top: 12px; }
+  .A .li { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 10px 12px; border-radius: 8px; }
+  .A .li.on { background: var(--accent-soft); }
+  .A .li .d { font-weight: 600; line-height: 1.35; }
+  .A .li .m { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .A .sep { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); padding: 12px 12px 4px; }
+  .A .detail { padding: 20px 24px; min-width: 0; }
+
+  /* Variant B: focus */
+  .B { max-width: 760px; margin: 0 auto; }
+  .B .progress { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .B .dots span { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--line); margin-left: 5px; }
+  .B .dots span.on { background: var(--accent); } .B .dots span.done { background: var(--ok); }
+  .B .hero { padding: 26px 28px; }
+  .B .hero .decision { font-size: 24px; }
+  .B .opt { padding: 14px 16px; }
+  .B .evidence { padding: 4px 28px 20px; }
+
+  /* Variant C: digest */
+  .C .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+  .C .entry { padding: 14px 18px; margin-bottom: 12px; }
+  .C .entry .meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .C .quick { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .C .quick .btn { text-align: left; max-width: 100%; }
+  .C .entry.done { padding: 10px 18px; background: transparent; }
+
+  /* prototype bar, deliberately not part of the design */
+  .pbar { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 50;
+    display: flex; gap: 10px; align-items: center; background: #111; color: #fff; border-radius: 99px;
+    padding: 7px 10px; box-shadow: 0 6px 24px rgba(0,0,0,.25); font-size: 13px; max-width: calc(100vw - 20px); flex-wrap: wrap; justify-content: center; }
+  .pbar button { background: #2b2b2b; color: #fff; border: 0; border-radius: 99px; padding: 4px 10px; }
+  .pbar .lab { min-width: 150px; text-align: center; font-weight: 600; }
+  .pbar .simwrap { position: relative; }
+  .pbar .sim { position: absolute; bottom: 38px; right: 0; background: #111; border-radius: 12px; padding: 10px; width: 300px; display: none; }
+  .pbar .sim.open { display: block; }
+  .pbar .sim button { display: block; width: 100%; text-align: left; margin: 4px 0; border-radius: 8px; }
+  .pbar label { display: flex; gap: 6px; align-items: center; }
+
+  @media (max-width: 760px) {
+    .A { grid-template-columns: minmax(0, 1fr); }
+    .A .list { position: static; }
+    .top { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* =====================================================================
+   Pure logic module: board items and answers. No DOM in here.
+   It is the liftable part: the answer rules from ADR-0008.
+   ===================================================================== */
+const Board = (() => {
+  const OWNER = "Omkar"; // the owner's display name, a per-repo setting
+
+  function initialState(items) {
+    return { items: items.map(i => ({ ...i, status: "open", version: 1 })), answers: [] };
+  }
+
+  // shape: "option" | "own" | "stop"
+  function validate(item, a) {
+    if (!item) return "No such item.";
+    if (item.status === "withdrawn") return "This item was withdrawn, so it takes no answer.";
+    if (item.status === "answered") return "This item is already answered; answers are final.";
+    if (a.shape === "option" && !item.options.some(o => o.id === a.optionId)) return "Choose an option.";
+    if (a.shape === "own" && !(a.text || "").trim()) return "Write your answer.";
+    if (!["option", "own", "stop"].includes(a.shape)) return "Choose how to answer.";
+    return null;
+  }
+
+  function answer(state, itemId, a, at) {
+    const item = state.items.find(i => i.id === itemId);
+    const err = validate(item, a);
+    if (err) return { state, error: err };
+    const rec = { itemId, version: item.version, by: OWNER, at, shape: a.shape,
+      optionId: a.optionId || null, text: (a.text || "").trim(), note: (a.note || "").trim(), showNote: !!a.showNote };
+    return {
+      state: { ...state,
+        items: state.items.map(i => i.id === itemId ? { ...i, status: "answered" } : i),
+        answers: [...state.answers, rec] },
+      error: null, answer: rec };
+  }
+
+  function withdraw(state, itemId, reason, next) {
+    return { ...state, items: state.items.map(i =>
+      i.id === itemId && i.status === "open" ? { ...i, status: "withdrawn", withdrawnReason: reason, withdrawnNext: next } : i) };
+  }
+
+  function decisionText(item, a) {
+    if (a.shape === "option") return item.options.find(o => o.id === a.optionId).title;
+    if (a.shape === "own") return a.text;
+    return "Don't go ahead.";
+  }
+
+  // What the owner's answer causes, and the comment entail would post on the issue.
+  function outcome(item, a) {
+    const said = decisionText(item, a);
+    const noteLine = a.note && a.showNote ? `\n\nNote from ${OWNER}:\n> ${a.note}` : "";
+    if (a.shape === "stop") {
+      return {
+        ticketState: "cancelled",
+        steps: [
+          "The ticket is cancelled. This is final.",
+          `entail comments on the issue and closes it${item.forge === "GitHub" ? " as not planned" : ""}.`,
+          a.note && !a.showNote ? "Your note stays in entail's records, not on the issue." : null,
+        ].filter(Boolean),
+        comment: `Speaking from ${OWNER}'s entail:\n\n${OWNER} decided not to go ahead with this issue, so it is closed${item.forge === "GitHub" ? " as not planned" : ""}.${noteLine}`,
+      };
+    }
+    return {
+      ticketState: "deciding (writing criteria)",
+      steps: [
+        "The verdict is not run again: your answer settles the call that was raised.",
+        "entail writes criteria that cite your answer, then checks and challenges them.",
+        "It posts a new intake comment quoting your decision and labels the issue entail:cleared.",
+        "If a product call your answer does not cover turns up, it comes back as a new item for that call alone.",
+        a.note && !a.showNote ? "Your note stays in entail's records, not on the issue." : null,
+      ].filter(Boolean),
+      comment: `Speaking from ${OWNER}'s entail:\n\n**Vision check** (unchanged, ${item.vision.length} line${item.vision.length === 1 ? "" : "s"})\n\n**Decision**, from ${OWNER}:\n> ${said}${noteLine}\n\n**Criteria**: C1…Cn, written next and citing this decision.\nLabel: entail:cleared`,
+    };
+  }
+
+  return { OWNER, initialState, validate, answer, withdraw, outcome, decisionText };
+})();
+
+/* =====================================================================
+   Fixture: the tally acceptance-test repos (ADR-0010), board items only.
+   ===================================================================== */
+const V = {
+  read: "tally reads plain text from the files it is given, or from standard input when it is given none.",
+  print: "It prints one line of counts per input, as plain text that other tools can parse.",
+  serves: "It serves people who want quick counts in a terminal or a script.",
+  net: "tally never reaches the network.",
+  conf: "tally reads no configuration files; everything it does is set by its command-line flags.",
+};
+const SEED = [
+  { id: "T5", repo: "omkar/tally", forge: "GitHub", issue: 5, raised: "2026-11-08 09:12", age: "3 h",
+    decision: "Should tally colour its counts, and if so when?",
+    whyKind: "silent", whyTag: "vision silent, not small",
+    why: "No vision line settles colour, and colour is something users would see, so it is not a small change.",
+    vision: [
+      { text: V.print, mark: "does not settle", cls: "silent", note: "Colour codes in piped output would break parsing, but colour in a terminal is not ruled out." },
+      { text: V.serves, mark: "does not settle", cls: "silent" },
+    ],
+    title: "Show the counts in colour", filedBy: "omkarbhale",
+    body: "It would be nice if the numbers were coloured, like ls does. Hard to read three plain numbers in a row.",
+    calls: [
+      ["09:12", "Raised to the owner. Desktop notice sent; issue comment links the board."],
+      ["09:12", "Challenge agreed: needs the owner."],
+      ["09:11", "Verdict: needs the owner. The vision is silent and the change is user-visible."],
+      ["09:10", "Size check: fits one PR."],
+      ["09:10", "Taken in: the owner's new issue in an enrolled repo."],
+    ],
+    options: [
+      { id: "tty", title: "Colour only in a terminal", outcome: "In a terminal the counts are coloured; piped into another tool the output stays plain." },
+      { id: "flag", title: "Colour only with a --color flag", outcome: "Output looks the same as today unless the user passes --color." },
+    ] },
+  { id: "T6", repo: "omkar/tally", forge: "GitHub", issue: 6, raised: "2026-11-08 09:20", age: "3 h",
+    decision: "What should tally print with --json?",
+    whyKind: "silent", whyTag: "two readings",
+    why: "Two defensible readings give different output, and no vision line chooses between them.",
+    vision: [
+      { text: V.print, mark: "does not settle", cls: "silent", note: "Both readings are parseable; only one keeps one line per input." },
+    ],
+    title: "Add a --json flag", filedBy: "omkarbhale",
+    body: "Add --json so scripts can read the counts without parsing columns.",
+    calls: [
+      ["09:20", "Raised to the owner. Desktop notice sent; issue comment links the board."],
+      ["09:19", "Verdict: needs the owner. Two readings, the vision chooses neither."],
+      ["09:18", "Size check: fits one PR."],
+      ["09:18", "Taken in: the owner's new issue in an enrolled repo."],
+    ],
+    options: [
+      { id: "lines", title: "One JSON object per input, one per line", outcome: "`tally --json a.txt b.txt` prints two lines, each a JSON object." },
+      { id: "array", title: "One JSON array for all inputs", outcome: "`tally --json a.txt b.txt` prints one JSON document listing both files." },
+    ] },
+  { id: "T7", repo: "omkar/tally", forge: "GitHub", issue: 7, raised: "2026-11-08 10:02", age: "2 h",
+    decision: "Should tally count the words of a web page, although the vision says it never reaches the network?",
+    whyKind: "contra", whyTag: "contradicts a line",
+    why: "The issue contradicts a vision line. Going ahead would make an exception for this ticket only.",
+    vision: [
+      { text: V.net, mark: "contradicts", cls: "contradicts" },
+      { text: V.read, mark: "does not settle", cls: "silent" },
+    ],
+    title: "Count the words of a web page given its URL", filedBy: "omkarbhale",
+    body: "tally https://example.com should fetch the page and count its words.",
+    calls: [
+      ["10:02", "Raised to the owner. Desktop notice sent; issue comment links the board."],
+      ["10:01", "Verdict: needs the owner. Contradicts “tally never reaches the network.”"],
+      ["10:00", "Size check: fits one PR."],
+      ["10:00", "Taken in: the owner's new issue in an enrolled repo."],
+    ],
+    options: [
+      { id: "asread", title: "Go ahead as read", outcome: "tally fetches the page at the URL and counts the words in its text.", exception: true },
+    ] },
+  { id: "T8", repo: "omkar/tally", forge: "GitLab", issue: 8, raised: "2026-11-08 10:40", age: "1 h",
+    decision: "Should tally read default flags from ~/.tallyrc, although the vision says it reads no configuration files?",
+    whyKind: "contra", whyTag: "contradicts a line",
+    why: "The issue contradicts a vision line. Going ahead would make an exception for this ticket only.",
+    vision: [
+      { text: V.conf, mark: "contradicts", cls: "contradicts" },
+    ],
+    title: "Read default flags from ~/.tallyrc", filedBy: "omkarbhale",
+    body: "I always pass the same flags. Let me put them in ~/.tallyrc.",
+    calls: [
+      ["10:40", "Raised to the owner. Desktop notice sent; issue comment links the board."],
+      ["10:39", "Verdict: needs the owner. Contradicts the configuration line."],
+      ["10:38", "Size check: fits one PR."],
+      ["10:38", "Taken in: the owner's new issue in an enrolled repo."],
+    ],
+    options: [
+      { id: "asread", title: "Go ahead as read", outcome: "tally reads ~/.tallyrc, if present, and applies its flags before the command line's.", exception: true },
+    ] },
+  { id: "T9", repo: "omkar/tally", forge: "GitLab", issue: 9, raised: "2026-11-08 11:30", age: "40 min",
+    decision: "Go ahead with a readability rename inside src/format.js, which you pinned as “the output format”?",
+    whyKind: "pin", whyTag: "pin: the output format",
+    why: "The change is small (a refactor with one reading), but it touches src/format.js, which is pinned as “the output format”. A touched pin always comes to you.",
+    vision: [
+      { text: V.print, mark: "matches", cls: "matches", note: "A rename leaves the output unchanged." },
+    ],
+    title: "Rename variables in src/format.js for readability", filedBy: "omkarbhale",
+    body: "Names like `a`, `b2` and `tmp` in src/format.js are hard to follow.",
+    calls: [
+      ["11:30", "Raised to the owner. Desktop notice sent; issue comment links the board."],
+      ["11:29", "Verdict: needs the owner. Small, but touches the pin “the output format”."],
+      ["11:28", "Size check: fits one PR."],
+      ["11:28", "Taken in: the owner's new issue in an enrolled repo."],
+    ],
+    options: [
+      { id: "asread", title: "Go ahead as read", outcome: "Only names change inside src/format.js; the printed output is byte-for-byte the same." },
+    ] },
+];
+
+/* =====================================================================
+   Page shell: thin, throwaway.
+   ===================================================================== */
+const VARIANTS = { A: "Inbox: list and detail", B: "Focus: one at a time", C: "Digest: one page" };
+const params = new URLSearchParams(location.search);
+let variant = VARIANTS[params.get("variant")] ? params.get("variant") : "A";
+let state = Board.initialState(SEED);
+let ui = { selected: "T5", drafts: {}, reviewing: null, flash: null, confirmStep: true, expanded: {}, lastAnswered: null };
+let clock = 0;
+const nowStr = () => { clock += 1; return `2026-11-08 12:${String(10 + clock).padStart(2, "0")}`; };
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const itemOf = id => state.items.find(i => i.id === id);
+const answerOf = id => state.answers.find(a => a.itemId === id);
+const openItems = () => state.items.filter(i => i.status === "open");
+const draftOf = id => (ui.drafts[id] ||= { shape: null, optionId: null, text: "", note: "", showNote: false });
+
+function issueLink(it) {
+  const label = it.forge === "GitHub" ? `${it.repo}#${it.issue}` : `${it.repo}#${it.issue} (GitLab)`;
+  return `<a href="#" onclick="return false">${esc(label)}</a>`;
+}
+function whyTag(it) {
+  const cls = it.whyKind === "pin" ? "pin" : it.whyKind === "contra" ? "contra" : "silent";
+  return `<span class="tag ${cls}">${esc(it.whyTag)}</span>`;
+}
+function statusTag(it) {
+  if (it.status === "answered") return `<span class="tag answered">answered</span>`;
+  if (it.status === "withdrawn") return `<span class="tag withdrawn">withdrawn</span>`;
+  return "";
+}
+
+/* ---- the six parts, shared fragments ---- */
+function partWhy(it) { return `<div class="why"><strong>Why it was raised.</strong> ${esc(it.why)}</div>`; }
+function partVision(it) {
+  return `<h2>Vision check</h2>
+    <div class="small muted">Only the lines that bear on this issue, quoted from VISION.md at <a href="#" onclick="return false">a1b2c3d</a>.</div>
+    ${it.vision.map(v => `<div class="vline ${v.cls}"><span class="mark">${esc(v.mark)}</span><q>${esc(v.text)}</q>
+      ${v.note ? `<div class="small muted">${esc(v.note)}</div>` : ""}</div>`).join("")}`;
+}
+function partTicket(it) {
+  return `<h2>What the ticket was</h2>
+    <div><strong>${esc(it.title)}</strong> · ${issueLink(it)} · filed by ${esc(it.filedBy)}</div>
+    <div class="small muted">The reporter's request, not your word:</div>
+    <blockquote class="req">${esc(it.body)}</blockquote>`;
+}
+function partCalls(it) {
+  return `<h2>What happened</h2>
+    <ol class="calls">${it.calls.map(([w, t]) => `<li><span class="when">${esc(w)}</span>${esc(t)}</li>`).join("")}</ol>
+    <div class="small"><a href="#" onclick="return false">Ticket history and model runs on the Calls page</a></div>`;
+}
+
+/* ---- the answer form, with three presentations ---- */
+function form(it, style) {
+  if (it.status === "withdrawn") return withdrawnBox(it);
+  if (it.status === "answered") return receipt(it);
+  if (ui.reviewing === it.id) return review(it);
+  const d = draftOf(it.id);
+  const optRow = (shape, optionId, title, outcome, extra, cls = "") => {
+    const sel = d.shape === shape && (shape !== "option" || d.optionId === optionId);
+    return `<label class="opt ${cls} ${sel ? "sel" : ""}">
+      <input type="radio" name="a-${it.id}" ${sel ? "checked" : ""} onchange="pick('${it.id}','${shape}','${optionId || ""}')">
+      <span class="t">${esc(title)}</span>${outcome ? `<div class="o">${esc(outcome)}</div>` : ""}${extra || ""}</label>`;
+  };
+  const opts = it.options.map(o => optRow("option", o.id, o.title, o.outcome,
+    o.exception && d.shape === "option" && d.optionId === o.id
+      ? `<div class="exception">This goes against a vision line for this ticket only. The line stays as it is; to change the rule, edit VISION.md.</div>` : "")).join("");
+  const own = optRow("own", null, "Answer in my own words", null,
+    d.shape === "own" ? `<textarea placeholder="What should happen? An executor will build from this." oninput="setDraft('${it.id}','text',this.value)">${esc(d.text)}</textarea>` : "");
+  const stop = optRow("stop", null, "Don't go ahead", "The ticket is cancelled and the issue closed.", null, "stopopt");
+  const note = `<details ${d.note ? "open" : ""}><summary>Add a note</summary>
+      <textarea placeholder="Optional. Kept in entail's records." oninput="setDraft('${it.id}','note',this.value)">${esc(d.note)}</textarea>
+      <label class="small"><input type="checkbox" ${d.showNote ? "checked" : ""} onchange="setDraft('${it.id}','showNote',this.checked)"> Show my note on the issue</label>
+    </details>`;
+  const err = Board.validate(it, d);
+  const submitLabel = ui.confirmStep ? "Review answer" : "Record answer (final)";
+  const submit = `<div class="row" style="margin-top:10px">
+      <button class="btn primary" ${err ? "disabled" : ""} onclick="submitAnswer('${it.id}')">${submitLabel}</button>
+      <span class="small muted">${ui.confirmStep ? "Nothing is recorded until you confirm." : "Answers are final."}</span></div>`;
+  if (style === "inline") {
+    return `<div class="quick">${it.options.map(o => `<button class="btn ${d.shape === "option" && d.optionId === o.id ? "primary" : ""}" onclick="pick('${it.id}','option','${o.id}')">${esc(o.title)}</button>`).join("")}
+        <button class="btn ${d.shape === "own" ? "primary" : ""}" onclick="pick('${it.id}','own','')">My own words…</button>
+        <button class="btn stop ${d.shape === "stop" ? "primary" : ""}" onclick="pick('${it.id}','stop','')">Don't go ahead</button></div>
+      ${d.shape ? `<div style="margin-top:8px">
+        ${d.shape === "option" ? `<div class="small muted">${esc(it.options.find(o => o.id === d.optionId).outcome)}</div>${it.options.find(o => o.id === d.optionId).exception ? `<div class="exception">This goes against a vision line for this ticket only. The line stays as it is.</div>` : ""}` : ""}
+        ${d.shape === "own" ? `<textarea placeholder="What should happen?" oninput="setDraft('${it.id}','text',this.value)">${esc(d.text)}</textarea>` : ""}
+        ${d.shape === "stop" ? `<div class="small muted">The ticket is cancelled and the issue closed.</div>` : ""}
+        ${note}${submit}</div>` : ""}`;
+  }
+  return `<h2>Your answer</h2>${opts}${own}${stop}${note}${submit}`;
+}
+function review(it) {
+  const d = draftOf(it.id);
+  const out = Board.outcome(it, d);
+  return `<div class="review">
+    <strong>Check your answer before it is recorded. Answers are final.</strong>
+    <div style="margin-top:8px"><span class="muted">You answer:</span> <strong>${esc(Board.decisionText(it, d))}</strong></div>
+    ${d.note ? `<div class="small"><span class="muted">Note (${d.showNote ? "shown on the issue" : "private"}):</span> ${esc(d.note)}</div>` : ""}
+    <h2>What happens next</h2><ul class="steps">${out.steps.map(s => `<li>${esc(s)}</li>`).join("")}</ul>
+    <h2>On the issue, entail will post</h2><pre class="comment">${esc(out.comment)}</pre>
+    <div class="row"><button class="btn primary" onclick="confirmAnswer('${it.id}')">Record answer as ${Board.OWNER} (final)</button>
+      <button class="btn" onclick="ui.reviewing=null;render()">Back</button></div></div>`;
+}
+function receipt(it) {
+  const a = answerOf(it.id);
+  const out = Board.outcome(it, a);
+  return `<div class="receipt">
+    <strong>Answered by ${esc(a.by)} at ${esc(a.at)}</strong> <span class="small muted">(item version ${a.version})</span>
+    <div style="margin-top:4px">${esc(Board.decisionText(it, a))}</div>
+    ${a.note ? `<div class="small muted">Note, ${a.showNote ? "shown on the issue" : "private"}: ${esc(a.note)}</div>` : ""}
+    <div class="small" style="margin-top:6px">Ticket is now <strong>${esc(out.ticketState)}</strong>.</div>
+    <ul class="steps small">${out.steps.map(s => `<li>${esc(s)}</li>`).join("")}</ul>
+    <details><summary>Comment entail will post on the issue</summary><pre class="comment">${esc(out.comment)}</pre></details></div>`;
+}
+function withdrawnBox(it) {
+  const d = ui.drafts[it.id];
+  return `<div class="withdrawnbox"><strong>Withdrawn. This item takes no answer.</strong>
+    <div>${esc(it.withdrawnReason)}</div><div class="small muted">${esc(it.withdrawnNext)}</div>
+    ${d && (d.text || d.note) ? `<details open><summary>Your unsent draft (not recorded)</summary><pre class="comment">${esc([d.text, d.note].filter(Boolean).join("\n\n"))}</pre></details>` : ""}</div>`;
+}
+
+/* ---- Variant A: inbox ---- */
+function viewA() {
+  const open = openItems(), closed = state.items.filter(i => i.status !== "open");
+  if (!itemOf(ui.selected)) ui.selected = open[0]?.id;
+  const li = it => `<button class="li ${ui.selected === it.id ? "on" : ""}" onclick="ui.selected='${it.id}';ui.reviewing=null;render()">
+      <div class="d">${esc(it.decision)}</div>
+      <div class="m">${esc(it.repo)} · ${esc(it.forge)} · raised ${esc(it.age)} ago ${whyTag(it)} ${statusTag(it)}</div></button>`;
+  const it = itemOf(ui.selected);
+  return `<div class="A">
+    <div class="list card"><div class="sep">Needs you · ${open.length}</div>${open.map(li).join("") || `<div class="small muted" style="padding:8px 12px">Nothing needs you.</div>`}
+      ${closed.length ? `<div class="sep">Answered or withdrawn today</div>${closed.map(li).join("")}` : ""}</div>
+    <div class="detail card">${it ? `
+      <div class="small muted">${esc(it.repo)} · ${issueLink(it)} · raised ${esc(it.raised)}</div>
+      <h1 class="decision">${esc(it.decision)}</h1>
+      ${partWhy(it)}${partVision(it)}${partTicket(it)}${partCalls(it)}${form(it, "stack")}` : `<div class="empty">Nothing needs you.</div>`}</div></div>`;
+}
+
+/* ---- Variant B: focus, answer first ---- */
+function viewB() {
+  const open = openItems();
+  const focusId = ui.lastAnswered && itemOf(ui.lastAnswered)?.status !== "open" ? ui.lastAnswered : (itemOf(ui.selected)?.status === "open" ? ui.selected : open[0]?.id);
+  const it = itemOf(focusId);
+  const dots = state.items.map(i => `<span class="${i.id === focusId ? "on" : i.status !== "open" ? "done" : ""}" title="${i.id}"></span>`).join("");
+  if (!it) return `<div class="B"><div class="empty card"><h1>Nothing needs you.</h1>
+     <div>${state.answers.length} answered today. <a href="#" onclick="return false">See them on the Calls page.</a></div></div></div>`;
+  const after = it.status !== "open" && open.length
+    ? `<div class="row" style="margin-top:12px"><button class="btn primary" onclick="ui.lastAnswered=null;ui.selected='${open[0].id}';render()">Next decision (${open.length} left)</button></div>`
+    : it.status !== "open" ? `<div class="row" style="margin-top:12px"><button class="btn" onclick="ui.lastAnswered=null;render()">Done</button></div>` : "";
+  return `<div class="B">
+    <div class="progress"><span class="muted">${open.length} decision${open.length === 1 ? "" : "s"} need you</span><span class="dots">${dots}</span></div>
+    <div class="card"><div class="hero">
+      <div class="small muted">${esc(it.repo)} · ${issueLink(it)} · ${whyTag(it)} ${statusTag(it)}</div>
+      <div class="decision" style="margin:8px 0 12px">${esc(it.decision)}</div>
+      ${partWhy(it)}
+      ${form(it, "cards")}${after}</div>
+      <div class="evidence"><details ${ui.expanded[it.id] ? "open" : ""} ontoggle="ui.expanded['${it.id}']=this.open">
+        <summary>Evidence: vision check, the issue, what happened</summary>
+        ${partVision(it)}${partTicket(it)}${partCalls(it)}</details></div></div>
+    ${open.length > 1 && it.status === "open" ? `<div class="small muted" style="margin-top:10px">Next up: ${esc(open.find(o => o.id !== it.id).decision)} <a href="#" onclick="ui.selected='${open.find(o => o.id !== it.id).id}';ui.reviewing=null;render();return false">skip to it</a></div>` : ""}
+  </div>`;
+}
+
+/* ---- Variant C: digest, everything on one page ---- */
+function viewC() {
+  const open = openItems(), closed = state.items.filter(i => i.status !== "open");
+  const entry = it => {
+    if (it.status !== "open") {
+      const a = answerOf(it.id);
+      return `<div class="entry card done"><div class="row">${statusTag(it)}<strong>${esc(it.decision)}</strong></div>
+        <div class="meta">${it.status === "answered" ? `${esc(a.by)}: ${esc(Board.decisionText(it, a))} · ${esc(a.at)} · ticket ${esc(Board.outcome(it, a).ticketState)}` : esc(it.withdrawnReason)}</div>
+        <details><summary>Details</summary>${form(it, "inline")}</details></div>`;
+    }
+    return `<div class="entry card">
+      <div class="row"><span class="decision" style="font-size:17px">${esc(it.decision)}</span></div>
+      <div class="meta">${esc(it.repo)} · ${issueLink(it)} · raised ${esc(it.age)} ago · ${whyTag(it)}</div>
+      <div class="small" style="margin-top:6px">${esc(it.why)}</div>
+      <details ${ui.expanded[it.id] ? "open" : ""} ontoggle="ui.expanded['${it.id}']=this.open"><summary>Vision check, the issue and what happened</summary>
+        ${partVision(it)}${partTicket(it)}${partCalls(it)}</details>
+      ${form(it, "inline")}</div>`;
+  };
+  return `<div class="C">
+    <div class="head"><h1>${open.length ? `${open.length} decision${open.length === 1 ? "" : "s"} need you` : "Nothing needs you"}</h1><span class="small muted">oldest first</span></div>
+    ${open.map(entry).join("")}
+    ${closed.length ? `<h2>Answered or withdrawn today</h2>${closed.map(entry).join("")}` : ""}</div>`;
+}
+
+/* ---- actions ---- */
+function pick(id, shape, optionId) { Object.assign(draftOf(id), { shape, optionId: optionId || null }); render(); }
+function setDraft(id, k, v) {
+  draftOf(id)[k] = v;
+  if (k === "showNote") return render();
+  const btn = document.querySelector(`button[onclick="submitAnswer('${id}')"]`);
+  if (btn) btn.disabled = !!Board.validate(itemOf(id), draftOf(id));
+}
+function submitAnswer(id) { if (ui.confirmStep) { ui.reviewing = id; render(); } else confirmAnswer(id); }
+function confirmAnswer(id) {
+  const r = Board.answer(state, id, draftOf(id), nowStr());
+  if (r.error) { alert(r.error); return; }
+  state = r.state; ui.reviewing = null; ui.lastAnswered = id; render();
+}
+function simulate(kind) {
+  if (kind === "close") state = Board.withdraw(state, "T5", "The issue was closed on GitHub by someone else.", "The ticket is cancelled.");
+  if (kind === "vision") state = Board.withdraw(state, "T8", "VISION.md changed: the configuration line in this item's vision check was reworded.", "The ticket is being decided again; a new item comes back if it still needs you.");
+  if (kind === "pin") state = Board.withdraw(state, "T9", "The pin “the output format” changed.", "The ticket is being decided again.");
+  if (kind === "reset") { state = Board.initialState(SEED); ui = { ...ui, selected: "T5", drafts: {}, reviewing: null, lastAnswered: null, expanded: {} }; }
+  document.querySelector(".sim")?.classList.remove("open");
+  render();
+}
+function setVariant(v) { variant = v; ui.reviewing = null; history.replaceState(null, "", `?variant=${v}`); render(); }
+function cycle(dir) { const ks = Object.keys(VARIANTS); setVariant(ks[(ks.indexOf(variant) + dir + ks.length) % ks.length]); }
+document.addEventListener("keydown", e => {
+  if (e.target.closest("input, textarea, [contenteditable]")) return;
+  if (e.key === "ArrowLeft") cycle(-1); if (e.key === "ArrowRight") cycle(1);
+});
+
+function render() {
+  const open = openItems().length;
+  const body = variant === "A" ? viewA() : variant === "B" ? viewB() : viewC();
+  document.getElementById("app").innerHTML = `
+    <div class="top"><span class="brand">entail</span>
+      <nav><a class="on" href="#" onclick="return false">Board${open ? ` (${open})` : ""}</a><a href="#" onclick="return false">Calls</a></nav>
+      <span class="who">localhost:4810 · answering as ${Board.OWNER}</span></div>
+    <div class="wrap">${body}</div>
+    <div class="pbar">
+      <button onclick="cycle(-1)" title="previous variant">&larr;</button>
+      <span class="lab">${variant} (${VARIANTS[variant]})</span>
+      <button onclick="cycle(1)" title="next variant">&rarr;</button>
+      <label><input type="checkbox" ${ui.confirmStep ? "checked" : ""} onchange="ui.confirmStep=this.checked;ui.reviewing=null;render()"> review step</label>
+      <span class="simwrap"><button onclick="document.querySelector('.sim').classList.toggle('open')">simulate…</button>
+        <div class="sim">
+          <button onclick="simulate('close')">Someone closes the colour issue (T5)</button>
+          <button onclick="simulate('vision')">VISION.md rewords the config line (T8)</button>
+          <button onclick="simulate('pin')">The output-format pin changes (T9)</button>
+          <button onclick="simulate('reset')">Reset all items</button>
+        </div></span>
+    </div>`;
+}
+render();
+</script>
+</body>
+</html>
