@@ -5,6 +5,7 @@ import type { Actor } from "./forge/forge.ts";
 import type { Git } from "./git.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import type { IntakeDetail, RequestPart } from "./intake.ts";
+import { latestIssueEditId } from "./issue-edit.ts";
 import { checkInvestigation, findingsOf, findingsText, invalidInvestigation, investigate, questionsOf, wasInvestigated, type FindingsDetail } from "./investigation.ts";
 import { visionCheckOf } from "./intake-comment.ts";
 import { forgeRemote, Mirror, type Checkout } from "./mirror.ts";
@@ -244,12 +245,13 @@ export interface DeciderOptions {
  * Whether a ticket is owed a verdict: it is deciding, its latest move into
  * deciding was not an answer going ahead (which writes criteria and never runs
  * the verdict again, ADR-0008), and no verdict or decline has been recorded
- * since.
+ * since, nor since the issue was last edited, which decides it again at the
+ * latest text (ADR-0020).
  */
 export function owesVerdict(ticket: TicketRecord, calls: readonly CallRecord[]): boolean {
   if (ticket.state !== "deciding") return false;
-  const since = ticket.stateCallId ?? 0;
   if (ticket.stateCallId !== null && calls.find((call) => call.id === ticket.stateCallId)?.answerId != null) return false;
+  const since = Math.max(ticket.stateCallId ?? 0, latestIssueEditId(calls));
   return !calls.some((call) => call.id > since && (call.kind === "verdict" || call.kind === "decline"));
 }
 
@@ -300,8 +302,16 @@ async function decide(
     log.warn("verdict-skipped", { ticketId: ticket.id, why: "no intake call records the issue's text" });
     return;
   }
-  // A vision change recorded while the run is in flight discards it, and the ticket is decided at the new vision (ADR-0016).
+  // A vision change recorded while the run is in flight discards it, and the ticket is decided at the new vision (ADR-0016);
+  // an issue edit, at the latest text (ADR-0020).
   const visionChangeBefore = latestVisionChangeId(store, pass.repo.id);
+  const editBefore = latestIssueEditId(calls);
+  const unmoved = (): boolean => {
+    const now = store.getTicket(ticket.id);
+    if (now === null) return false;
+    const nowCalls = store.callsForTicket(ticket.id);
+    return owesVerdict(now, nowCalls) && latestIssueEditId(nowCalls) === editBefore;
+  };
   const mirror = await mirrorOf(pass.repo);
   const vision = await readVision(mirror.git, pass.head.commit);
   if (vision.status !== "present") {
@@ -353,6 +363,10 @@ async function decide(
     log.info("verdict-discarded", { ticketId: ticket.id, why: "a vision change was recorded while the run was in flight" });
     return;
   }
+  if (!unmoved()) {
+    log.info("verdict-discarded", { ticketId: ticket.id, why: "the issue was edited while the run was in flight" });
+    return;
+  }
 
   const verdict = recordedVerdict(run, vision.commit, pinMatches);
   const inputs = { issueTitle: request.title, issueBody: request.body, visionSha: vision.commit, pins, settingsVersionId: pass.settings.id };
@@ -401,10 +415,7 @@ async function decide(
       requestText: requestText(request),
       findings,
       model: runRequest.model,
-      stillOwed: () => {
-        const now = store.getTicket(ticket.id);
-        return now !== null && owesVerdict(now, store.callsForTicket(ticket.id));
-      },
+      stillOwed: unmoved,
     });
     return;
   }

@@ -6,12 +6,11 @@ import type { CriteriaDetail, Criterion } from "../src/criteria.ts";
 import type { Actor, ChangeBatch, Check, CheckReport, Issue, MergeMethod, MergeOutcome, PullRequest, PullRequestComment } from "../src/forge/forge.ts";
 import { LANDING_CHECKS, landingPlanner, type LandingChecks, type LandingMirror } from "../src/landing.ts";
 import { landingGrader, type GradeMirror, type LandingChallengeOutput } from "../src/landing-grade.ts";
+import { isIssueEdit, recordedIssueText } from "../src/issue-edit.ts";
 import {
-  issueTextChanged,
   landingMerger,
   mergeGuard,
   passingClosing,
-  recordedIssueText,
   refusalText,
   type ChangesBeforeMerge,
   type MergeDetail,
@@ -131,9 +130,10 @@ test("the issue re-read compares the live title and body with the text the ticke
   assert.equal(recordedIssueText([]), null);
   const recorded = recordedIssueText([call({ issueTitle: "Old", issueBody: "Old body" }), call({ prHeadSha: "abc" }), call({ issueTitle: "Read stdin", issueBody: "Body" })]);
   assert.deepEqual(recorded, { title: "Read stdin", body: "Body" });
-  assert.equal(issueTextChanged(recorded!, { title: "Read stdin", body: "Body" }), false);
-  assert.equal(issueTextChanged(recorded!, { title: "Read stdin", body: "Body, edited" }), true);
-  assert.equal(issueTextChanged(recorded!, { title: "Read standard input", body: "Body" }), true);
+  assert.equal(isIssueEdit(recorded!, { title: "Read stdin", body: "Body" }), false);
+  assert.equal(isIssueEdit(recorded!, { title: "Read stdin ", body: "Body\n" }), false, "whitespace alone is no edit");
+  assert.equal(isIssueEdit(recorded!, { title: "Read stdin", body: "Body, edited" }), true);
+  assert.equal(isIssueEdit(recorded!, { title: "Read standard input", body: "Body" }), true);
 });
 
 test("a passing landing comment ends by saying what entail does about the merge", () => {
