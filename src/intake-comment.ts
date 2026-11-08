@@ -137,6 +137,35 @@ export function raisedNextText(boardLink: string): string {
 /** The label a cleared or landing ticket's issue carries (ADR-0013). */
 export const CLEARED_LABEL = "entail:cleared";
 
+/** The label an investigating ticket's issue carries (ADR-0006, ADR-0013). */
+export const INVESTIGATE_LABEL = "entail:investigate";
+
+/** A question an investigation must establish, as its intake comment lists it. */
+export interface ListedQuestion {
+  id: string;
+  question: string;
+}
+
+/**
+ * What happens next for a ticket being investigated (spec §8, §9, ADR-0006,
+ * ADR-0013): the questions Q1…Qn the investigation must establish, then the
+ * label `entail:investigate`.
+ */
+export function investigatingNextText(questions: readonly ListedQuestion[]): string {
+  const lines = [
+    "entail cannot tell yet whether this issue describes a real problem, or what causes it, so it is to be investigated before any criteria are written. No PR is checked or merged for it until then.",
+    "",
+    "#### Questions",
+    "",
+  ];
+  for (const { id, question } of questions) lines.push(`- **${id}** ${inline(question)}`);
+  lines.push(
+    "",
+    `Label: \`${INVESTIGATE_LABEL}\`. Any executor may investigate this issue. entail decides it again from the first findings comment posted after this one.`,
+  );
+  return lines.join("\n");
+}
+
 /** Model-written text as one line of a comment: whitespace collapsed, and no hidden marker of its own. */
 function inline(text: string): string {
   return collapseWhitespace(text).replace(/<!--/gu, "&lt;!--");

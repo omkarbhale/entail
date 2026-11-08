@@ -59,6 +59,7 @@ function close(fields: Partial<VerdictOutput> = {}): VerdictOutput {
     why_raised: null,
     open_readings: [],
     close_evidence: [{ kind: "duplicate_issue", ref: "3", why: "Issue #3 reports the same off-by-one count." }],
+    questions: [],
     reason: "Issue #3 already reports this.",
     ...fields,
   };
@@ -338,7 +339,7 @@ test("a duplicate is closed at intake: a logged call, the evidence commented, th
   await h.pass();
 
   const verdictPrompt = h.scripted.requests[0]!.prompt;
-  assert.match(verdictPrompt, /4\. Nothing to do\./);
+  assert.match(verdictPrompt, /5\. Nothing to do\./);
   assert.ok(verdictPrompt.includes(`"sha": "${h.r.fix}"`), "the decider is shown the default branch's recent commits");
   assert.ok(verdictPrompt.indexOf("## Recent commits") < verdictPrompt.indexOf("## The request (untrusted"), "the request stays last");
 

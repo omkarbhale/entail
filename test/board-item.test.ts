@@ -64,6 +64,7 @@ function needsTheOwner(fields: Partial<VerdictOutput> = {}): VerdictOutput {
     why_raised: "contradiction",
     open_readings: ["R1"],
     close_evidence: [],
+    questions: [],
     reason: "Fetching a URL contradicts the network line.",
     ...fields,
   };

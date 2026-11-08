@@ -19,7 +19,16 @@ export const VERDICT_CHECKS = {
   noPin: "no pin is touched",
 } as const;
 
-export type VerdictCheckName = (typeof VERDICT_CHECKS)[keyof typeof VERDICT_CHECKS];
+/**
+ * The check a ticket decided again from its findings fails when the decider
+ * still asks for an investigation: entail investigates a ticket at most once,
+ * so findings that leave the problem unknown make the ticket need the owner
+ * (spec §8, ADR-0006). It is not one of the checks on a settled or unopposed
+ * verdict.
+ */
+export const INVESTIGATED_ONCE_CHECK = "a ticket is investigated at most once";
+
+export type VerdictCheckName = (typeof VERDICT_CHECKS)[keyof typeof VERDICT_CHECKS] | typeof INVESTIGATED_ONCE_CHECK;
 
 /** One check's result. A failed check says how it failed, quoting what it rests on. */
 export interface VerdictCheckResult {

@@ -50,6 +50,7 @@ function verdict(fields: Partial<VerdictOutput> = {}): VerdictOutput {
     why_raised: null,
     open_readings: [],
     close_evidence: [],
+    questions: [],
     reason: "Nothing in the vision opposes reading standard input.",
     ...fields,
   };
@@ -166,8 +167,8 @@ test("the prompt walks the order of judgment and carries issue text only as untr
     },
   });
 
-  const order = ["1. Size.", "2. Pins.", "3. Contradiction.", "4. Nothing to do.", "5. Readings."].map((step) => prompt.indexOf(step));
-  assert.ok(order.every((at, i) => at >= 0 && (i === 0 || at > order[i - 1]!)), "size, pins, contradiction, nothing to do, readings, in that order");
+  const order = ["1. Size.", "2. Unknown problem.", "3. Pins.", "4. Contradiction.", "5. Nothing to do.", "6. Readings."].map((step) => prompt.indexOf(step));
+  assert.ok(order.every((at, i) => at >= 0 && (i === 0 || at > order[i - 1]!)), "size, unknown problem, pins, contradiction, nothing to do, readings, in that order");
   assert.match(prompt, /Never close on the vision/);
   assert.match(prompt, /When unsure, it fits\./);
   assert.match(prompt, /When unsure, it is touched\./);
