@@ -128,7 +128,7 @@ entail's check of one PR at one head before it merges. Mechanical checks run fir
 _Avoid_: Review, validation, gate
 
 **Landing comment**:
-The attributed comment entail posts on a PR after each landing check. It marks each criterion and generic criterion as met or not met, names the head checked, and says whether entail is merging.
+The attributed comment entail posts on a PR after each landing check. It marks each criterion and generic criterion as met or not met, quoting the evidence for each one met, lists anything the change does beyond the criteria, names the head checked, and says whether entail is merging.
 
 **Shadow**:
 A per-repo setting, off by default, under which entail decides tickets and runs landing checks but leaves every merge to the owner.
