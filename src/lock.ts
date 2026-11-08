@@ -28,6 +28,7 @@ export interface HeldLock {
 
 export const LOCK_FILE = "entail.lock";
 
+/** Slack for whole-second `ps` start times and boot-time clock drift (Linux/WSL). */
 const START_TIME_TOLERANCE_MS = 5_000;
 
 /** Another copy of entail is running and holds the lock. */
@@ -120,7 +121,7 @@ export function processExists(pid: number): boolean {
 
 /**
  * Whether the process that wrote this lock is still running. A pid that is
- * alive but was started after the lock was written has been reused by an
+ * alive but was started more than {@link START_TIME_TOLERANCE_MS} after the lock was written has been reused by an
  * unrelated process, so the lock is stale. When the start time cannot be read,
  * the process's command line must mention entail.
  */
