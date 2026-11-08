@@ -229,14 +229,41 @@ export function clearedNextText(input: { criteria: readonly ListedCriterion[]; g
 }
 
 /**
+ * What a re-check was made after, as a comment on the forge says it: the
+ * vision change at its sha, a change to the repo's pins, or both; null when
+ * neither. A pin is never named, because pins are kept out of the project's
+ * repo (ADR-0018).
+ */
+export function afterChangeText(change: { visionChange?: string | null; pinChange?: boolean }): string | null {
+  const parts: string[] = [];
+  if (change.visionChange) parts.push(`the vision change at \`${shortSha(change.visionChange)}\``);
+  if (change.pinChange === true) parts.push("a change to the repo's pins");
+  return parts.length === 0 ? null : `after ${parts.join(" and ")}`;
+}
+
+/**
+ * What a recorded re-check was made after, in its public form: the vision
+ * change's sha when it covered one, and whether the repo's pins changed. A
+ * re-check recorded before pin changes flagged covered vision changes only.
+ */
+export function recheckChangeOf(detail: unknown): { visionChange: string | null; pinChange: boolean } {
+  const d = detail as { visionChangeIds?: unknown; recheck?: { toVisionSha?: unknown; pinsRemoved?: unknown[]; pinsAdded?: unknown[] } } | null;
+  const recheck = d?.recheck;
+  const pinChange = (recheck?.pinsRemoved?.length ?? 0) > 0 || (recheck?.pinsAdded?.length ?? 0) > 0;
+  const covered = (Array.isArray(d?.visionChangeIds) && d.visionChangeIds.length > 0) || recheck?.pinsAdded === undefined;
+  const visionChange = covered && typeof recheck?.toVisionSha === "string" ? recheck.toVisionSha : null;
+  return { visionChange, pinChange };
+}
+
+/**
  * An intake comment's text: the vision check, then what happens next ending
  * with the fixed executor line. A comment that replaces an earlier intake
  * comment names it first, and one posted after a re-check names the vision
- * change's sha too (ADR-0016).
+ * change's sha too (ADR-0016), or says the repo's pins changed (ADR-0018).
  */
-export function intakeCommentText(input: { visionCheck: VisionCheck; next: string; replaces?: string | null; visionChange?: string | null }): string {
+export function intakeCommentText(input: { visionCheck: VisionCheck; next: string; replaces?: string | null; visionChange?: string | null; pinChange?: boolean }): string {
   const parts: string[] = [];
-  const after = input.visionChange ? `after the vision change at \`${shortSha(input.visionChange)}\`` : null;
+  const after = afterChangeText(input);
   if (input.replaces) parts.push(`This replaces [entail's earlier intake comment](${input.replaces})${after === null ? "" : `, ${after}`}.`, "");
   else if (after !== null) parts.push(`entail checked this issue again ${after}.`, "");
   parts.push(visionCheckSection(input.visionCheck), "", "### What happens next", "", input.next.trim(), "", EXECUTOR_LINE);

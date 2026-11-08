@@ -207,6 +207,8 @@ export interface RaiseRequest {
   removeLabel?: string;
   /** The vision change a re-check raised the ticket after, which its intake comment names (ADR-0016). */
   visionChangeSha?: string | null;
+  /** Whether a re-check raised the ticket after a change to the repo's pins, which its intake comment says without naming them (ADR-0018). */
+  pinChange?: boolean;
 }
 
 /**
@@ -655,7 +657,7 @@ export async function raiseToBoard(
     };
     const item = store.raiseBoardItem({ ticketId: ticket.id, callId: call.id, decision, whyRaised: why.kind, snapshot });
     const link = boardItemLink(options.boardOrigin, item.id);
-    const body = composeComment(ownerName, ticket.id, intakeCommentText({ visionCheck: check, next: raisedNextText(link), replaces, visionChange: request.visionChangeSha ?? null }));
+    const body = composeComment(ownerName, ticket.id, intakeCommentText({ visionCheck: check, next: raisedNextText(link), replaces, visionChange: request.visionChangeSha ?? null, pinChange: request.pinChange === true }));
     store.recordForgeWriteIntent({
       repoId: repo.id,
       ticketId: ticket.id,

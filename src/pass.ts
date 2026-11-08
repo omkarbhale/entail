@@ -31,7 +31,7 @@ export const BACKOFF_MAX_MS = 15 * 60_000;
  * The steps a repo whose VISION.md is gone or empty does not start: nothing
  * new is decided and nothing lands there until a vision is back (spec §4).
  */
-export const VISION_HALTED_STEPS: ReadonlySet<string> = new Set(["verdict", "findings", "criteria", "landing-check", "merge", "re-check", "withdraw-for-vision-change"]);
+export const VISION_HALTED_STEPS: ReadonlySet<string> = new Set(["verdict", "findings", "criteria", "landing-check", "merge", "re-check", "withdraw-for-vision-change", "withdraw-for-pin-change"]);
 
 /** A host none of whose repos has polled for this long is the host-not-answering halt (spec §16). */
 export const HOST_UNANSWERED_HALT_MS = 60 * 60_000;

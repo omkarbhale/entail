@@ -3,6 +3,7 @@ import type { BoardItemSnapshot } from "./board-item.ts";
 import { isLandingMergeAnswer } from "./landing-pin.ts";
 import type { CriteriaDetail } from "./criteria.ts";
 import { readGlobalSettings } from "./global-settings.ts";
+import { recheckChangeOf } from "./intake-comment.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import type { OwedStep, OwedStepPlanner, RepoPass } from "./pass.ts";
 import { cancelledAfterRecheckText, commentOnce, ONE_TIME_COMMENTS } from "./pull-requests.ts";
@@ -201,16 +202,19 @@ async function actOnAnswer(
   await writer.comment(write, "issue", ticket.issueNumber, made.body);
   await writer.closeIssue(write, ticket.issueNumber, DONT_GO_AHEAD_CLOSE);
 
-  if (!raisedByRecheck(store, item)) return;
+  const recheck = recheckRaising(store, item);
+  if (recheck === null) return;
+  const change = recheckChangeOf(recheck.detail);
   const cancelled = store.getTicket(ticket.id)!;
   for (const pr of await pass.forge.linkedPullRequests(ticket.issueNumber)) {
     if (pr.state !== "open") continue;
-    await commentOnce(options, pass, cancelled, pr, ONE_TIME_COMMENTS.cancelledAfterRecheck, cancelledAfterRecheckText(pass, ticket.issueNumber));
+    await commentOnce(options, pass, cancelled, pr, ONE_TIME_COMMENTS.cancelledAfterRecheck, cancelledAfterRecheckText(pass, ticket.issueNumber, change));
   }
 }
 
-/** Whether a board item was raised by a re-check after a vision change (ADR-0016). */
-function raisedByRecheck(store: Store, item: BoardItemRecord): boolean {
+/** The re-check that raised a board item, after a vision change or pin change (ADR-0016, ADR-0018), or null when none did. */
+function recheckRaising(store: Store, item: BoardItemRecord): CallRecord | null {
   const basedOn = (store.getCall(item.callId)?.detail as { basedOnCallId?: unknown } | null)?.basedOnCallId;
-  return typeof basedOn === "number" && store.getCall(basedOn)?.kind === "recheck";
+  const call = typeof basedOn === "number" ? store.getCall(basedOn) : null;
+  return call?.kind === "recheck" ? call : null;
 }

@@ -339,7 +339,7 @@ test("a vanished vision holds deciding and landing in its repo, and a vision bac
   assert.deepEqual(started, ["verdict"], "the held step starts once the vision is back");
   assert.deepEqual(
     [...VISION_HALTED_STEPS],
-    ["verdict", "findings", "criteria", "landing-check", "merge", "re-check", "withdraw-for-vision-change"],
+    ["verdict", "findings", "criteria", "landing-check", "merge", "re-check", "withdraw-for-vision-change", "withdraw-for-pin-change"],
     "deciding, writing criteria, re-checking and landing are held",
   );
 });
