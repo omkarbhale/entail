@@ -16,6 +16,7 @@ import { InFlightWrites, settleUnconfirmedWrites } from "./forge-writer.ts";
 import { outsideCloses } from "./outside-close.ts";
 import { Passes, repoForge, type PassesOptions } from "./pass.ts";
 import { landingPlanner } from "./landing.ts";
+import { landingPinRaising } from "./landing-pin.ts";
 import { landingGrader } from "./landing-grade.ts";
 import { landingMerger } from "./merge.ts";
 import { pullRequestFollowing } from "./pull-requests.ts";
@@ -227,7 +228,8 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
 
   const pullRequests = pullRequestFollowing({ store, log });
   const closes = outsideCloses({ store, log });
-  const merger = landingMerger({ store, log, dataDirectory: options.dataDirectory });
+  const landingPins = landingPinRaising({ store, log, dataDirectory: options.dataDirectory, notifier, boardOrigin: server.info.origin });
+  const merger = landingMerger({ store, log, dataDirectory: options.dataDirectory, raiseForPins: landingPins.raise });
   const running = new Passes({
     store,
     log,
@@ -243,6 +245,8 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
       // Before following PRs, so a merge entail began is recorded as its own, not as one by someone else.
       merger.planner,
       pullRequests.planner,
+      // Before the landing check, which a landing ticket always owes, so a run that found a touched pin is raised first.
+      landingPins.planner,
       landingPlanner({
         store,
         log,

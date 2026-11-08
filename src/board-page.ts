@@ -4,6 +4,7 @@ import {
   answerComment,
   answerOf,
   answerOutcome,
+  answerPostsComment,
   answerWords,
   draftFrom,
   goesAgainstVisionLine,
@@ -535,7 +536,7 @@ function noteLine(answer: Pick<ChosenAnswer, "note" | "showNoteOnIssue">): strin
 
 /** What happens next, with the ticket's new state. */
 function outcomeHtml(answer: ChosenAnswer, e: BoardEntry): string {
-  const outcome = answerOutcome(answer, forgeOf(e));
+  const outcome = answerOutcome(answer, forgeOf(e), e.snapshot);
   return `<p>The ticket's new state: <strong>${escapeHtml(outcome.stateWords)}</strong>.</p>
 <ul class="steps">
 ${outcome.next.map((step) => `<li>${escapeHtml(step)}</li>`).join("\n")}
@@ -558,8 +559,11 @@ function renderReview(e: BoardEntry, context: FormContext, draft: AnswerDraft, a
 ${goesAgainstVisionLine(answer, e.snapshot) ? `<p class="warn">${escapeHtml(AGAINST_VISION_WARNING)}</p>\n` : ""}${noteLine(answer)}
 <h4>What happens next</h4>
 ${outcomeHtml(answer, e)}
-<h4>On the issue, entail will post</h4>
-<pre class="comment">${escapeHtml(comment)}</pre>
+${
+  answerPostsComment(answer, e.snapshot)
+    ? `<h4>On the issue, entail will post</h4>\n<pre class="comment">${escapeHtml(comment)}</pre>`
+    : `<h4>On the issue</h4>\n<p>entail posts no comment for this answer: merging the PR closes the issue.</p>`
+}
 <form id="answer-form" class="answer" method="post" action="${BOARD_ANSWER_PATH}" data-locked="false">
 ${hiddenFields(e, context.token)}
 ${keep(ANSWER_FIELDS.answer, draft.answer)}
@@ -687,7 +691,7 @@ export function whatNext(state: TicketState | null): string | null {
 function answeredState(answer: AnswerRecord, e: BoardEntry, nextId: number | null): string {
   let comment: string;
   try {
-    comment = answerComment(answer.answeredBy, e.history.item.ticketId, answer, e.snapshot, forgeOf(e), { earlier: e.earlier });
+    comment = answerPostsComment(answer, e.snapshot) ? answerComment(answer.answeredBy, e.history.item.ticketId, answer, e.snapshot, forgeOf(e), { earlier: e.earlier }) : "";
   } catch {
     comment = "";
   }

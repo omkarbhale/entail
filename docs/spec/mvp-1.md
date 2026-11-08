@@ -564,7 +564,9 @@ taken in ─▶ deciding ─┬─ oversized ───────────�
 investigating ── findings arrive ─▶ deciding  (at most once)
 on the board ─┬─ answer goes ahead ─▶ deciding (criteria only) ─▶ cleared
               ├─ "don't go ahead" ─▶ cancelled ■ (issue closed as not planned)
-              └─ item withdrawn (edit, vision or pin change) ─▶ deciding
+              ├─ item withdrawn (edit, vision or pin change) ─▶ deciding
+              └─ landing pin item: a new push, or "Merge this PR as it is"
+                 and the merge does not go through ─▶ landing
 cleared ── a PR linking the issue is open and being checked ─▶ landing
 landing ─┬─ landing check passes, merged ─▶ merged ■
          ├─ landing check fails ─▶ stays landing (checked again on a new head,

@@ -50,7 +50,7 @@ export function ticketHistoryLink(origin: string, ticketId: number): string {
  * call. A touched pin is named whatever the reason, because a touched pin
  * always comes to the owner.
  */
-export type WhyRaisedKind = "contradiction" | "consequential_readings" | "pin" | "failed_check" | "challenge" | "criteria_product_call";
+export type WhyRaisedKind = "contradiction" | "consequential_readings" | "pin" | "failed_check" | "challenge" | "criteria_product_call" | "landing_pin";
 
 export interface TouchedPin {
   /** The pin's topic, by which the owner named it. */
@@ -62,7 +62,29 @@ export type WhyRaisedInput =
   | { kind: "contradiction" | "consequential_readings" | "pin"; pins?: TouchedPin[] }
   | { kind: "failed_check"; check: string; failure: string; pins?: TouchedPin[] }
   | { kind: "challenge"; objection: string; pins?: TouchedPin[] }
-  | { kind: "criteria_product_call"; reason: string; pins?: TouchedPin[] };
+  | { kind: "criteria_product_call"; reason: string; pins?: TouchedPin[] }
+  /** A PR that passed everything else in its landing check changes a pinned path (spec §11, ADR-0014). */
+  | { kind: "landing_pin"; pullRequest: number; paths: PinnedPathTouched[]; pins?: TouchedPin[] };
+
+/** One changed path of a PR that a pin's path glob matches. */
+export interface PinnedPathTouched {
+  /** The pin's topic, by which the owner named it. */
+  pin: string;
+  /** The pin's path glob that matched. */
+  glob: string;
+  /** The path the PR changes. */
+  path: string;
+}
+
+/** What a landing pin item is about: the PR at the head its landing check passed, and the pinned paths it touches. */
+export interface LandingPinItem {
+  pullRequest: number;
+  url: string;
+  headSha: string;
+  /** The passing landing call that raised the item. */
+  landingCallId: number;
+  paths: PinnedPathTouched[];
+}
 
 /** The second part of a board item: why it was raised, in plain words, with what it rests on. */
 export interface WhyRaised {
@@ -80,6 +102,8 @@ export interface WhyRaised {
   objection: string | null;
   /** What writing the criteria found users could observe that no source chooses. */
   productCall?: string | null;
+  /** For a landing pin item: the pinned paths the PR touches. */
+  pinnedPaths?: PinnedPathTouched[];
 }
 
 /** One reading of the ticket, with the outcome a user would observe. */
@@ -153,6 +177,8 @@ export interface BoardItemSnapshot {
   };
   /** 6. The answer form: the options. Answering in the owner's own words and "don't go ahead" are always offered. */
   form: { options: BoardOption[] };
+  /** For an item raised at landing for a touched pin: the PR, its head and the pinned paths (spec §11). */
+  landing?: LandingPinItem;
 }
 
 /** The parts of a board item, in the order spec §13 lists them. */
@@ -173,6 +199,12 @@ export interface RaiseRequest {
   inputs: JudgedInputs | null;
   /** The call the raise rests on, such as the verdict. */
   basedOnCallId: number;
+  /** The options the form offers in place of the readings', as for a landing pin item. */
+  options?: BoardOption[];
+  /** For a landing pin item: what it is about. */
+  landing?: LandingPinItem;
+  /** A label the raise removes from the issue, as `entail:cleared` when a landing ticket goes on the board. */
+  removeLabel?: string;
 }
 
 /** Where raising reads the vision: a git mirror of the repo. */
@@ -374,6 +406,8 @@ export function decisionSentence(issueNumber: number, why: WhyRaised): string {
       return `Go ahead with ${issue}, which entail could not clear on its own?`;
     case "criteria_product_call":
       return `How should ${issue} go ahead, where its criteria need a product call?`;
+    case "landing_pin":
+      return `Merge the PR for ${issue}, which changes a path of the pin ${pinNames(why.pins)}?`;
   }
 }
 
@@ -422,6 +456,12 @@ export function whyRaised(input: WhyRaisedInput, check: VisionCheck): WhyRaised 
       tag = "criteria need a product call";
       text = `Writing the criteria needs a product call: ${input.reason.trim()}`.trim() + pinsAlso;
       break;
+    case "landing_pin": {
+      tag = pins.length > 0 ? `pin: ${pins.map((p) => p.pin).join(", ")}` : "pin";
+      const paths = input.paths.map((p) => `\`${p.path}\` (the pin ${quoted(p.pin)}, by its path \`${p.glob}\`)`).join(", ");
+      text = `PR #${input.pullRequest} passed everything else in its landing check, but it changes pinned paths: ${paths}. A touched pin always comes to the owner, so the PR is not merged until you answer.`;
+      break;
+    }
   }
   return {
     kind: input.kind,
@@ -432,6 +472,7 @@ export function whyRaised(input: WhyRaisedInput, check: VisionCheck): WhyRaised 
     failedCheck: input.kind === "failed_check" ? { check: input.check, failure: input.failure } : null,
     objection: input.kind === "challenge" ? input.objection : null,
     productCall: input.kind === "criteria_product_call" ? input.reason : null,
+    ...(input.kind === "landing_pin" ? { pinnedPaths: input.paths } : {}),
   };
 }
 
@@ -595,7 +636,8 @@ export async function raiseToBoard(
         request: issue?.body ?? request.inputs?.issueBody ?? "",
       },
       happened: { ...happened(store, store.getTicket(ticket.id)!), historyLink: ticketHistoryLink(options.boardOrigin, ticket.id) },
-      form: { options: boardOptions(request.readings, request.openReadings, check) },
+      form: { options: request.options ?? boardOptions(request.readings, request.openReadings, check) },
+      ...(request.landing === undefined ? {} : { landing: request.landing }),
     };
     const item = store.raiseBoardItem({ ticketId: ticket.id, callId: call.id, decision, whyRaised: why.kind, snapshot });
     const link = boardItemLink(options.boardOrigin, item.id);
@@ -609,6 +651,17 @@ export async function raiseToBoard(
       number: ticket.issueNumber,
       payload: { body },
     });
+    if (request.removeLabel !== undefined) {
+      store.recordForgeWriteIntent({
+        repoId: repo.id,
+        ticketId: ticket.id,
+        callId: call.id,
+        kind: "label",
+        target: "issue",
+        number: ticket.issueNumber,
+        payload: { action: "remove", label: request.removeLabel },
+      });
+    }
     return { item, call, body, link };
   });
   if (raised === null) {
@@ -622,7 +675,9 @@ export async function raiseToBoard(
     makeNotice({ kind: "board-item", text: boardNoticeText(request.ticket.issueNumber), repo: repo.path, link: raised.link }),
   );
   // Resumes the intent recorded above, finding the comment first if it was already posted.
-  await pass.writer().comment({ ticketId: request.ticket.id, callId: raised.call.id }, "issue", request.ticket.issueNumber, raised.body);
+  const write = { ticketId: request.ticket.id, callId: raised.call.id };
+  await pass.writer().comment(write, "issue", request.ticket.issueNumber, raised.body);
+  if (request.removeLabel !== undefined) await pass.writer().removeLabel(write, request.ticket.issueNumber, request.removeLabel);
   return raised.item;
 }
 
