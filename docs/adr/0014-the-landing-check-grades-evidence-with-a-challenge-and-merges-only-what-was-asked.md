@@ -1,5 +1,7 @@
 # The landing check grades evidence with a challenge and merges only what was asked
 
+> **Amended by ADR-0016.** A landing check runs once for each distinct head sha, latest evidence section and criteria version. No PR for a flagged ticket merges until its re-check is recorded, and just before merging entail reads VISION.md's blob again.
+
 When a PR for a cleared ticket is ready, entail runs a **landing check** on it. Mechanical checks run first. Then a fresh grader judges each criterion and each generic criterion against the PR's evidence and diff, and an independent challenge tries to overturn every "met". A PR that also changes something users can observe that no criterion asked for does not merge. Each run posts one **landing comment** on the PR. A PR that passes merges through the forge API, pinned to the head sha that was checked.
 
 VISION.md says a PR that passes its criteria merges automatically, so the merge is the step that lands work without the owner. VISION.md also says a check the model grades on itself can be bypassed, and that significant drift never happens unasked. For that reason the merge needs the same discipline as an automatic verdict (ADR-0002), and a cleared issue must not become a way to merge features nobody asked for.

@@ -42,6 +42,13 @@ _Avoid_: Provenance, author
 **Vision change**:
 A new version of the vision of record, seen as the vision lines it removed and the ones it added.
 
+**Flagged**:
+What a vision change makes a cleared or landing ticket whose clear came from an automatic verdict, when a line was added or a line its call cites was removed. A flagged ticket keeps its state and label, but nothing for it merges until a re-check is recorded. A ticket cleared by the owner's answer is never flagged.
+
+**Re-check**:
+The call that resolves a flag: a decider run at the new vision, given the ticket's prior call and the lines removed and added, judging only whether the change alters that call. The call stands, goes ahead on another reading with a new criteria version, or needs the owner.
+_Avoid_: Re-decide, re-verify
+
 **Decider**:
 The part of entail that gives a ticket its verdict, judged against the vision of record and the repo's pins.
 
@@ -104,7 +111,7 @@ A per-repo setting, off by default, under which entail decides tickets and runs 
 _Avoid_: Dry run, manual mode
 
 **Intake comment**:
-The attributed comment entail posts on an issue each time it decides the ticket, in two sections: a vision check, then what happens next. That is the criteria and the label `entail:cleared`, what an investigation must establish and the label `entail:investigate`, or that the ticket was raised to the owner.
+The attributed comment entail posts on an issue each time it decides the ticket, except after a re-check that changes nothing it would say, in two sections: a vision check, then what happens next. That is the criteria and the label `entail:cleared`, what an investigation must establish and the label `entail:investigate`, or that the ticket was raised to the owner.
 _Avoid_: Triage comment, criteria comment
 
 **Vision check**:
