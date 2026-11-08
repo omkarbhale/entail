@@ -39,6 +39,8 @@ export type RefusalReason =
   | "host-unreachable"
   | "project-unreadable"
   | "already-enrolled"
+  /** The repo was enrolled before, and unenrolled, under another account, which its records name as the owner. */
+  | "another-owner"
   | "cannot-label-and-comment"
   | "gitlab-too-old"
   | "no-vision"
@@ -201,9 +203,12 @@ export class Enroller {
     } catch (error) {
       return refuseRead(error);
     }
-    if (this.#store.findRepo({ forge: setting.forge, host: setting.host, projectId: project.id })) {
+    const earlier = this.#store.findRepo({ forge: setting.forge, host: setting.host, projectId: project.id });
+    if (earlier !== null && this.#store.isEnrolled(earlier.id)) {
       return refuse("already-enrolled", `${where} is already enrolled.`);
     }
+    const otherOwner = earlier === null ? null : anotherOwner(earlier, owner, CLI[setting.forge]);
+    if (otherOwner !== null) return refuseAll([otherOwner]);
 
     const refusals: Refusal[] = [];
     const warnings: string[] = [];
@@ -354,9 +359,10 @@ export class Enroller {
     let recorded: ReturnType<Store["enroll"]>;
     try {
       recorded = this.#store.transaction(() => {
-        if (this.#store.findRepo({ forge: setting.forge, host: setting.host, projectId: project.id })) {
-          throw new AlreadyEnrolled();
-        }
+        const earlier = this.#store.findRepo({ forge: setting.forge, host: setting.host, projectId: project.id });
+        if (earlier !== null && this.#store.isEnrolled(earlier.id)) throw new AlreadyEnrolled();
+        const otherOwner = earlier === null ? null : anotherOwner(earlier, owner, CLI[setting.forge]);
+        if (otherOwner !== null) throw new AnotherOwner(otherOwner);
         return this.#store.enroll({
           repo: {
             forge: setting.forge,
@@ -379,6 +385,7 @@ export class Enroller {
       if (error instanceof AlreadyEnrolled) {
         return { ok: false, refusals: [{ reason: "already-enrolled", message: `${where} is already enrolled.` }] };
       }
+      if (error instanceof AnotherOwner) return { ok: false, refusals: [error.refusal] };
       throw error;
     }
     this.#log?.info("repo-enrolled", {
@@ -403,6 +410,30 @@ export class Enroller {
 }
 
 class AlreadyEnrolled extends Error {}
+
+class AnotherOwner extends Error {
+  readonly refusal: Refusal;
+  constructor(refusal: Refusal) {
+    super(refusal.message);
+    this.refusal = refusal;
+  }
+}
+
+/**
+ * Why a repo unenrolled earlier cannot be enrolled again by `owner`, or null
+ * when it can. Enrolling again keeps the repo's record, keyed on its project
+ * id, and that record names the owner whose new issues enter on their own; so
+ * the logged-in account must be that owner (ADR-0018).
+ */
+function anotherOwner(earlier: RepoRecord, owner: Actor, cli: string): Refusal | null {
+  if (owner.id === earlier.ownerAccountId) return null;
+  return {
+    reason: "another-owner",
+    message:
+      `${earlier.path} on ${earlier.host} was enrolled before with the account ${earlier.ownerLogin}, which its records name as the owner. ` +
+      `Log \`${cli}\` in to ${earlier.host} as ${earlier.ownerLogin}, then enroll again.`,
+  };
+}
 
 /** Reads the stated forge, host and path, or says what is wrong with them. */
 export function parseStatedForge(stated: StatedForge): ForgeSetting | string {

@@ -59,6 +59,12 @@ export interface BoardPageOptions {
    * that host's items. No host is halted unless this says so.
    */
   hostHalted?: (host: string) => boolean;
+  /**
+   * Whether entail is still catching up with a repo resumed after a pause,
+   * which keeps its items locked (ADR-0018). No repo is catching up unless
+   * this says so.
+   */
+  catchingUp?: (repoId: number) => boolean;
   /** The clock: how long ago items were raised, and when today began. */
   now?: () => Date;
   /** Called once an answer is recorded, so the records repo commits after every answer (spec §3). */
@@ -68,8 +74,12 @@ export interface BoardPageOptions {
 /** How an item on the board stands. */
 export type BoardItemStatus = "open" | "answered" | "withdrawn";
 
-/** Why an open item's form is locked: its repo is paused, or entail cannot reach its host (spec §13 "Locked items"). */
-export type ItemLock = { kind: "paused" } | { kind: "halted"; host: string };
+/**
+ * Why an open item's form is locked: its repo is paused, or was resumed and
+ * entail has not caught up with it yet, or entail cannot reach its host (spec
+ * §13 "Locked items", ADR-0018).
+ */
+export type ItemLock = { kind: "paused" } | { kind: "catching-up" } | { kind: "halted"; host: string };
 
 /** One item as the board shows it. */
 export interface BoardEntry {
@@ -164,13 +174,16 @@ function postedFor(calls: readonly CallRecord[], answerId: number): string | nul
 /** Why an item's form is locked, in the words a refused answer gives. */
 function lockText(lock: ItemLock | null): string | null {
   if (lock === null) return null;
-  return lock.kind === "paused" ? "this repo is paused." : `entail cannot reach ${lock.host}.`;
+  if (lock.kind === "paused") return "this repo is paused.";
+  if (lock.kind === "catching-up") return "entail is catching up with this repo after its pause.";
+  return `entail cannot reach ${lock.host}.`;
 }
 
 /** Whether an open item's form is locked, and why. */
 function lockOf(options: BoardPageOptions, repo: RepoRecord | null): ItemLock | null {
   if (repo === null) return null;
   if (readRepoSettings(options.store, repo.id)?.settings.paused === true) return { kind: "paused" };
+  if (options.catchingUp?.(repo.id) === true) return { kind: "catching-up" };
   if (options.hostHalted?.(repo.host) === true) return { kind: "halted", host: repo.host };
   return null;
 }
@@ -616,6 +629,14 @@ function renderItemState(e: BoardEntry, nextId: number | null): string {
       true,
       `<strong>This item is locked: this repo is paused.</strong>
 <p>Its form unlocks once the repo is resumed and entail has caught up with it.</p>`,
+    );
+  }
+  if (e.lock?.kind === "catching-up") {
+    return stateBox(
+      "catching-up",
+      true,
+      `<strong>This item is locked: entail is catching up with this repo after its pause.</strong>
+<p>Its form unlocks once entail has handled what changed during the pause. If that changed this item's basis, it is withdrawn instead.</p>`,
     );
   }
   if (e.lock?.kind === "halted") {

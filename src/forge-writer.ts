@@ -8,6 +8,7 @@ import {
   type MergeOutcome,
   type PostedComment,
 } from "./forge/forge.ts";
+import { isUnenrollLabel } from "./repo-switches.ts";
 import type { ForgeWriteIntentRecord, ForgeWriteKind, RepoRecord, Store } from "./store.ts";
 
 /**
@@ -166,7 +167,7 @@ export class ForgeWriter {
   }
 
   #track<T>(write: Promise<T>): Promise<T> {
-    return this.#inFlight ? this.#inFlight.track(write) : write;
+    return this.#inFlight ? this.#inFlight.track(write, this.#repo.id) : write;
   }
 
   async #label(write: WriteFor, issueNumber: number, payload: LabelPayload): Promise<void> {
@@ -190,6 +191,10 @@ export class ForgeWriter {
     payload: CommentPayload | LabelPayload | ClosePayload | MergePayload,
   ): { intent: ForgeWriteIntentRecord; resumed: boolean } {
     return this.#store.transaction(() => {
+      // An unenrolled repo is written to no more: only the label removals its unenroll recorded go out (ADR-0018).
+      if (!this.#store.isEnrolled(this.#repo.id) && !(kind === "label" && write.callId != null && this.#store.getCall(write.callId)?.kind === "unenroll-cancel")) {
+        throw new RepoUnenrolledError(this.#repo);
+      }
       const pending = this.#store
         .unconfirmedForgeWrites()
         .filter((i) => i.repoId === this.#repo.id && i.kind === kind && i.target === target && i.number === number);
@@ -225,6 +230,14 @@ export class ForgeWriter {
   }
 }
 
+/** A write asked for in a repo the owner has unenrolled, which entail no longer writes to (ADR-0018). */
+export class RepoUnenrolledError extends Error {
+  constructor(repo: RepoRecord) {
+    super(`${repo.path} on ${repo.host} is unenrolled, so entail writes nothing there`);
+    this.name = "RepoUnenrolledError";
+  }
+}
+
 /**
  * The forge writes in flight across entail. Stopping waits for them to
  * confirm, up to a limit; any left unconfirmed are settled on the next start
@@ -232,20 +245,34 @@ export class ForgeWriter {
  */
 export class InFlightWrites {
   readonly #pending = new Set<Promise<unknown>>();
+  /** How many writes each repo has in flight, so pausing it can wait for them (ADR-0018). */
+  readonly #byRepo = new Map<number, number>();
 
   /** How many writes are in flight now. */
   get count(): number {
     return this.#pending.size;
   }
 
+  /** How many writes in the repo are in flight now. */
+  countFor(repoId: number): number {
+    return this.#byRepo.get(repoId) ?? 0;
+  }
+
   /** Counts `write` as in flight until it settles, and returns it. */
-  track<T>(write: Promise<T>): Promise<T> {
+  track<T>(write: Promise<T>, repoId?: number): Promise<T> {
     const settled = write.then(
       () => undefined,
       () => undefined,
     );
     this.#pending.add(settled);
-    void settled.then(() => this.#pending.delete(settled));
+    if (repoId !== undefined) this.#byRepo.set(repoId, this.countFor(repoId) + 1);
+    void settled.then(() => {
+      this.#pending.delete(settled);
+      if (repoId === undefined) return;
+      const left = this.countFor(repoId) - 1;
+      if (left > 0) this.#byRepo.set(repoId, left);
+      else this.#byRepo.delete(repoId);
+    });
     return write;
   }
 
@@ -284,7 +311,9 @@ export type SettledWrite =
  *
  * A repo whose forge is not given (its host is halted) keeps its intents for a
  * later start. After a write in a repo fails to settle, that repo's later
- * writes wait too, so they are never applied out of order.
+ * writes wait too, so they are never applied out of order. In an unenrolled
+ * repo only the label removals its unenroll recorded are settled; any other
+ * write left unconfirmed there is never sent (ADR-0018).
  */
 export async function settleUnconfirmedWrites(
   store: Store,
@@ -295,6 +324,7 @@ export async function settleUnconfirmedWrites(
   const forges = new Map<number, Forge | null>();
   for (const intent of store.unconfirmedForgeWrites()) {
     if (stopped.has(intent.repoId)) continue;
+    if (!store.isEnrolled(intent.repoId) && !isUnenrollLabel(store, intent)) continue;
     if (!forges.has(intent.repoId)) {
       const repo = store.getRepo(intent.repoId);
       forges.set(intent.repoId, repo ? forgeFor(repo) : null);

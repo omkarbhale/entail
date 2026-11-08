@@ -102,6 +102,18 @@ function populatedStore(dir: string): Store {
   store.recordVisionLineOrigin({ repoId: repo.id, line: "Colours are fine.", origin: "agent-proposed-owner-approved", commitSha: "b".repeat(40), source: "trailer" });
   store.recordVisionChange({ repoId: repo.id, commitSha: "b".repeat(40), blobSha: "c".repeat(40), previousBlobSha: "d".repeat(40), removed: [], added: ["Colours are fine."] });
   store.recordFreshStart({ repoId: repo.id, confirmedBy: "Ada", markedIssueNumbers: [4, 3] });
+
+  // A second repo, unenrolled.
+  const ended = store.enroll({
+    repo: { forge: "gitlab", host: "gitlab.com", projectId: 77, path: "acme/old", ownerAccountId: 1001, ownerLogin: "ada" },
+    settings: { pins: [] },
+    savedBy: "Ada",
+    visionSha: VISION_SHA,
+    visionLines: ["tally never reaches the network."],
+    visionOrigin: "owner-stated",
+    openIssueNumbers: [],
+  }).repo;
+  store.recordUnenrollment({ repoId: ended.id, unenrolledBy: "Ada" });
   return store;
 }
 

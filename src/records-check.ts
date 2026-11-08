@@ -2,6 +2,7 @@ import { markedTickets } from "./comment-rules.ts";
 import { sameActor, type Change, type Forge } from "./forge/forge.ts";
 import { repoOwner } from "./intake.ts";
 import type { OperationalLog } from "./operational-log.ts";
+import { readRepoSettings } from "./repo-settings.ts";
 import type { FreshStartRecord, RepoRecord, Store } from "./store.ts";
 
 /**
@@ -155,8 +156,11 @@ export class RecordsCheck {
 /**
  * Runs the check for every enrolled repo, side by side, as entail starts. A
  * repo whose check fails stays unchecked, and its pass checks it again; the
- * failure is logged by the check, so nothing here throws.
+ * failure is logged by the check, so nothing here throws. An unenrolled repo
+ * is never read, and a paused one is checked by its first pass after it is
+ * resumed (ADR-0018).
  */
 export async function checkEveryRepo(store: Store, check: RecordsCheck): Promise<void> {
-  await Promise.all(store.listRepos().map((repo) => check.check(repo).catch(() => undefined)));
+  const repos = store.listEnrolledRepos().filter((repo) => readRepoSettings(store, repo.id)?.settings.paused !== true);
+  await Promise.all(repos.map((repo) => check.check(repo).catch(() => undefined)));
 }

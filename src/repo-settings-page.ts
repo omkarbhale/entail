@@ -22,6 +22,7 @@ import {
   type RepoSettingsForm,
 } from "./repo-settings.ts";
 import { ORIGIN_LABELS, REPOS_PATH } from "./repos-page.ts";
+import { pauseForm, unenrollLink } from "./repo-switches-page.ts";
 import { TOKEN_FIELD, type FormRequest, type Page, type PageRequest, type Reply } from "./server.ts";
 import type { RepoRecord, SettingsVersionRecord, Store } from "./store.ts";
 
@@ -46,7 +47,9 @@ const CHECK_KIND_LABELS: Readonly<Record<MechanicalCheckKind, string>> = {
  * forge and the origin of its VISION.md, fixed at enrollment, and edits every
  * other per-repo setting but the pause: generic criteria, the merge method on
  * GitHub, shadow, who counts and its executors, and pins beyond the built-in
- * VISION.md pin.
+ * VISION.md pin. The pause switch and the way to unenroll sit beside the form
+ * (src/repo-switches-page.ts). An unenrolled repo's settings stay readable,
+ * with no form: its records are read-only.
  *
  * Every save is a new settings version with its time and the owner's name,
  * listed in the repo's settings history. A save is not a call and changes no
@@ -67,6 +70,7 @@ export function repoSettingsPage(options: RepoSettingsPageOptions): Page {
       if (current === null) return noSettings(request, repo);
       const asked = request.url.searchParams.get("version");
       if (asked !== null) return versionView(request, store, repo, asked);
+      if (!store.isEnrolled(repo.id)) return unenrolledView(request, store, repo, current.version);
       const saved = Number(request.url.searchParams.get("saved"));
       const notice =
         Number.isSafeInteger(saved) && saved > 0 && saved === current.version.version
@@ -81,6 +85,7 @@ export function repoSettingsPage(options: RepoSettingsPageOptions): Page {
       if (repo === null) return noSuchRepo(request);
       const current = readRepoSettings(store, repo.id);
       if (current === null) return noSettings(request, repo);
+      if (!store.isEnrolled(repo.id)) return unenrolledView(request, store, repo, current.version, 409);
       const typed = readRepoSettingsForm(request.form);
       const refuse = (errors: RepoSettingsErrors, status: number, form = typed, version = current.version) =>
         settingsView(request, options, repo, version, form, errors, "", status);
@@ -226,7 +231,7 @@ ${refused}
 <dt>Path</dt><dd>${escapeHtml(repo.path)}</dd>
 <dt>Project id</dt><dd>${repo.projectId}</dd>
 <dt>Owner on this host</dt><dd>${escapeHtml(repo.ownerLogin)} <span class="muted">(account ${repo.ownerAccountId})</span></dd>
-<dt>Enrolled</dt><dd>${timeHtml(repo.enrolledAt)}</dd>
+<dt>Enrolled</dt><dd>${timeHtml(store.latestEnrollment(repo.id)?.enrolledAt ?? repo.enrolledAt)}</dd>
 <dt>Origin of the existing VISION.md</dt><dd>${escapeHtml(ORIGIN_LABELS[settings.visionOrigin] ?? settings.visionOrigin)}</dd>
 <dt>Paused</dt><dd>${settings.paused ? "yes" : "no"}</dd>
 </dl>
@@ -247,6 +252,14 @@ ${pinsSection(form, errors)}
 <p class="hint">Saving makes a new version with the time and your display name. A save is not a call and changes no past call. It takes effect from the next pass.</p>
 <button type="submit">Save settings</button>
 </form>
+<h2>Pause</h2>
+<p class="hint">${
+    settings.paused
+      ? "Paused: entail reads and writes nothing in this repo, and its board items are locked. Labels and ticket states are kept. On resume, entail catches up from where it stopped before the items unlock."
+      : "Pausing stops entail reading and writing in this repo once its running decider and landing runs finish and their writes are posted. Labels and ticket states are kept, and its board items stay, locked."
+  }</p>
+${pauseForm(request, repo, settings.paused, "settings")}
+<p class="hint">Or ${unenrollLink(repo, "unenroll this repo")}: entail first shows how many tickets are in flight.</p>
 ${historyTable(store, repo)}
 <p><a href="${REPOS_PATH}">Back to the repos</a></p>`;
   return { status, html: renderPage(request, { title: `${repo.path} settings`, body }) };
@@ -460,6 +473,19 @@ function repoOf(store: Store, asked: string | null): RepoRecord | null {
 function noSuchRepo(request: PageRequest): Reply {
   const body = `<h1>No such repo</h1>\n<p><a href="${REPOS_PATH}">Back to the repos</a></p>`;
   return { status: 404, html: renderPage(request, { title: "Repo settings", body }) };
+}
+
+/** An unenrolled repo's settings: readable, with no form, since its records are read-only (ADR-0018). */
+function unenrolledView(request: PageRequest, store: Store, repo: RepoRecord, inForce: SettingsVersionRecord, status = 200): Reply {
+  const unenrollment = store.latestUnenrollment(repo.id);
+  const body = `<h1>${escapeHtml(repo.path)} settings</h1>
+<p class="notice" role="status" data-unenrolled="${repo.id}">This repo was unenrolled${
+    unenrollment === null ? "" : ` ${timeHtml(unenrollment.unenrolledAt)} by ${escapeHtml(unenrollment.unenrolledBy)}`
+  }. entail reads and writes nothing there, and its records stay, read-only. Enroll it again on the <a href="${REPOS_PATH}">Repos page</a>.</p>
+<p class="muted">Last in force: version ${inForce.version}, saved ${timeHtml(inForce.savedAt)} by ${escapeHtml(inForce.savedBy)}.</p>
+${historyTable(store, repo)}
+<p><a href="${REPOS_PATH}">Back to the repos</a></p>`;
+  return { status, html: renderPage(request, { title: `${repo.path} settings`, body }) };
 }
 
 function noSettings(request: PageRequest, repo: RepoRecord): Reply {
