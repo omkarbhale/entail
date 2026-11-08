@@ -52,6 +52,8 @@ Options:
   --owner-name <name>           The display name entail answers and comments as (default: your forge login)
   --poll-interval <seconds>     entail's poll interval (default: 15)
   --model-run-limit <n>         entail's limit on model runs at once (default: 3)
+  --executor-interval <seconds> Seconds between the scripted executor's passes (default: 60; each
+                                pass reads every open PR, and the forge's API budget is per account)
   --max-minutes <n>             Time limit for one run (default: 180)
   --restart-after <minutes>     Restart entail by then even if no ticket is landing yet (default: 30)
   --recheck <dir>               Run the pass checks again on the evidence saved in <dir>, without running
@@ -72,6 +74,7 @@ const options = {
   "owner-name": { type: "string" },
   "poll-interval": { type: "string", default: "15" },
   "model-run-limit": { type: "string", default: "3" },
+  "executor-interval": { type: "string", default: "60" },
   "max-minutes": { type: "string", default: "180" },
   "restart-after": { type: "string", default: "30" },
   recheck: { type: "string" },
@@ -211,7 +214,7 @@ async function acceptanceRun(ctx: RunContext): Promise<{ evidence: RunEvidence; 
     });
     const driver = new BoardDriver({ boardUrl: `${entail.origin}/`, forges: [forge], log });
     const playing = Promise.all([
-      every(15, stop.signal, log, "executor", () => executor.pass()),
+      every(Number(values["executor-interval"]), stop.signal, log, "executor", () => executor.pass()),
       every(5, stop.signal, log, "board-driver", () => driver.pass()),
     ]);
 
