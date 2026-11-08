@@ -1,4 +1,4 @@
-import { GitLabForge } from "../../src/forge/gitlab.ts";
+import { GitLabForge, REQUIRED_PIPELINE } from "../../src/forge/gitlab.ts";
 import { forgeContract } from "./contract.ts";
 import { loadRecording, type Recording } from "./recorded-transport.ts";
 
@@ -21,5 +21,7 @@ for (const [name, host] of [
     setting: { forge: "gitlab", host, path: "acme/tally" },
     recording: (scenario) => gitlabRecording(scenario, host),
     createForge: (setting, transport) => new GitLabForge(setting, transport),
+    // "Pipelines must succeed" is on, so the pipeline at the head is required.
+    required: (reported) => [{ name: REQUIRED_PIPELINE, reported }],
   });
 }

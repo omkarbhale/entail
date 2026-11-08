@@ -8,6 +8,11 @@ import {
   type CloseReason,
   ENTAIL_LABEL_COLOR,
   ENTAIL_LABEL_DESCRIPTION,
+  type Check,
+  type CheckReport,
+  type CheckStatus,
+  checksByName,
+  type CommitChecks,
   type Forge,
   type ForgeComment,
   type ForgeInstance,
@@ -24,6 +29,8 @@ import {
   type PostedComment,
   type Project,
   type PullRequestState,
+  type PullRequest,
+  type PullRequestComment,
   RateLimitedError,
 } from "./forge.ts";
 import { type ForgeMethod, type ForgeResponse, type Transport, TransportError } from "./transport.ts";
@@ -58,14 +65,50 @@ interface ListCursor {
 interface GitHubCursor {
   issues: ListCursor;
   comments: ListCursor;
+  pulls: ListCursor;
 }
+
+/** A commit sha as a path segment: hex only, so it can never reach another endpoint. */
+const SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+
+/**
+ * The PRs whose closing issue references name an issue, from GitHub's GraphQL
+ * API: REST has no closing references. Closed and merged PRs are included.
+ */
+const CLOSED_BY_QUERY = `query ($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    databaseId
+    defaultBranchRef { name }
+    issue(number: $number) {
+      closedByPullRequestsReferences(first: 100, after: $after, includeClosedPrs: true) {
+        nodes { number baseRefName repository { databaseId } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}`;
+
+/** The issues a PR's closing issue references name, from GitHub's GraphQL API. */
+const CLOSING_ISSUES_QUERY = `query ($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    databaseId
+    defaultBranchRef { name }
+    pullRequest(number: $number) {
+      baseRefName
+      closingIssuesReferences(first: 100, after: $after) {
+        nodes { number repository { databaseId } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}`;
 
 /**
  * The GitHub adapter of the {@link Forge} interface, read side.
  *
- * Change detection uses ETag-conditional reads of the repo's issues and issue
- * comments, newest update first, so any change alters the first page and an
- * unchanged list answers 304, which costs no rate limit (ADR-0015).
+ * Change detection uses ETag-conditional reads of the repo's issues, issue and
+ * PR comments, and PRs, newest update first, so any change alters the first
+ * page and an unchanged list answers 304, which costs no rate limit (ADR-0015).
  */
 export class GitHubForge implements Forge {
   readonly setting: ForgeSetting;
@@ -118,25 +161,254 @@ export class GitHubForge implements Forge {
   }
 
   async changesSince(cursor: ChangeCursor | null): Promise<ChangeBatch> {
-    const from = cursor === null ? { issues: EMPTY_LIST_CURSOR, comments: EMPTY_LIST_CURSOR } : parseCursor(cursor);
+    const from = cursor === null ? EMPTY_CURSOR : parseCursor(cursor);
     const issues = await this.#readList(`repos/${this.setting.path}/issues`, { state: "all" }, from.issues);
     const comments = await this.#readList(`repos/${this.setting.path}/issues/comments`, {}, from.comments);
+    const pulls = await this.#readPulls(from.pulls);
 
     const changes: Change[] = [];
     for (const raw of issues.items) {
-      // The issues list also carries pull requests; only issues are reported here.
+      // The issues list also carries pull requests, which the pulls list reports in full.
       if (isObject(raw) && "pull_request" in raw) continue;
       const issue = this.#issue(raw);
       changes.push({ kind: "issue", id: issue.id, updatedAt: issue.updatedAt, issue });
     }
     for (const raw of comments.items) {
-      // Comments on pull requests share this list; only comments on issues are reported here.
-      if (isObject(raw) && typeof raw.html_url === "string" && /\/pull\/\d+/.test(raw.html_url)) continue;
+      // Comments on a pull request's conversation share this list with comments on issues.
+      if (isObject(raw) && typeof raw.html_url === "string" && /\/pull\/\d+/.test(raw.html_url)) {
+        const comment = this.#pullRequestComment(raw);
+        changes.push({ kind: "pull-request-comment", id: comment.id, updatedAt: comment.updatedAt, comment });
+        continue;
+      }
       const comment = this.#comment(raw);
       changes.push({ kind: "issue-comment", id: comment.id, updatedAt: comment.updatedAt, comment });
     }
-    const next: GitHubCursor = { issues: issues.cursor, comments: comments.cursor };
+    for (const raw of pulls.items) {
+      const pullRequest = this.#pullRequest(raw);
+      changes.push({ kind: "pull-request", id: pullRequest.id, updatedAt: pullRequest.updatedAt, pullRequest });
+    }
+    const next: GitHubCursor = { issues: issues.cursor, comments: comments.cursor, pulls: pulls.cursor };
     return { changes, cursor: JSON.stringify(next) };
+  }
+
+  async pullRequest(number: number): Promise<PullRequest> {
+    return this.#pullRequest(await this.#getJson(`repos/${this.setting.path}/pulls/${pathNumber(number)}`));
+  }
+
+  /** The PR's conversation comments: GitHub keeps them as comments on the PR's issue. Review comments are not among them. */
+  async pullRequestComments(number: number): Promise<PullRequestComment[]> {
+    const path = `repos/${this.setting.path}/issues/${pathNumber(number)}/comments?per_page=${PAGE_SIZE}`;
+    const comments = await this.#readPages(path, (body) => body);
+    return comments.map((raw) => this.#pullRequestComment(raw));
+  }
+
+  async linkedPullRequests(issueNumber: number): Promise<PullRequest[]> {
+    const numbers: number[] = [];
+    let after: string | null = null;
+    for (;;) {
+      const repository = await this.#graphqlRepository(CLOSED_BY_QUERY, pathNumber(issueNumber), after);
+      const connection = graphqlField(graphqlField(repository, "issue"), "closedByPullRequestsReferences");
+      const defaultBranch = defaultBranchOf(repository);
+      for (const node of graphqlNodes(connection)) {
+        if (!isObject(node) || !isObject(node.repository) || node.repository.databaseId !== repository.databaseId) continue;
+        if (node.baseRefName !== defaultBranch || typeof node.number !== "number") continue;
+        if (!numbers.includes(node.number)) numbers.push(node.number);
+      }
+      after = nextGraphqlPage(connection);
+      if (after === null) break;
+    }
+    numbers.sort((a, b) => a - b);
+    const pullRequests: PullRequest[] = [];
+    for (const number of numbers) pullRequests.push(await this.pullRequest(number));
+    return pullRequests;
+  }
+
+  async linkedIssues(pullRequestNumber: number): Promise<number[]> {
+    const numbers: number[] = [];
+    let after: string | null = null;
+    for (;;) {
+      const repository = await this.#graphqlRepository(CLOSING_ISSUES_QUERY, pathNumber(pullRequestNumber), after);
+      const pull = graphqlField(repository, "pullRequest");
+      if (pull.baseRefName !== defaultBranchOf(repository)) return [];
+      const connection = graphqlField(pull, "closingIssuesReferences");
+      for (const node of graphqlNodes(connection)) {
+        if (!isObject(node) || !isObject(node.repository) || node.repository.databaseId !== repository.databaseId) continue;
+        if (typeof node.number === "number" && !numbers.includes(node.number)) numbers.push(node.number);
+      }
+      after = nextGraphqlPage(connection);
+      if (after === null) break;
+    }
+    return numbers.sort((a, b) => a - b);
+  }
+
+  /**
+   * Check runs and commit statuses at the sha together, with the checks the
+   * default branch's rules require: its rulesets and its branch protection.
+   * GitHub's checks belong to the commit, so the PR number is not needed.
+   */
+  async checks(_pullRequestNumber: number, sha: string, named: readonly string[]): Promise<CheckReport> {
+    const at = checkedSha(sha);
+    const { defaultBranch } = await this.project();
+    const required = await this.#requiredChecks(defaultBranch);
+    const reported = await this.#checksAt(at);
+    return {
+      sha,
+      checks: checksByName(reported, named),
+      required: required.map((name) => ({ name, reported: reported.some((check) => check.name === name) })),
+    };
+  }
+
+  async recentDefaultBranchChecks(commits: number): Promise<CommitChecks[]> {
+    const { defaultBranch } = await this.project();
+    const path = `repos/${this.setting.path}/commits?${new URLSearchParams({ sha: defaultBranch, per_page: String(pageCount(commits)) })}`;
+    const list = await this.#getJson(path);
+    if (!Array.isArray(list)) throw this.#malformed(200, path, "expected a list");
+    const recent: CommitChecks[] = [];
+    for (const commit of list.slice(0, commits)) {
+      const sha = checkedSha(field(commit, "sha", "string", "commit"));
+      recent.push({ sha, checks: checksByName(await this.#checksAt(sha)) });
+    }
+    return recent;
+  }
+
+  /** The check names the branch's rulesets and branch protection require, each once. */
+  async #requiredChecks(branch: string): Promise<string[]> {
+    const required: string[] = [];
+    const add = (name: unknown) => {
+      if (typeof name === "string" && !required.includes(name)) required.push(name);
+    };
+    const ref = branchSegment(branch);
+
+    const protection = await this.#getJson(`repos/${this.setting.path}/branches/${ref}`);
+    const statusChecks = isObject(protection) && isObject(protection.protection) ? protection.protection.required_status_checks : undefined;
+    if (isObject(statusChecks)) {
+      for (const context of Array.isArray(statusChecks.contexts) ? statusChecks.contexts : []) add(context);
+      for (const check of Array.isArray(statusChecks.checks) ? statusChecks.checks : []) add(isObject(check) ? check.context : undefined);
+    }
+
+    const rules = await this.#readPages(`repos/${this.setting.path}/rules/branches/${ref}?per_page=${PAGE_SIZE}`, (body) => body);
+    for (const rule of rules) {
+      if (!isObject(rule) || rule.type !== "required_status_checks" || !isObject(rule.parameters)) continue;
+      const checks = rule.parameters.required_status_checks;
+      for (const check of Array.isArray(checks) ? checks : []) add(isObject(check) ? check.context : undefined);
+    }
+    return required;
+  }
+
+  /** Every check run and commit status at the sha, the latest of each. */
+  async #checksAt(sha: string): Promise<Check[]> {
+    const base = `repos/${this.setting.path}/commits/${sha}`;
+    const runs = await this.#readPages(`${base}/check-runs?filter=latest&per_page=${PAGE_SIZE}`, (body) =>
+      isObject(body) ? body.check_runs : undefined,
+    );
+    // The combined status holds only the latest status for each context.
+    const statuses = await this.#readPages(`${base}/status?per_page=${PAGE_SIZE}`, (body) => (isObject(body) ? body.statuses : undefined));
+
+    const checks: Check[] = [];
+    for (const run of runs) {
+      const where = "check run";
+      checks.push({
+        name: field(run, "name", "string", where),
+        status: checkRunStatus(field(run, "status", "string", where), isObject(run) ? run.conclusion : null),
+        reported: true,
+        url: isObject(run) && typeof run.html_url === "string" ? run.html_url : null,
+      });
+    }
+    for (const status of statuses) {
+      const where = "commit status";
+      checks.push({
+        name: field(status, "context", "string", where),
+        status: commitStatus(field(status, "state", "string", where)),
+        reported: true,
+        url: isObject(status) && typeof status.target_url === "string" && status.target_url !== "" ? status.target_url : null,
+      });
+    }
+    return checks;
+  }
+
+  /**
+   * Runs a GraphQL query about this repo and returns its `repository`. A
+   * GraphQL error is answered with HTTP 200, so the body is read for it.
+   */
+  async #graphqlRepository(query: string, number: number, after: string | null): Promise<Record<string, unknown>> {
+    const [owner, name] = this.setting.path.split("/");
+    const path = "graphql";
+    const body = { query, variables: { owner, name, number, after } };
+    let response: ForgeResponse;
+    try {
+      response = await this.#transport.request({ host: this.setting.host, method: "POST", path, body });
+    } catch (error) {
+      if (error instanceof TransportError && error.loggedOut) throw new ForgeLoggedOutError(this.setting.host, error.message);
+      throw error;
+    }
+    this.#ensureOk(response, path, "POST");
+    const parsed = parseJson(response, this.setting.host, path, "POST");
+    const errors = isObject(parsed) && Array.isArray(parsed.errors) ? parsed.errors : [];
+    if (errors.some((error) => isObject(error) && error.type === "RATE_LIMITED")) {
+      const reset = Number(response.headers["x-ratelimit-reset"]);
+      throw new RateLimitedError(
+        this.setting.host,
+        Number.isFinite(reset) && reset > 0 ? new Date(reset * 1000) : new Date(Date.now() + DEFAULT_RATE_LIMIT_WAIT_MS),
+      );
+    }
+    if (errors.length > 0) {
+      const messages = errors.map((error) => (isObject(error) && typeof error.message === "string" ? error.message : "unknown error"));
+      throw new ForgeRequestError(this.setting.host, response.status, "POST", path, messages.join("; "));
+    }
+    const data = isObject(parsed) ? parsed.data : undefined;
+    if (!isObject(data) || !isObject(data.repository)) throw this.#malformed(response.status, path, "no repository in the GraphQL data");
+    return data.repository;
+  }
+
+  /**
+   * Reads the PR list newest update first, conditionally on the cursor's
+   * ETag. The list takes no `since`, so pages are read only until a PR last
+   * updated before the cursor; its request never changes, so its ETag is kept.
+   */
+  async #readPulls(cursor: ListCursor): Promise<{ items: unknown[]; cursor: ListCursor }> {
+    const params = new URLSearchParams({ state: "all", sort: "updated", direction: "desc", per_page: String(PAGE_SIZE) });
+    const first = `repos/${this.setting.path}/pulls?${params}`;
+    const headers: Record<string, string> = cursor.etag === null ? {} : { "If-None-Match": cursor.etag };
+    const response = await this.#get(first, headers);
+    if (response.status === 304) return { items: [], cursor };
+
+    const since = cursor.since === null ? null : Date.parse(cursor.since);
+    const items: unknown[] = [];
+    let newest = since;
+    let page: ForgeResponse = response;
+    let path = first;
+    pages: for (;;) {
+      this.#ensureOk(page, path, "GET");
+      const body = parseJson(page, this.setting.host, path, "GET");
+      if (!Array.isArray(body)) throw this.#malformed(page.status, path, "expected a list");
+      for (const item of body) {
+        const updated = isObject(item) && typeof item.updated_at === "string" ? Date.parse(item.updated_at) : NaN;
+        if (since !== null && !Number.isNaN(updated) && updated < since) break pages;
+        items.push(item);
+        if (!Number.isNaN(updated) && (newest === null || updated > newest)) newest = updated;
+      }
+      const next = nextPagePath(page.headers.link);
+      if (next === null) break;
+      path = next;
+      page = await this.#get(path, {});
+    }
+    return { items, cursor: { since: newest === null ? null : githubTime(newest), etag: response.headers.etag ?? null } };
+  }
+
+  /** Every item of a paged read, following the `Link` header; `items` finds the list in each page's body. */
+  async #readPages(first: string, items: (body: unknown) => unknown): Promise<unknown[]> {
+    const all: unknown[] = [];
+    let path = first;
+    for (;;) {
+      const response = await this.#get(path, {});
+      this.#ensureOk(response, path, "GET");
+      const list = items(parseJson(response, this.setting.host, path, "GET"));
+      if (!Array.isArray(list)) throw this.#malformed(response.status, path, "expected a list");
+      all.push(...list);
+      const next = nextPagePath(response.headers.link);
+      if (next === null) return all;
+      path = next;
+    }
   }
 
   /**
@@ -399,24 +671,121 @@ export class GitHubForge implements Forge {
     };
   }
 
+  /** A PR from the pulls API. A list's PRs carry no mergeability, so theirs is null. */
+  #pullRequest(raw: unknown): PullRequest {
+    const where = "pull request";
+    const state = field(raw, "state", "string", where);
+    if (state !== "open" && state !== "closed") throw this.#malformed(200, where, `unknown state ${state}`);
+    const merged = isObject(raw) && (typeof raw.merged_at === "string" || raw.merged === true);
+    const head = isObject(raw) ? raw.head : undefined;
+    const base = isObject(raw) ? raw.base : undefined;
+    // `mergeable` is null while GitHub works it out; `mergeable_state` says what else stands in the way.
+    const mergeable = isObject(raw) && typeof raw.mergeable === "boolean" ? raw.mergeable : null;
+    const mergeableState = isObject(raw) && typeof raw.mergeable_state === "string" ? raw.mergeable_state : "unknown";
+    const known = mergeable !== null && mergeableState !== "unknown";
+    return {
+      id: field(raw, "id", "number", where),
+      number: field(raw, "number", "number", where),
+      title: field(raw, "title", "string", where),
+      body: isObject(raw) && typeof raw.body === "string" ? raw.body : "",
+      state: merged ? "merged" : state,
+      draft: isObject(raw) && raw.draft === true,
+      mergeable: known ? mergeable && MERGEABLE_STATES.has(mergeableState) : null,
+      conflicts: known ? mergeable === false || mergeableState === "dirty" : null,
+      headSha: field(head, "sha", "string", `${where} head`),
+      baseBranch: field(base, "ref", "string", `${where} base`),
+      author: this.#actor(isObject(raw) ? raw.user : undefined, `${where} user`),
+      createdAt: isoTime(field(raw, "created_at", "string", where)),
+      updatedAt: isoTime(field(raw, "updated_at", "string", where)),
+      url: field(raw, "html_url", "string", where),
+    };
+  }
+
+  /** A comment on a PR's conversation, which GitHub keeps as a comment on the PR's issue. */
+  #pullRequestComment(raw: unknown): PullRequestComment {
+    const { issueNumber, ...comment } = this.#comment(raw);
+    return { ...comment, pullRequestNumber: issueNumber };
+  }
+
   #malformed(status: number, where: string, detail: string): ForgeRequestError {
     return new ForgeRequestError(this.setting.host, status, "GET", where, `unexpected response: ${detail}`);
   }
 }
 
 const EMPTY_LIST_CURSOR: ListCursor = { since: null, etag: null };
+const EMPTY_CURSOR: GitHubCursor = { issues: EMPTY_LIST_CURSOR, comments: EMPTY_LIST_CURSOR, pulls: EMPTY_LIST_CURSOR };
 
 function parseCursor(cursor: ChangeCursor): GitHubCursor {
   let parsed: unknown;
   try {
     parsed = JSON.parse(cursor);
   } catch {
-    return { issues: EMPTY_LIST_CURSOR, comments: EMPTY_LIST_CURSOR };
+    return EMPTY_CURSOR;
   }
   if (isObject(parsed) && isListCursor(parsed.issues) && isListCursor(parsed.comments)) {
-    return { issues: parsed.issues, comments: parsed.comments };
+    // A cursor from before PRs were read starts their list afresh.
+    const pulls = isListCursor(parsed.pulls) ? parsed.pulls : EMPTY_LIST_CURSOR;
+    return { issues: parsed.issues, comments: parsed.comments, pulls };
   }
-  return { issues: EMPTY_LIST_CURSOR, comments: EMPTY_LIST_CURSOR };
+  return EMPTY_CURSOR;
+}
+
+/** The `mergeable_state`s under which GitHub would merge a PR now; `unstable` means only checks it does not require failed. */
+const MERGEABLE_STATES = new Set(["clean", "unstable", "has_hooks"]);
+
+/** A check run's status: neutral and skipped count as passed (ADR-0015). */
+function checkRunStatus(status: string, conclusion: unknown): CheckStatus {
+  if (status !== "completed") return "pending";
+  return conclusion === "success" || conclusion === "neutral" || conclusion === "skipped" ? "passed" : "failed";
+}
+
+/** A commit status's state: `error` and `failure` are both failed. */
+function commitStatus(state: string): CheckStatus {
+  if (state === "success") return "passed";
+  if (state === "pending") return "pending";
+  return "failed";
+}
+
+/** A sha checked before it goes into a path. */
+function checkedSha(sha: string): string {
+  if (!SHA.test(sha)) throw new Error(`not a commit sha: ${JSON.stringify(sha)}`);
+  return sha;
+}
+
+/** A PR or issue number checked before it goes into a path. */
+function pathNumber(number: number): number {
+  if (!Number.isSafeInteger(number) || number <= 0) throw new Error(`not an issue or PR number: ${number}`);
+  return number;
+}
+
+/** How many commits to ask for, within what one page holds. */
+function pageCount(commits: number): number {
+  if (!Number.isSafeInteger(commits) || commits <= 0) throw new Error(`not a number of commits: ${commits}`);
+  return Math.min(commits, PAGE_SIZE);
+}
+
+/** A branch name as path segments: each part encoded, its slashes kept. */
+function branchSegment(branch: string): string {
+  return branch.split("/").map(encodeURIComponent).join("/");
+}
+
+function graphqlField(raw: unknown, name: string): Record<string, unknown> {
+  const value = isObject(raw) ? raw[name] : undefined;
+  if (!isObject(value)) throw new ForgeRequestError(GITHUB_HOST, 200, "POST", "graphql", `unexpected response: no ${name}`);
+  return value;
+}
+
+function graphqlNodes(connection: Record<string, unknown>): unknown[] {
+  return Array.isArray(connection.nodes) ? connection.nodes : [];
+}
+
+function nextGraphqlPage(connection: Record<string, unknown>): string | null {
+  const info = connection.pageInfo;
+  return isObject(info) && info.hasNextPage === true && typeof info.endCursor === "string" ? info.endCursor : null;
+}
+
+function defaultBranchOf(repository: Record<string, unknown>): string {
+  return field(repository.defaultBranchRef, "name", "string", "repository default branch");
 }
 
 function isListCursor(value: unknown): value is ListCursor {

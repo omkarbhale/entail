@@ -7,6 +7,11 @@ import {
   type CloseReason,
   ENTAIL_LABEL_COLOR,
   ENTAIL_LABEL_DESCRIPTION,
+  type Check,
+  type CheckReport,
+  type CheckStatus,
+  checksByName,
+  type CommitChecks,
   type Forge,
   type ForgeComment,
   type ForgeInstance,
@@ -22,6 +27,8 @@ import {
   type PostedComment,
   type Project,
   type PullRequestState,
+  type PullRequest,
+  type PullRequestComment,
   RateLimitedError,
 } from "./forge.ts";
 import { type ForgeMethod, type ForgeRequest, type ForgeResponse, type Transport, TransportError } from "./transport.ts";
@@ -51,7 +58,18 @@ const PROJECT_PATH = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$/;
 interface GitLabCursor {
   /** The newest issue update time read so far; null until an issue was read. */
   since: string | null;
+  /** The newest merge request update time read so far; null until one was read. */
+  mergeRequestsSince: string | null;
 }
+
+/**
+ * What GitLab calls its pipeline when it is the one thing it requires before a
+ * merge, under "pipelines must succeed".
+ */
+export const REQUIRED_PIPELINE = "pipeline";
+
+/** The `detailed_merge_status`es under which GitLab has not finished working out mergeability. */
+const MERGE_STATUS_UNKNOWN = new Set(["unchecked", "checking", "preparing", "approvals_syncing"]);
 
 /**
  * The GitLab adapter of the {@link Forge} interface, read side, for gitlab.com
@@ -60,10 +78,10 @@ interface GitLabCursor {
  * (ADR-0015). It uses nothing above the Free/CE tier.
  *
  * GitLab has no conditional requests and no time filter on notes. Change
- * detection re-reads the issues updated within {@link CHANGE_OVERLAP_MS} before
- * the cursor, then pages each touched issue's notes newest first until it
- * reaches notes already seen, which are the ones last updated before that same
- * window.
+ * detection re-reads the issues and merge requests updated within
+ * {@link CHANGE_OVERLAP_MS} before the cursor, then pages each touched one's
+ * notes newest first until it reaches notes already seen, which are the ones
+ * last updated before that same window.
  */
 export class GitLabForge implements Forge {
   readonly setting: ForgeSetting;
@@ -98,8 +116,11 @@ export class GitLabForge implements Forge {
   }
 
   async project(): Promise<Project> {
+    return this.#project(await this.#getJson(this.#projectRef));
+  }
+
+  #project(project: unknown): Project {
     const path = this.#projectRef;
-    const project = await this.#getJson(path);
     return {
       forge: "gitlab",
       host: this.setting.host,
@@ -121,45 +142,168 @@ export class GitLabForge implements Forge {
 
   async changesSince(cursor: ChangeCursor | null): Promise<ChangeBatch> {
     const from = cursor === null ? EMPTY_CURSOR : parseCursor(cursor);
-    // Everything last updated before this was read on an earlier pass.
-    const seenBefore = from.since === null ? null : Date.parse(from.since) - CHANGE_OVERLAP_MS;
-
-    const params = new URLSearchParams({ order_by: "updated_at", sort: "desc", per_page: String(PAGE_SIZE) });
-    if (seenBefore !== null) params.set("updated_after", new Date(seenBefore).toISOString());
-    const rawIssues = await this.#readPages(`${this.#projectRef}/issues`, params, () => false);
-
     const changes: Change[] = [];
-    let newest = from.since === null ? null : Date.parse(from.since);
+
+    // Everything last updated before this was read on an earlier pass.
+    const issuesSeenBefore = seenBefore(from.since);
+    const rawIssues = await this.#readPages(`${this.#projectRef}/issues`, updatedAfter(issuesSeenBefore), () => false);
+    let issuesNewest = from.since === null ? null : Date.parse(from.since);
     for (const raw of rawIssues) {
       const issue = this.#issue(raw);
       changes.push({ kind: "issue", id: issue.id, updatedAt: issue.updatedAt, issue });
-      const updated = Date.parse(issue.updatedAt);
-      if (newest === null || updated > newest) newest = updated;
+      issuesNewest = newer(issuesNewest, issue.updatedAt);
 
       // An issue with no notes by people has none to report; system notes are not comments.
       if (isObject(raw) && raw.user_notes_count === 0) continue;
-      for (const note of await this.#notesSince(issue, seenBefore)) {
+      for (const raw of await this.#notesSince(`issues/${issue.number}`, issuesSeenBefore)) {
+        const note = this.#note(raw, issue);
         changes.push({ kind: "issue-comment", id: note.id, updatedAt: note.updatedAt, comment: note });
       }
     }
-    const next: GitLabCursor = { since: newest === null ? null : new Date(newest).toISOString() };
+
+    const mergeRequestsSeenBefore = seenBefore(from.mergeRequestsSince);
+    const rawMergeRequests = await this.#readPages(
+      `${this.#projectRef}/merge_requests`,
+      updatedAfter(mergeRequestsSeenBefore),
+      () => false,
+    );
+    let mergeRequestsNewest = from.mergeRequestsSince === null ? null : Date.parse(from.mergeRequestsSince);
+    for (const raw of rawMergeRequests) {
+      const pullRequest = this.#mergeRequest(raw, false);
+      changes.push({ kind: "pull-request", id: pullRequest.id, updatedAt: pullRequest.updatedAt, pullRequest });
+      mergeRequestsNewest = newer(mergeRequestsNewest, pullRequest.updatedAt);
+
+      if (isObject(raw) && raw.user_notes_count === 0) continue;
+      for (const raw of await this.#notesSince(`merge_requests/${pullRequest.number}`, mergeRequestsSeenBefore)) {
+        const comment = this.#mergeRequestNote(raw, pullRequest);
+        changes.push({ kind: "pull-request-comment", id: comment.id, updatedAt: comment.updatedAt, comment });
+      }
+    }
+
+    const next: GitLabCursor = { since: isoOrNull(issuesNewest), mergeRequestsSince: isoOrNull(mergeRequestsNewest) };
     return { changes, cursor: JSON.stringify(next) };
   }
 
+  async pullRequest(number: number): Promise<PullRequest> {
+    // Asking for a recheck keeps a merge status GitLab left unchecked from staying so.
+    const path = `${this.#projectRef}/merge_requests/${pathNumber(number)}?with_merge_status_recheck=true`;
+    return this.#mergeRequest(await this.#getJson(path), true);
+  }
+
+  /** Every note by people on the merge request, oldest first; system notes are not comments. */
+  async pullRequestComments(number: number): Promise<PullRequestComment[]> {
+    const path = `${this.#projectRef}/merge_requests/${pathNumber(number)}`;
+    // The notes API gives no web URL, so each note's is the merge request's, anchored at the note.
+    const url = this.#field(await this.#getJson(path), "web_url", "string", "merge request");
+    const params = new URLSearchParams({ order_by: "created_at", sort: "asc", per_page: String(PAGE_SIZE) });
+    const notes = await this.#readPages(`${path}/notes`, params, () => false);
+    return notes.filter((raw) => !(isObject(raw) && raw.system === true)).map((raw) => this.#mergeRequestNote(raw, { number, url }));
+  }
+
+  async linkedPullRequests(issueNumber: number): Promise<PullRequest[]> {
+    const project = await this.#getJson(this.#projectRef);
+    const { id, defaultBranch } = this.#project(project);
+    const params = new URLSearchParams({ per_page: String(PAGE_SIZE) });
+    const closing = await this.#readPages(`${this.#projectRef}/issues/${pathNumber(issueNumber)}/closed_by`, params, () => false);
+    const numbers: number[] = [];
+    for (const raw of closing) {
+      // A merge request in another project can close this issue too; it is not this repo's PR.
+      if (!isObject(raw) || raw.project_id !== id || raw.target_branch !== defaultBranch) continue;
+      const number = this.#field(raw, "iid", "number", "merge request");
+      if (!numbers.includes(number)) numbers.push(number);
+    }
+    numbers.sort((a, b) => a - b);
+    const pullRequests: PullRequest[] = [];
+    for (const number of numbers) pullRequests.push(await this.pullRequest(number));
+    return pullRequests;
+  }
+
+  async linkedIssues(pullRequestNumber: number): Promise<number[]> {
+    const { id, defaultBranch } = this.#project(await this.#getJson(this.#projectRef));
+    const number = pathNumber(pullRequestNumber);
+    const mergeRequest = await this.#getJson(`${this.#projectRef}/merge_requests/${number}`);
+    if (this.#field(mergeRequest, "target_branch", "string", "merge request") !== defaultBranch) return [];
+    const params = new URLSearchParams({ per_page: String(PAGE_SIZE) });
+    const issues = await this.#readPages(`${this.#projectRef}/merge_requests/${number}/closes_issues`, params, () => false);
+    const numbers: number[] = [];
+    for (const raw of issues) {
+      if (!isObject(raw) || raw.project_id !== id) continue;
+      const issue = this.#field(raw, "iid", "number", "issue");
+      if (!numbers.includes(issue)) numbers.push(issue);
+    }
+    return numbers.sort((a, b) => a - b);
+  }
+
   /**
-   * One issue's notes by people, newest update first, paging only until a
-   * note last updated before `seenBefore`: that note and every older one were
-   * read before. With no `seenBefore`, every note is read.
+   * The jobs of the pipeline GitLab attaches to the merge request's current
+   * head, used only when both the head and that pipeline are at `sha`: a
+   * pipeline for another sha says nothing about this one. The pipeline is
+   * required when the project's "pipelines must succeed" is on.
    */
-  async #notesSince(issue: Issue, seenBefore: number | null): Promise<IssueComment[]> {
+  async checks(pullRequestNumber: number, sha: string, named: readonly string[]): Promise<CheckReport> {
+    const project = await this.#getJson(this.#projectRef);
+    const pipelineRequired = isObject(project) && project.only_allow_merge_if_pipeline_succeeds === true;
+    const mergeRequest = await this.#getJson(`${this.#projectRef}/merge_requests/${pathNumber(pullRequestNumber)}`);
+    const pipeline = isObject(mergeRequest) ? mergeRequest.head_pipeline : undefined;
+    const atSha =
+      isObject(mergeRequest) && mergeRequest.sha === sha && isObject(pipeline) && pipeline.sha === sha
+        ? this.#field(pipeline, "id", "number", "merge request head pipeline")
+        : null;
+    const reported = atSha === null ? [] : await this.#jobs(atSha);
+    return {
+      sha,
+      checks: checksByName(reported, named),
+      required: pipelineRequired ? [{ name: REQUIRED_PIPELINE, reported: atSha !== null }] : [],
+    };
+  }
+
+  /** The jobs of the default branch's most recent pipelines, one pipeline per commit. */
+  async recentDefaultBranchChecks(commits: number): Promise<CommitChecks[]> {
+    const { defaultBranch } = await this.project();
+    const params = new URLSearchParams({ ref: defaultBranch, order_by: "id", sort: "desc", per_page: String(pageCount(commits)) });
+    const path = `${this.#projectRef}/pipelines?${params}`;
+    const pipelines = await this.#getJson(path);
+    if (!Array.isArray(pipelines)) throw this.#malformed(200, path, "expected a list");
+    const recent: CommitChecks[] = [];
+    for (const pipeline of pipelines) {
+      const sha = this.#field(pipeline, "sha", "string", "pipeline");
+      // A commit run more than once keeps its newest pipeline, which comes first.
+      if (recent.some((commit) => commit.sha === sha) || recent.length >= commits) continue;
+      recent.push({ sha, checks: checksByName(await this.#jobs(this.#field(pipeline, "id", "number", "pipeline"))) });
+    }
+    return recent;
+  }
+
+  /** A pipeline's jobs, without the retried ones, as checks. */
+  async #jobs(pipelineId: number): Promise<Check[]> {
+    const params = new URLSearchParams({ per_page: String(PAGE_SIZE) });
+    const jobs = await this.#readPages(`${this.#projectRef}/pipelines/${pathNumber(pipelineId)}/jobs`, params, () => false);
+    return jobs.map((job) => {
+      const where = "pipeline job";
+      return {
+        name: this.#field(job, "name", "string", where),
+        status: jobStatus(this.#field(job, "status", "string", where), isObject(job) && job.allow_failure === true),
+        reported: true,
+        url: isObject(job) && typeof job.web_url === "string" ? job.web_url : null,
+      };
+    });
+  }
+
+  /**
+   * The notes on an issue or merge request (`noteable`), newest update first,
+   * paging only until a note last updated before `seenBefore`: that note and
+   * every older one were read before. With no `seenBefore`, every note is
+   * read. System notes are left out; they are not comments.
+   */
+  async #notesSince(noteable: string, seenBefore: number | null): Promise<unknown[]> {
     const params = new URLSearchParams({ order_by: "updated_at", sort: "desc", per_page: String(PAGE_SIZE) });
     const seen = (raw: unknown): boolean => {
       if (seenBefore === null) return false;
       const updated = isObject(raw) && typeof raw.updated_at === "string" ? Date.parse(raw.updated_at) : NaN;
       return !Number.isNaN(updated) && updated < seenBefore;
     };
-    const notes = await this.#readPages(`${this.#projectRef}/issues/${issue.number}/notes`, params, seen);
-    return notes.filter((raw) => !(isObject(raw) && raw.system === true)).map((raw) => this.#note(raw, issue));
+    const notes = await this.#readPages(`${this.#projectRef}/${noteable}/notes`, params, seen);
+    return notes.filter((raw) => !(isObject(raw) && raw.system === true));
   }
 
   /**
@@ -376,6 +520,52 @@ export class GitLabForge implements Forge {
     };
   }
 
+  /**
+   * A merge request. Mergeability is reported only from a single read (`live`):
+   * a list's merge status can be stale, and GitHub's lists carry none.
+   */
+  #mergeRequest(raw: unknown, live: boolean): PullRequest {
+    const where = "merge request";
+    const state = this.#field(raw, "state", "string", where);
+    // `locked` is the moment GitLab is merging it, still open until it is merged.
+    if (state !== "opened" && state !== "locked" && state !== "closed" && state !== "merged") {
+      throw this.#malformed(200, where, `unknown state ${state}`);
+    }
+    const mergeStatus = isObject(raw) && typeof raw.detailed_merge_status === "string" ? raw.detailed_merge_status : "unchecked";
+    const known = live && !MERGE_STATUS_UNKNOWN.has(mergeStatus);
+    return {
+      id: this.#field(raw, "id", "number", where),
+      number: this.#field(raw, "iid", "number", where),
+      title: this.#field(raw, "title", "string", where),
+      body: isObject(raw) && typeof raw.description === "string" ? raw.description : "",
+      state: state === "opened" || state === "locked" ? "open" : state,
+      draft: isObject(raw) && (raw.draft === true || raw.work_in_progress === true),
+      mergeable: known ? mergeStatus === "mergeable" : null,
+      conflicts: known ? mergeStatus === "conflict" || (isObject(raw) && raw.has_conflicts === true) : null,
+      headSha: this.#field(raw, "sha", "string", where),
+      baseBranch: this.#field(raw, "target_branch", "string", where),
+      author: this.#actor(isObject(raw) ? raw.author : undefined, `${where} author`),
+      createdAt: isoTime(this.#field(raw, "created_at", "string", where)),
+      updatedAt: isoTime(this.#field(raw, "updated_at", "string", where)),
+      url: this.#field(raw, "web_url", "string", where),
+    };
+  }
+
+  /** A note on a merge request. The notes API gives no web URL, so it is the merge request's, anchored at the note. */
+  #mergeRequestNote(raw: unknown, mergeRequest: { number: number; url: string }): PullRequestComment {
+    const where = "merge request note";
+    const id = this.#field(raw, "id", "number", where);
+    return {
+      id,
+      pullRequestNumber: mergeRequest.number,
+      body: isObject(raw) && typeof raw.body === "string" ? raw.body : "",
+      author: this.#actor(isObject(raw) ? raw.author : undefined, `${where} author`),
+      createdAt: isoTime(this.#field(raw, "created_at", "string", where)),
+      updatedAt: isoTime(this.#field(raw, "updated_at", "string", where)),
+      url: `${mergeRequest.url}#note_${id}`,
+    };
+  }
+
   #field<K extends "string" | "number">(raw: unknown, name: string, type: K, where: string): K extends "string" ? string : number {
     const value = isObject(raw) ? raw[name] : undefined;
     if (typeof value !== type) throw this.#malformed(200, where, `${name} is not a ${type}`);
@@ -402,7 +592,7 @@ export function unsupportedGitLabVersion(version: string): string | null {
   return `GitLab ${version} is older than ${needMajor}.${needMinor}, the oldest version entail serves`;
 }
 
-const EMPTY_CURSOR: GitLabCursor = { since: null };
+const EMPTY_CURSOR: GitLabCursor = { since: null, mergeRequestsSince: null };
 
 function parseCursor(cursor: ChangeCursor): GitLabCursor {
   let parsed: unknown;
@@ -411,10 +601,66 @@ function parseCursor(cursor: ChangeCursor): GitLabCursor {
   } catch {
     return EMPTY_CURSOR;
   }
-  if (isObject(parsed) && typeof parsed.since === "string" && !Number.isNaN(Date.parse(parsed.since))) {
-    return { since: parsed.since };
+  if (!isObject(parsed)) return EMPTY_CURSOR;
+  return { since: validTime(parsed.since), mergeRequestsSince: validTime(parsed.mergeRequestsSince) };
+}
+
+function validTime(value: unknown): string | null {
+  return typeof value === "string" && !Number.isNaN(Date.parse(value)) ? value : null;
+}
+
+/** The time before which everything was read on an earlier pass, or null when nothing was. */
+function seenBefore(since: string | null): number | null {
+  return since === null ? null : Date.parse(since) - CHANGE_OVERLAP_MS;
+}
+
+/** A list read newest update first, from `seenBefore` on when there is one. */
+function updatedAfter(seenBefore: number | null): URLSearchParams {
+  const params = new URLSearchParams({ order_by: "updated_at", sort: "desc", per_page: String(PAGE_SIZE) });
+  if (seenBefore !== null) params.set("updated_after", new Date(seenBefore).toISOString());
+  return params;
+}
+
+function newer(newest: number | null, updatedAt: string): number {
+  const updated = Date.parse(updatedAt);
+  return newest === null || updated > newest ? updated : newest;
+}
+
+function isoOrNull(time: number | null): string | null {
+  return time === null ? null : new Date(time).toISOString();
+}
+
+/**
+ * A job's status as GitLab's own pipeline status counts it (ADR-0015): a job
+ * allowed to fail that failed or was cancelled does not fail the pipeline, and
+ * a manual job allowed to fail does not hold it up. Skipped counts as passed.
+ */
+function jobStatus(status: string, allowFailure: boolean): CheckStatus {
+  switch (status) {
+    case "success":
+    case "skipped":
+      return "passed";
+    case "failed":
+    case "canceled":
+      return allowFailure ? "passed" : "failed";
+    case "manual":
+      return allowFailure ? "passed" : "pending";
+    default:
+      // created, waiting_for_resource, preparing, pending, running, scheduled, canceling and any later state.
+      return "pending";
   }
-  return EMPTY_CURSOR;
+}
+
+/** A merge request, issue or pipeline number checked before it goes into a path. */
+function pathNumber(number: number): number {
+  if (!Number.isSafeInteger(number) || number <= 0) throw new Error(`not an issue, merge request or pipeline number: ${number}`);
+  return number;
+}
+
+/** How many commits to ask for, within what one page holds. */
+function pageCount(commits: number): number {
+  if (!Number.isSafeInteger(commits) || commits <= 0) throw new Error(`not a number of commits: ${commits}`);
+  return Math.min(commits, PAGE_SIZE);
 }
 
 /**

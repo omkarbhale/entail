@@ -3,7 +3,7 @@ import { readdirSync } from "node:fs";
 import { test, type TestContext } from "node:test";
 import { createForge } from "../../src/forge/create-forge.ts";
 import { ForgeLoggedOutError, ForgeRequestError, projectKey, RateLimitedError } from "../../src/forge/forge.ts";
-import { CHANGE_OVERLAP_MS, GitLabForge, unsupportedGitLabVersion } from "../../src/forge/gitlab.ts";
+import { CHANGE_OVERLAP_MS, GitLabForge, REQUIRED_PIPELINE, unsupportedGitLabVersion } from "../../src/forge/gitlab.ts";
 import { type Exchange, loadRecording, RecordedTransport } from "./recorded-transport.ts";
 
 const SELF_HOSTED = "gitlab.example.org";
@@ -12,6 +12,10 @@ const ORDER = "order_by=updated_at&sort=desc&per_page=100";
 const ISSUES = `projects/acme%2Ftally/issues?${ORDER}`;
 const notesOf = (iid: number) => `projects/acme%2Ftally/issues/${iid}/notes?${ORDER}`;
 const after = (time: string) => `${ISSUES}&updated_after=${encodeURIComponent(time)}`;
+const MERGE_REQUESTS = `projects/acme%2Ftally/merge_requests?${ORDER}`;
+const mergeRequestsAfter = (time: string) => `${MERGE_REQUESTS}&updated_after=${encodeURIComponent(time)}`;
+/** The merge request list read on a pass with no merge requests changed. */
+const NO_MERGE_REQUESTS: Exchange = { request: { method: "GET", path: MERGE_REQUESTS }, response: { status: 200, headers: { "X-Next-Page": "" }, body: [] } };
 
 function forgeOn(t: TestContext, exchanges: Exchange[]): { forge: GitLabForge; transport: RecordedTransport } {
   const transport = new RecordedTransport({ host: SELF_HOSTED, exchanges });
@@ -46,8 +50,11 @@ const list = (body: unknown[], nextPage = "") => ({ status: 200, headers: { "X-N
 
 test("change detection re-reads issues updated within an overlap window of at least two minutes before the cursor", async (t) => {
   assert.ok(CHANGE_OVERLAP_MS >= 2 * 60_000);
-  const cursor = JSON.stringify({ since: "2026-11-01T11:00:00.000Z" });
-  const { forge } = forgeOn(t, [{ request: { method: "GET", path: after("2026-11-01T10:58:00.000Z") }, response: list([]) }]);
+  const cursor = JSON.stringify({ since: "2026-11-01T11:00:00.000Z", mergeRequestsSince: "2026-11-01T12:00:00.000Z" });
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: after("2026-11-01T10:58:00.000Z") }, response: list([]) },
+    { request: { method: "GET", path: mergeRequestsAfter("2026-11-01T11:58:00.000Z") }, response: list([]) },
+  ]);
   const batch = await forge.changesSince(cursor);
   assert.deepEqual(batch, { changes: [], cursor }, "with nothing in the window, the cursor stays");
 });
@@ -66,6 +73,7 @@ test("an issue's notes are paged newest first until reaching notes already seen"
       // 7002 was edited inside the window, so it is read again; 7001 was seen, so paging stops there.
       response: list([note(7002, "2026-11-02T08:59:00.000Z"), note(7001, "2026-11-01T11:05:00.000Z")], "3"),
     },
+    NO_MERGE_REQUESTS,
   ]);
   const batch = await forge.changesSince(cursor);
   assert.deepEqual(
@@ -73,8 +81,12 @@ test("an issue's notes are paged newest first until reaching notes already seen"
     ["issue 9002", "issue-comment 7005", "issue-comment 7002"],
     "system notes are not comments, and seen notes are not read",
   );
-  assert.equal(transport.requests.length, 3, "page 3 is never asked for");
-  assert.deepEqual(JSON.parse(batch.cursor), { since: "2026-11-02T09:10:00.000Z" }, "the cursor moves to the newest issue update");
+  assert.equal(transport.requests.length, 4, "page 3 is never asked for");
+  assert.deepEqual(
+    JSON.parse(batch.cursor),
+    { since: "2026-11-02T09:10:00.000Z", mergeRequestsSince: null },
+    "the cursor moves to the newest issue update",
+  );
   const comment = batch.changes[1];
   assert.ok(comment?.kind === "issue-comment");
   assert.equal(comment.comment.issueNumber, 2);
@@ -87,6 +99,7 @@ test("with no cursor every issue and every page of notes is read, skipping issue
     { request: { method: "GET", path: `${ISSUES}&page=2` }, response: list([issue(1, "2026-11-01T10:00:00.000Z", 0)]) },
     { request: { method: "GET", path: notesOf(2) }, response: list([note(7002, "2026-11-01T11:00:00.000Z")], "2") },
     { request: { method: "GET", path: `${notesOf(2)}&page=2` }, response: list([note(7001, "2020-01-01T00:00:00.000Z")]) },
+    NO_MERGE_REQUESTS,
   ]);
   const batch = await forge.changesSince(null);
   assert.deepEqual(
@@ -104,6 +117,7 @@ test("issues map GitLab's states and either form of labels", async (t) => {
       request: { method: "GET", path: ISSUES },
       response: list([issue(4, "2026-11-01T10:00:00.000Z", 0, { state: "closed", labels: [{ id: 1, name: "entail:cleared" }, "bug"] })]),
     },
+    NO_MERGE_REQUESTS,
   ]);
   const [change] = (await forge.changesSince(null)).changes;
   assert.ok(change?.kind === "issue");
@@ -114,12 +128,12 @@ test("issues map GitLab's states and either form of labels", async (t) => {
 for (const [name, cursor] of [
   ["not JSON", "garbage{"],
   ["the wrong shape", JSON.stringify({ issues: 1 })],
-  ["a since that is not a time", JSON.stringify({ since: "nope" })],
+  ["a since that is not a time", JSON.stringify({ since: "nope", mergeRequestsSince: 7 })],
 ] as const) {
   test(`a cursor that is ${name} costs a full re-scan`, async (t) => {
-    const { forge } = forgeOn(t, [{ request: { method: "GET", path: ISSUES }, response: list([]) }]);
+    const { forge } = forgeOn(t, [{ request: { method: "GET", path: ISSUES }, response: list([]) }, NO_MERGE_REQUESTS]);
     const batch = await forge.changesSince(cursor);
-    assert.deepEqual(batch, { changes: [], cursor: JSON.stringify({ since: null }) });
+    assert.deepEqual(batch, { changes: [], cursor: JSON.stringify({ since: null, mergeRequestsSince: null }) });
   });
 }
 
@@ -217,9 +231,14 @@ const FREE_ENDPOINTS = [
   /^projects\/[^/?]+$/,
   /^projects\/[^/?]+\/issues\?/,
   /^projects\/[^/?]+\/issues\/\d+$/,
+  /^projects\/[^/?]+\/issues\/\d+\/closed_by\?/,
   /^projects\/[^/?]+\/(issues|merge_requests)\/\d+\/notes(\?|$)/,
   /^projects\/[^/?]+\/labels(\/[^/?]+)?$/,
-  /^projects\/[^/?]+\/merge_requests\/\d+(\/merge)?$/,
+  /^projects\/[^/?]+\/merge_requests\?/,
+  /^projects\/[^/?]+\/merge_requests\/\d+(\/merge|\?with_merge_status_recheck=true)?$/,
+  /^projects\/[^/?]+\/merge_requests\/\d+\/closes_issues\?/,
+  /^projects\/[^/?]+\/pipelines\?/,
+  /^projects\/[^/?]+\/pipelines\/\d+\/jobs\?/,
 ];
 
 test("every recorded GitLab request is a Free/CE endpoint", () => {
@@ -232,4 +251,152 @@ test("every recorded GitLab request is a Free/CE endpoint", () => {
       `${path} is a Free/CE endpoint`,
     );
   }
+});
+
+const SHA = "4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e";
+const PROJECT = "projects/acme%2Ftally";
+
+function mergeRequest(iid: number, extra: Record<string, unknown> = {}) {
+  return {
+    id: 8000 + iid,
+    iid,
+    project_id: 5001,
+    title: `Merge request ${iid}`,
+    description: null,
+    state: "opened",
+    draft: false,
+    sha: SHA,
+    target_branch: "main",
+    author: OWNER,
+    user_notes_count: 0,
+    detailed_merge_status: "mergeable",
+    has_conflicts: false,
+    created_at: "2026-11-02T09:00:00.000Z",
+    updated_at: "2026-11-02T09:00:00.000Z",
+    web_url: `https://${SELF_HOSTED}/acme/tally/-/merge_requests/${iid}`,
+    ...extra,
+  };
+}
+
+function job(name: string, status: string, allowFailure = false) {
+  return { id: name.length, name, status, allow_failure: allowFailure, web_url: `https://${SELF_HOSTED}/acme/tally/-/jobs/1` };
+}
+
+test("a job allowed to fail follows GitLab's pipeline status, and a blocking manual job holds the pipeline", async (t) => {
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: PROJECT }, response: { status: 200, body: { id: 5001, default_branch: "main" } } },
+    {
+      request: { method: "GET", path: `${PROJECT}/merge_requests/4` },
+      response: { status: 200, body: mergeRequest(4, { head_pipeline: { id: 61, sha: SHA, status: "manual" } }) },
+    },
+    {
+      request: { method: "GET", path: `${PROJECT}/pipelines/61/jobs?per_page=100` },
+      response: list([
+        job("optional-canceled", "canceled", true),
+        job("canceled", "canceled"),
+        job("optional-manual", "manual", true),
+        job("release", "manual"),
+        job("queued", "created"),
+        job("waiting", "waiting_for_resource"),
+        job("later", "scheduled"),
+      ]),
+    },
+  ]);
+  const report = await forge.checks(4, SHA, []);
+  assert.deepEqual(
+    report.checks.map((check) => `${check.name} ${check.status}`),
+    [
+      "canceled failed",
+      "later pending",
+      "optional-canceled passed",
+      "optional-manual passed",
+      "queued pending",
+      "release pending",
+      "waiting pending",
+    ],
+  );
+  assert.deepEqual(report.required, [], "with \"pipelines must succeed\" off, GitLab requires nothing");
+});
+
+test("a merge request with no pipeline has no checks, and the required pipeline has not reported", async (t) => {
+  const { forge } = forgeOn(t, [
+    {
+      request: { method: "GET", path: PROJECT },
+      response: { status: 200, body: { id: 5001, default_branch: "main", only_allow_merge_if_pipeline_succeeds: true } },
+    },
+    { request: { method: "GET", path: `${PROJECT}/merge_requests/4` }, response: { status: 200, body: mergeRequest(4, { head_pipeline: null }) } },
+  ]);
+  const report = await forge.checks(4, SHA, []);
+  assert.deepEqual(report, { sha: SHA, checks: [], required: [{ name: REQUIRED_PIPELINE, reported: false }] });
+});
+
+test("a merge request's mergeability is unknown while GitLab is still checking it, and a locked one is still open", async (t) => {
+  const { forge } = forgeOn(t, [
+    {
+      request: { method: "GET", path: `${PROJECT}/merge_requests/4?with_merge_status_recheck=true` },
+      response: { status: 200, body: mergeRequest(4, { detailed_merge_status: "checking", has_conflicts: false }) },
+    },
+    {
+      request: { method: "GET", path: `${PROJECT}/merge_requests/5?with_merge_status_recheck=true` },
+      response: { status: 200, body: mergeRequest(5, { state: "locked", detailed_merge_status: "ci_still_running" }) },
+    },
+    {
+      request: { method: "GET", path: `${PROJECT}/merge_requests/6?with_merge_status_recheck=true` },
+      response: { status: 200, body: mergeRequest(6, { detailed_merge_status: "need_rebase", has_conflicts: true }) },
+    },
+  ]);
+  const checking = await forge.pullRequest(4);
+  assert.deepEqual({ mergeable: checking.mergeable, conflicts: checking.conflicts }, { mergeable: null, conflicts: null });
+  const locked = await forge.pullRequest(5);
+  assert.deepEqual({ state: locked.state, mergeable: locked.mergeable }, { state: "open", mergeable: false });
+  const behind = await forge.pullRequest(6);
+  assert.deepEqual({ mergeable: behind.mergeable, conflicts: behind.conflicts }, { mergeable: false, conflicts: true });
+  assert.equal(behind.body, "", "a missing description reads as empty");
+});
+
+test("merge request notes are paged newest first until reaching notes already seen, and one with no notes by people is not read", async (t) => {
+  const cursor = JSON.stringify({ since: null, mergeRequestsSince: "2026-11-02T09:00:00.000Z" });
+  const notesOfMergeRequest = (iid: number) => `${PROJECT}/merge_requests/${iid}/notes?${ORDER}`;
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: ISSUES }, response: list([]) },
+    {
+      request: { method: "GET", path: mergeRequestsAfter("2026-11-02T08:58:00.000Z") },
+      response: list([mergeRequest(4, { user_notes_count: 2, updated_at: "2026-11-02T09:10:00.000Z" }), mergeRequest(5)]),
+    },
+    {
+      request: { method: "GET", path: notesOfMergeRequest(4) },
+      response: list([note(7005, "2026-11-02T09:10:00.000Z"), note(7004, "2026-11-02T09:05:00.000Z", true), note(7001, "2026-11-01T11:05:00.000Z")]),
+    },
+  ]);
+  const batch = await forge.changesSince(cursor);
+  assert.deepEqual(
+    batch.changes.map((c) => `${c.kind} ${c.id}`),
+    ["pull-request 8004", "pull-request-comment 7005", "pull-request 8005"],
+  );
+  const comment = batch.changes[1];
+  assert.ok(comment?.kind === "pull-request-comment");
+  assert.equal(comment.comment.url, `https://${SELF_HOSTED}/acme/tally/-/merge_requests/4#note_7005`);
+  assert.deepEqual(JSON.parse(batch.cursor), { since: null, mergeRequestsSince: "2026-11-02T09:10:00.000Z" });
+});
+
+test("a commit run more than once on the default branch keeps its newest pipeline", async (t) => {
+  const pipelines = `${PROJECT}/pipelines?ref=main&order_by=id&sort=desc&per_page=3`;
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: PROJECT }, response: { status: 200, body: { id: 5001, default_branch: "main" } } },
+    {
+      request: { method: "GET", path: pipelines },
+      response: list([
+        { id: 73, sha: SHA },
+        { id: 72, sha: SHA },
+        { id: 71, sha: "1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050" },
+      ]),
+    },
+    { request: { method: "GET", path: `${PROJECT}/pipelines/73/jobs?per_page=100` }, response: list([job("test", "success")]) },
+    { request: { method: "GET", path: `${PROJECT}/pipelines/71/jobs?per_page=100` }, response: list([job("test", "failed")]) },
+  ]);
+  const recent = await forge.recentDefaultBranchChecks(3);
+  assert.deepEqual(
+    recent.map((commit) => `${commit.sha.slice(0, 4)} ${commit.checks.map((c) => c.status).join()}`),
+    ["4f1c passed", "1c1c failed"],
+  );
 });
