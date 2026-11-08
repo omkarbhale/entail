@@ -16,6 +16,8 @@ While it runs, entail serves its pages on `http://127.0.0.1:7419/` (the board po
 
 Enroll a repo on the Repos page, `http://127.0.0.1:7419/repos`, once your display name is set. State its forge (`github` or `gitlab`), host and path. entail checks the repo through your own `gh` or `glab` login, and refuses it if the CLI is missing or logged out, the project cannot be read, your account cannot add labels and comment, GitLab is older than 15.6, or the default branch has no VISION.md or an empty one. You then confirm one review screen. Issues already open stay out of intake.
 
+Each enrolled repo has a settings page, linked from the Repos page: generic criteria, merge method (GitHub only), shadow, who counts (anyone, or you plus listed executors), and pins. Every save is a new settings version, listed in the repo's settings history, and takes effect from the next pass.
+
 ## Development
 
 ```sh
