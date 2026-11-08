@@ -75,6 +75,13 @@ A part of a criterion that entail computes from what the forge reports alone, wi
 **Generic criteria**:
 The checks every PR in a repo must pass, fixed once per repo.
 
+**Intake comment**:
+The attributed comment entail posts on an issue each time it decides the ticket, in two sections: a vision check, then what happens next. That is the criteria and the label `entail:cleared`, what an investigation must establish and the label `entail:investigate`, or that the ticket was raised to the owner.
+_Avoid_: Triage comment, criteria comment
+
+**Vision check**:
+The first section of an intake comment: each vision line that bears on the issue, quoted whole, marked as matched, contradicted or not settling it. Lines that do not bear on the issue are left out, and the check says so.
+
 ### Ticket states
 
 **Deciding**:
