@@ -1,5 +1,7 @@
 # The intake comment opens with a vision check, then says what happens next
 
+> **Amended by ADR-0016.** A re-check after a vision change posts a new intake comment only when it changes something an executor reads: the vision check's bearing lines or marks, the citation, the criteria version or the state.
+
 When entail decides a ticket, it posts one intake comment on the issue in two sections, under the attribution line ("Speaking from Omkar's entail:"). The owner chose this shape, modelled on how firstmate triages an issue: "First: it goes over the issue raised one by one over each vision statement to check if it matches. Then if it does: it lists the criteria it wants in the raised PR, then gives it the label that this issue can accept PR."
 
 1. **Vision check.** Each vision line that bears on the issue is quoted whole and word for word, with a permalink at the vision's commit, and marked as one of:
