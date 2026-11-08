@@ -19,7 +19,7 @@ A GitHub pull request or a GitLab merge request. entail may say "merge request" 
 _Avoid_: MR, merge request, pull request, change
 
 **Executor**:
-Whatever picks up a cleared issue and does its work, or picks up an issue marked for investigation and reports its findings, such as firstmate, a Claude Code action or a person; entail never executes.
+Whatever picks up a cleared issue and does its work, or picks up an issue marked for investigation and reports its findings, such as firstmate, a Claude Code action or a person. By default anyone can be one, and entail checks any PR that links a cleared issue, whoever opened it; a repo can instead count only the owner and the executors listed for it. entail never executes.
 
 ### Judging a ticket
 
@@ -51,7 +51,7 @@ The decider's answer to whether one ticket needs the owner: **settled**, **unopp
 The verdict that the vision of record settles the ticket: its cited passages choose one reading. It carries a citation.
 
 **Unopposed**:
-The verdict that no vision line settles the ticket, but none contradicts it, it touches no pin and its readings are not consequential, so it is cleared. entail keeps no list of change categories or high-stakes areas of its own: what matters for a project is said in its vision and pins. It carries why nothing opposes the ticket and, where readings differed, the one entail chose.
+The verdict that no vision line settles the ticket, but none contradicts it, it touches no pin and its readings are not consequential, so it is cleared. entail keeps no list of change categories or high-stakes areas of its own: what matters for a project is said in its vision and pins. With nothing to cite, it records "no contradiction found" in place of a citation, with why nothing opposes the ticket and, where readings differed, the one entail chose.
 _Avoid_: Small
 
 **Needs the owner**:
@@ -69,6 +69,14 @@ An independent second judgment that tries to overturn an automatic verdict by fi
 **Criteria**:
 What one ticket's PR must contain, written by entail because an issue carries no implementation idea: a few numbered outcomes, namely what is true once the issue is resolved and any vision constraint the change must respect. Each outcome is traced to its source (the issue, a vision line or the owner's answer) and may carry mechanical checks. They are published on the issue when the ticket is cleared and are frozen from then on; only a new version written by a new call changes them.
 _Avoid_: Acceptance criteria, requirements
+
+**Evidence**:
+An executor's report in a PR of what it ran or did for each criterion, and the result, entered under the criterion's id. It is taken as honest, and a criterion with no evidence is not met.
+_Avoid_: Validation report, proof
+
+**Findings**:
+An executor's report on an issue under investigation, answering each question the investigation had to establish by its id. Like all issue text, they are judged, never taken as the owner's word.
+_Avoid_: Investigation report, triage notes
 
 **Mechanical check**:
 A part of a criterion that entail computes from what the forge reports alone, with no model: the PR changes a path, leaves a path alone, or a named check passes.
@@ -130,7 +138,7 @@ One way to go ahead that a board item offers the owner, usually one of the ticke
 _Avoid_: Choice, alternative
 
 **Call**:
-One decision entail made itself about a ticket, recorded with its reason and, where the vision settled it, its citation. A board answer is not a call; the change it causes is a call that cites the answer.
+One decision entail made itself about a ticket, recorded with its reason and, where the vision settled it, its citation. An unopposed clear, where the vision is silent, records "no contradiction found" instead. A board answer is not a call; the change it causes is a call that cites the answer.
 _Avoid_: Event, action
 
 **Audit log**:

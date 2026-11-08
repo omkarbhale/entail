@@ -28,4 +28,4 @@ The vision check makes every judgment readable on the issue itself, including th
 - Each new decision on a ticket (after investigation findings, a board answer or a new criteria version) posts a new intake comment in the same shape, naming the one it replaces. entail's record stays the authority, and the comment is a copy (ADR-0005).
 - A declined ticket gets no vision check, because size is checked before any verdict. Its comment gives the reason. A close at intake rests on the repo's state, and its comment gives its evidence.
 - Quoted vision lines sit in a quote block, so no line of the comment starts with `/`.
-- The shape is part of the contract with executors, decided on [What is the contract between entail and any executor?](https://github.com/omkarbhale/entail/issues/30).
+- The shape is part of the contract with executors, decided on [What is the contract between entail and any executor?](https://github.com/omkarbhale/entail/issues/30) (ADR-0013). Section 2 ends with one fixed line telling any executor how to report evidence or findings.

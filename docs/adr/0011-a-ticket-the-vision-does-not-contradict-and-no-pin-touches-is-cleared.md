@@ -30,6 +30,7 @@ This replaces step 4 of the order decided on [How does the decider reach a verdi
 ## Consequences
 
 - **Verdict shape.** `category`, `why_small` and `why_reasonable` give way to `why_unopposed` and `reading_chosen`. `why_raised` loses "vision silent" and gains "consequential readings".
+- **No contradiction found.** An unopposed verdict relies on no vision passage, so it has nothing to cite. Its call records "no contradiction found" in place of a citation, beside the vision check's bearing lines, `why_unopposed` and the reading chosen. The intake comment says the same. VISION.md asks every "the vision settles this" to cite its passage; an unopposed clear does not claim the vision settles it.
 - **Mechanical checks** (ADR-0002) stay, minus the category check. An unopposed verdict must list the vision check's bearing lines with no line marked as contradicted, and must name no touched pin.
 - **The challenge** (ADR-0002) now looks for a vision line the ticket contradicts, a touched pin, a consequential reading the decider missed, or an uncited assumption behind a settled citation. It no longer looks for a high-stakes area. It runs on settled and unopposed verdicts.
 - **Criteria** (ADR-0005) no longer cite a small category. Where entail chose between readings, a criterion states the reading it chose. An unopposed ticket carries leaves-path fences for every pin's paths and for VISION.md, as a small ticket did.
