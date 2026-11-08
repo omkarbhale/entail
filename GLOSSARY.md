@@ -75,6 +75,13 @@ A part of a criterion that entail computes from what the forge reports alone, wi
 **Generic criteria**:
 The checks every PR in a repo must pass, fixed once per repo.
 
+**Intake comment**:
+The attributed comment entail posts on an issue each time it decides the ticket, in two sections: a vision check, then what happens next. That is the criteria and the label `entail:cleared`, what an investigation must establish and the label `entail:investigate`, or that the ticket was raised to the owner.
+_Avoid_: Triage comment, criteria comment
+
+**Vision check**:
+The first section of an intake comment: each vision line that bears on the issue, quoted whole, marked as matched, contradicted or not settling it. Lines that do not bear on the issue are left out, and the check says so.
+
 ### Ticket states
 
 **Deciding**:
@@ -109,6 +116,14 @@ Final: the owner's answer said not to go ahead; someone other than entail closed
 **Board item**:
 One product decision raised to the owner about one ticket, carrying what the ticket was, what happened and why it was raised. A ticket has at most one open board item at a time.
 _Avoid_: Question, card, escalation
+
+**Answer**:
+The owner's response to one board item, recorded under the name of whoever gave it. It settles that ticket only and is final once given. An answer that does not let the ticket go ahead is "don't go ahead", and the ticket is cancelled.
+_Avoid_: Ruling, decline, approval
+
+**Option**:
+One way to go ahead that a board item offers the owner, usually one of the ticket's readings with the outcome a user would observe. The owner may instead answer in their own words.
+_Avoid_: Choice, alternative
 
 **Call**:
 One decision entail made itself about a ticket, recorded with its reason and, where the vision settled it, its citation. A board answer is not a call; the change it causes is a call that cites the answer.
