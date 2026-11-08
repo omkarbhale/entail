@@ -211,48 +211,9 @@ const V = {
   serves: "It serves people who want quick counts in a terminal or a script.",
   net: "tally never reaches the network.",
   conf: "tally reads no configuration files; everything it does is set by its command-line flags.",
+  word: "A word is a run of characters between whitespace.",
 };
 const SEED = [
-  { id: "T5", repo: "omkar/tally", forge: "GitHub", issue: 5, raised: "2026-11-08 09:12", age: "3 h",
-    decision: "Should tally colour its counts, and if so when?",
-    whyKind: "silent", whyTag: "vision silent, not small",
-    why: "No vision line settles colour, and colour is something users would see, so it is not a small change.",
-    vision: [
-      { text: V.print, mark: "does not settle", cls: "silent", note: "Colour codes in piped output would break parsing, but colour in a terminal is not ruled out." },
-      { text: V.serves, mark: "does not settle", cls: "silent" },
-    ],
-    title: "Show the counts in colour", filedBy: "omkarbhale",
-    body: "It would be nice if the numbers were coloured, like ls does. Hard to read three plain numbers in a row.",
-    calls: [
-      ["09:12", "Raised to the owner. Desktop notice sent; issue comment links the board."],
-      ["09:12", "Challenge agreed: needs the owner."],
-      ["09:11", "Verdict: needs the owner. The vision is silent and the change is user-visible."],
-      ["09:10", "Size check: fits one PR."],
-      ["09:10", "Taken in: the owner's new issue in an enrolled repo."],
-    ],
-    options: [
-      { id: "tty", title: "Colour only in a terminal", outcome: "In a terminal the counts are coloured; piped into another tool the output stays plain." },
-      { id: "flag", title: "Colour only with a --color flag", outcome: "Output looks the same as today unless the user passes --color." },
-    ] },
-  { id: "T6", repo: "omkar/tally", forge: "GitHub", issue: 6, raised: "2026-11-08 09:20", age: "3 h",
-    decision: "What should tally print with --json?",
-    whyKind: "silent", whyTag: "two readings",
-    why: "Two defensible readings give different output, and no vision line chooses between them.",
-    vision: [
-      { text: V.print, mark: "does not settle", cls: "silent", note: "Both readings are parseable; only one keeps one line per input." },
-    ],
-    title: "Add a --json flag", filedBy: "omkarbhale",
-    body: "Add --json so scripts can read the counts without parsing columns.",
-    calls: [
-      ["09:20", "Raised to the owner. Desktop notice sent; issue comment links the board."],
-      ["09:19", "Verdict: needs the owner. Two readings, the vision chooses neither."],
-      ["09:18", "Size check: fits one PR."],
-      ["09:18", "Taken in: the owner's new issue in an enrolled repo."],
-    ],
-    options: [
-      { id: "lines", title: "One JSON object per input, one per line", outcome: "`tally --json a.txt b.txt` prints two lines, each a JSON object." },
-      { id: "array", title: "One JSON array for all inputs", outcome: "`tally --json a.txt b.txt` prints one JSON document listing both files." },
-    ] },
   { id: "T7", repo: "omkar/tally", forge: "GitHub", issue: 7, raised: "2026-11-08 10:02", age: "2 h",
     decision: "Should tally count the words of a web page, although the vision says it never reaches the network?",
     whyKind: "contra", whyTag: "contradicts a line",
@@ -293,7 +254,7 @@ const SEED = [
   { id: "T9", repo: "omkar/tally", forge: "GitLab", issue: 9, raised: "2026-11-08 11:30", age: "40 min",
     decision: "Go ahead with a readability rename inside src/format.js, which you pinned as “the output format”?",
     whyKind: "pin", whyTag: "pin: the output format",
-    why: "The change is small (a refactor with one reading), but it touches src/format.js, which is pinned as “the output format”. A touched pin always comes to you.",
+    why: "Nothing in the vision opposes the change, but it touches src/format.js, which is pinned as “the output format”. A touched pin always comes to you.",
     vision: [
       { text: V.print, mark: "matches", cls: "matches", note: "A rename leaves the output unchanged." },
     ],
@@ -301,12 +262,31 @@ const SEED = [
     body: "Names like `a`, `b2` and `tmp` in src/format.js are hard to follow.",
     calls: [
       ["11:30", "Raised to the owner. Desktop notice sent; issue comment links the board."],
-      ["11:29", "Verdict: needs the owner. Small, but touches the pin “the output format”."],
+      ["11:29", "Verdict: needs the owner. Touches the pin “the output format”."],
       ["11:28", "Size check: fits one PR."],
       ["11:28", "Taken in: the owner's new issue in an enrolled repo."],
     ],
     options: [
       { id: "asread", title: "Go ahead as read", outcome: "Only names change inside src/format.js; the printed output is byte-for-byte the same." },
+    ] },
+  { id: "T13", repo: "omkar/tally", forge: "GitLab", issue: 13, raised: "2026-11-08 11:45", age: "25 min",
+    decision: "Should a non-breaking space separate words?",
+    whyKind: "silent", whyTag: "consequential readings",
+    why: "The two readings give different counts, and the vision's definition of a word bears on that difference without choosing between them.",
+    vision: [
+      { text: V.word, mark: "does not settle", cls: "silent", note: "It does not say whether \u201cwhitespace\u201d includes a non-breaking space." },
+    ],
+    title: "Word counts differ from other tools on text with non-breaking spaces", filedBy: "omkarbhale",
+    body: "Pasting text from a web page gives a different word count than my editor shows. The text has non-breaking spaces in it.",
+    calls: [
+      ["11:45", "Raised to the owner. Desktop notice sent; issue comment links the board."],
+      ["11:44", "Verdict: needs the owner. Consequential readings of \u201cA word is a run of characters between whitespace.\u201d"],
+      ["11:43", "Size check: fits one PR."],
+      ["11:43", "Taken in: the owner's new issue in an enrolled repo."],
+    ],
+    options: [
+      { id: "unicode", title: "Any Unicode whitespace separates words", outcome: "\u201cnew\u00a0york\u201d with a non-breaking space counts as 2 words." },
+      { id: "ascii", title: "Only spaces, tabs and line breaks separate words", outcome: "\u201cnew\u00a0york\u201d counts as 1 word, as today; the help text says so." },
     ] },
 ];
 
@@ -317,7 +297,7 @@ const VARIANTS = { A: "Inbox: list and detail", B: "Focus: one at a time", C: "D
 const params = new URLSearchParams(location.search);
 let variant = VARIANTS[params.get("variant")] ? params.get("variant") : "A";
 let state = Board.initialState(SEED);
-let ui = { selected: "T5", drafts: {}, reviewing: null, flash: null, confirmStep: true, expanded: {}, lastAnswered: null };
+let ui = { selected: "T7", drafts: {}, reviewing: null, flash: null, confirmStep: true, expanded: {}, lastAnswered: null };
 let clock = 0;
 const nowStr = () => { clock += 1; return `2026-11-08 12:${String(10 + clock).padStart(2, "0")}`; };
 
@@ -511,10 +491,10 @@ function confirmAnswer(id) {
   state = r.state; ui.reviewing = null; ui.lastAnswered = id; render();
 }
 function simulate(kind) {
-  if (kind === "close") state = Board.withdraw(state, "T5", "The issue was closed on GitHub by someone else.", "The ticket is cancelled.");
+  if (kind === "close") state = Board.withdraw(state, "T13", "The issue was closed on GitHub by someone else.", "The ticket is cancelled.");
   if (kind === "vision") state = Board.withdraw(state, "T8", "VISION.md changed: the configuration line in this item's vision check was reworded.", "The ticket is being decided again; a new item comes back if it still needs you.");
   if (kind === "pin") state = Board.withdraw(state, "T9", "The pin “the output format” changed.", "The ticket is being decided again.");
-  if (kind === "reset") { state = Board.initialState(SEED); ui = { ...ui, selected: "T5", drafts: {}, reviewing: null, lastAnswered: null, expanded: {} }; }
+  if (kind === "reset") { state = Board.initialState(SEED); ui = { ...ui, selected: "T7", drafts: {}, reviewing: null, lastAnswered: null, expanded: {} }; }
   document.querySelector(".sim")?.classList.remove("open");
   render();
 }
@@ -540,7 +520,7 @@ function render() {
       <label><input type="checkbox" ${ui.confirmStep ? "checked" : ""} onchange="ui.confirmStep=this.checked;ui.reviewing=null;render()"> review step</label>
       <span class="simwrap"><button onclick="document.querySelector('.sim').classList.toggle('open')">simulate…</button>
         <div class="sim">
-          <button onclick="simulate('close')">Someone closes the colour issue (T5)</button>
+          <button onclick="simulate('close')">Someone closes the non-breaking-space issue (T13)</button>
           <button onclick="simulate('vision')">VISION.md rewords the config line (T8)</button>
           <button onclick="simulate('pin')">The output-format pin changes (T9)</button>
           <button onclick="simulate('reset')">Reset all items</button>
