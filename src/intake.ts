@@ -1,4 +1,4 @@
-import { sameActor, type Actor, type Forge, type ForgeComment, type Issue } from "./forge/forge.ts";
+import { sameActor, type Actor, type Forge, type ForgeComment, type Issue, type IssueComment } from "./forge/forge.ts";
 import type { EnrollmentRecord, RepoRecord, Store, TicketRecord } from "./store.ts";
 
 /**
@@ -70,6 +70,20 @@ export type RequestPart =
 export interface IntakeDetail {
   issue: { id: number; number: number; url: string; createdAt: string };
   request: RequestPart[];
+  /** The owner's `/entail` comment, when the issue was pulled in rather than entering on its own (ADR-0020). */
+  pulledInBy?: { commentId: number; url: string; createdAt: string };
+  /**
+   * The issue's ticket before this one, when it was pulled in again after that
+   * one ended, and the last intake comment that ticket posted, which this
+   * ticket's first intake comment names (ADR-0020).
+   */
+  predecessor?: { ticketId: number; state: string; lastIntakeComment: string | null };
+}
+
+/** How an issue was pulled in: the owner's `/entail` comment, and the issue's final ticket before, if any. */
+export interface PullIn {
+  comment: IssueComment;
+  predecessor: { ticket: TicketRecord; lastIntakeComment: string | null } | null;
 }
 
 export function requestText(issue: Issue, comments: readonly ForgeComment[]): RequestPart[] {
@@ -90,7 +104,8 @@ export function requestText(issue: Issue, comments: readonly ForgeComment[]): Re
  * Takes an issue in as a new ticket, deciding, and records the call that took
  * it in with the issue's text exactly as read, in one transaction: a crash
  * leaves either both or neither, and the store refuses a second ticket in
- * flight for the issue.
+ * flight for the issue. A ticket pulled in again links to its predecessor,
+ * which the store requires to be the issue's latest ticket.
  */
 export function recordIntake(
   store: Store,
@@ -98,17 +113,28 @@ export function recordIntake(
   issue: Issue,
   comments: readonly ForgeComment[],
   settingsVersionId: number | null,
+  pullIn: PullIn | null = null,
 ): TicketRecord {
   return store.transaction(() => {
-    const ticket = store.takeIn({ repoId: repo.id, issueNumber: issue.number });
+    const predecessor = pullIn?.predecessor ?? null;
+    const ticket = store.takeIn({ repoId: repo.id, issueNumber: issue.number, predecessorId: predecessor?.ticket.id ?? null });
     const detail: IntakeDetail = {
       issue: { id: issue.id, number: issue.number, url: issue.url, createdAt: issue.createdAt },
       request: requestText(issue, comments),
     };
+    if (pullIn) detail.pulledInBy = { commentId: pullIn.comment.id, url: pullIn.comment.url, createdAt: pullIn.comment.createdAt };
+    if (predecessor) {
+      detail.predecessor = { ticketId: predecessor.ticket.id, state: predecessor.ticket.state, lastIntakeComment: predecessor.lastIntakeComment };
+    }
     store.recordCall({
       ticketId: ticket.id,
       kind: "intake",
-      reason: "The owner's account opened this issue after the repo was enrolled.",
+      reason:
+        pullIn === null
+          ? "The owner's account opened this issue after the repo was enrolled."
+          : predecessor === null
+            ? "The owner pulled this issue in with /entail."
+            : `The owner pulled this issue in again with /entail, after ticket ${predecessor.ticket.id} ended ${predecessor.ticket.state}.`,
       inputs: { issueTitle: issue.title, issueBody: issue.body, settingsVersionId },
       detail,
     });

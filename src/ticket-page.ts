@@ -29,8 +29,9 @@ export interface TicketPageOptions {
  * Each ticket's page (spec §14, ADR-0009, ADR-0019): its whole history, in
  * order, with every call in full, each board item raised and how it ended,
  * and each answer under the name of whoever gave it; links to the ticket it
- * was pulled in after and the one that pulled it in again (ADR-0020); and its
- * own retry state. Like the Calls page it asks nothing and offers no action.
+ * was pulled in after and the one that pulled it in again, with the history
+ * of every ticket before it, so its predecessors' calls and answers show
+ * (ADR-0020); and its own retry state. Like the Calls page it asks nothing and offers no action.
  */
 export function ticketPage(options: TicketPageOptions): Page {
   return {
@@ -73,7 +74,7 @@ ${facts.map(([name, value]) => `<dt>${escapeHtml(name)}</dt><dd>${value}</dd>`).
 <h2>Retry state</h2>
 ${renderRetryState(options.retryState?.(ticket.id) ?? null)}
 <h2>History</h2>
-${renderHistory(ticket, store.callsForTicket(ticket.id), store.boardItemsForTicket(ticket.id), context)}`;
+${renderHistory(ticket, store.callsForTicket(ticket.id), store.boardItemsForTicket(ticket.id), context)}${renderPredecessors(store, ticket, context)}`;
   return { status: 200, html: renderPage(request, { title, body }) };
 }
 
@@ -83,6 +84,26 @@ export function renderRetryState(retry: RetryState | null): string {
   const failures = `${retry.failures} machine ${retry.failures === 1 ? "failure" : "failures"} in a row`;
   return `<p class="notice">This ticket's model step is failing: ${escapeHtml(failures)} since ${timeHtml(retry.failingSince)}. It is tried again at ${timeHtml(retry.retryAt)}.</p>
 <p>Last failure (${escapeHtml(retry.lastFailure.kind)}): ${escapeHtml(retry.lastFailure.message)}</p>`;
+}
+
+/**
+ * The history of each ticket the issue had before this one, newest first:
+ * their calls, board items and answers. An answer settles only its own
+ * ticket (ADR-0008), so these are shown for what the owner said before.
+ */
+function renderPredecessors(store: Store, ticket: TicketRecord, context: CallContext): string {
+  const sections: string[] = [];
+  for (let id = ticket.predecessorId; id !== null; ) {
+    const before = store.getTicket(id);
+    if (before === null) break;
+    sections.push(`<section class="predecessor" id="predecessor-${before.id}">
+<h3>Before this: <a href="${escapeHtml(ticketPath(before.id))}">ticket ${before.id}</a>, ${escapeHtml(before.state)}</h3>
+${renderHistory(before, store.callsForTicket(before.id), store.boardItemsForTicket(before.id), context)}
+</section>`);
+    id = before.predecessorId;
+  }
+  if (sections.length === 0) return "";
+  return `\n<h2>Tickets before this one</h2>\n<p class="muted">This issue was pulled in again. Their answers settled only their own tickets.</p>\n${sections.join("\n")}`;
 }
 
 type HistoryEntry = { at: string; order: number; seq: number; html: string };

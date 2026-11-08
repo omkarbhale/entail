@@ -1,4 +1,4 @@
-import { assertCommentRules, markedTickets } from "./comment-rules.ts";
+import { assertCommentRules, markedTickets, type MarkerFor } from "./comment-rules.ts";
 import {
   assertEntailLabel,
   type CloseReason,
@@ -35,12 +35,21 @@ export interface MergePayload {
   method: MergeMethod | null;
 }
 
-/** The ticket a write is for, and the call it carries out when there is one. */
-export interface WriteFor {
-  ticketId: number;
+/**
+ * The ticket a write is for, and the call it carries out when there is one.
+ * A comment with no ticket (`ticketId` null) is entail's reply to an `/entail`
+ * comment on a closed issue it never took in, and names that comment in
+ * `reply` for its hidden marker (ADR-0020).
+ */
+export type WriteFor = {
   callId?: number | null;
   /** For a comment, what it is for; recorded with its intent (see {@link CommentPayload.purpose}). */
   purpose?: string;
+} & ({ ticketId: number } | { ticketId: null; reply: number });
+
+/** What a write's comment carries in its hidden marker. */
+function markerFor(write: WriteFor): MarkerFor {
+  return write.ticketId === null ? { reply: write.reply } : write.ticketId;
 }
 
 /**
@@ -80,14 +89,15 @@ export class ForgeWriter {
    * Posts `body` on an issue or PR for a ticket.
    *
    * @throws {CommentRuleError} when the body lacks the attribution line or the
-   *   ticket's hidden marker, or has a line starting with `/`.
+   *   hidden marker of the ticket (or the replied comment), or has a line
+   *   starting with `/`.
    */
   comment(write: WriteFor, target: ForgeTarget, number: number, body: string): Promise<PostedComment> {
     return this.#track(this.#comment(write, target, number, body));
   }
 
   async #comment(write: WriteFor, target: ForgeTarget, number: number, body: string): Promise<PostedComment> {
-    assertCommentRules(body, this.#ownerName, write.ticketId);
+    assertCommentRules(body, this.#ownerName, markerFor(write));
     const payload: CommentPayload = write.purpose === undefined ? { body } : { body, purpose: write.purpose };
     const { intent, resumed } = this.#intend(write, "comment", target, number, payload);
     if (resumed) {
@@ -366,7 +376,8 @@ async function applyAgain(forge: Forge, intent: ForgeWriteIntentRecord): Promise
 /**
  * entail's own comment for an unconfirmed intent, if the forge has it: posted
  * by the owner's account, carrying the ticket's hidden marker and the intent's
- * exact text, and not already confirmed for another intent.
+ * exact text, and not already confirmed for another intent. A reply with no
+ * ticket is found by its exact text, which carries its own reply marker.
  */
 function findPostedComment(
   comments: readonly { id: number; body: string; url: string; author: { id: number } }[],
@@ -374,14 +385,13 @@ function findPostedComment(
   repo: RepoRecord,
   intent: ForgeWriteIntentRecord,
 ): PostedComment | null {
-  if (intent.ticketId === null) return null;
   const claimed = new Set(store.confirmedCommentIds(repo.id, intent.target, intent.number));
   const body = normalized((intent.payload as CommentPayload).body);
   const found = comments.find(
     (c) =>
       c.author.id === repo.ownerAccountId &&
       !claimed.has(String(c.id)) &&
-      markedTickets(c.body).includes(intent.ticketId!) &&
+      (intent.ticketId === null || markedTickets(c.body).includes(intent.ticketId)) &&
       normalized(c.body) === body,
   );
   return found ? { id: found.id, url: found.url } : null;

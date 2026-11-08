@@ -7,6 +7,7 @@ import {
   commentRuleViolations,
   composeComment,
   hiddenMarker,
+  markedReplies,
   markedTickets,
   possessive,
 } from "../src/comment-rules.ts";
@@ -50,6 +51,19 @@ test("the hidden marker carries the ticket's record id and starts with no slash"
   assert.deepEqual(markedTickets(`a\n${hiddenMarker(42)}\nb ${hiddenMarker(7)}`), [42, 7]);
   assert.throws(() => hiddenMarker(0));
   assert.throws(() => hiddenMarker(1.5));
+});
+
+test("a reply on an issue with no ticket is marked with the /entail comment it answers, and no ticket", () => {
+  assert.equal(hiddenMarker({ reply: 7001 }), "<!-- entail reply 7001 -->");
+  assert.throws(() => hiddenMarker({ reply: 0 }));
+  const body = composeComment("Omkar", { reply: 7001 }, "Reopen it and pull it in again.");
+  assert.deepEqual(markedReplies(body), [7001]);
+  assert.deepEqual(markedTickets(body), []);
+  assert.deepEqual(commentRuleViolations(body, "Omkar", { reply: 7001 }), []);
+  assert.match(commentRuleViolations(body, "Omkar", { reply: 7002 }).join(), /comment 7002 it replies to/);
+  assert.match(commentRuleViolations(body, "Omkar", 42).join(), /hidden marker for ticket 42/);
+  assert.match(commentRuleViolations(`${body}\n${hiddenMarker(42)}`, "Omkar", { reply: 7001 }).join(), /another ticket.*more than one/);
+  assert.match(commentRuleViolations(`${composeComment("Omkar", 42, "Cleared.")}\n${hiddenMarker({ reply: 7001 })}`, "Omkar", 42).join(), /more than one/);
 });
 
 test("a composed comment opens with the attribution line and ends with the marker on its own line", () => {
