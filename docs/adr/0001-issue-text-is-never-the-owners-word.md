@@ -4,6 +4,6 @@ The decider treats an issue's text as a request to be judged, never as the owner
 
 ## Consequences
 
-- An owner-filed feature the vision is silent on, and that is not small, comes back once as a board item. VISION.md accepts this as an extra, cheap question; if such features keep recurring, that is the signal to add a vision line.
+- An owner-filed feature the vision is silent on is judged like anyone's: it is cleared if no vision line contradicts it, it touches no pin and its readings are not consequential (ADR-0011), and otherwise it comes back as a board item. Filing it under the owner's login never makes it go ahead.
 - A `/entail` comment on someone else's issue means "judge this", not "I want this".
 - Decided on [How does the decider reach a verdict on a ticket?](https://github.com/omkarbhale/entail/issues/19).

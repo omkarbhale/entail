@@ -42,19 +42,20 @@ A new version of the vision of record, seen as the vision lines it removed and t
 The part of entail that gives a ticket its verdict, judged against the vision of record and the repo's pins.
 
 **Reading**:
-One defensible interpretation of a ticket, with the outcome a user would observe if it were done that way.
+One defensible interpretation of a ticket, with the outcome a user would observe if it were done that way. A ticket's readings are **consequential** when their outcomes differ, a vision line or pin bears on that difference, and nothing in the vision chooses between them. Readings that differ only in detail the vision does not speak to are not consequential: entail picks the more conventional one and states it in the criteria.
 
 **Verdict**:
-The decider's answer to whether one ticket needs the owner: **settled**, **small** or **needs the owner**. A ticket keeps every verdict it has been given, each with its reason.
+The decider's answer to whether one ticket needs the owner: **settled**, **unopposed** or **needs the owner**. A ticket keeps every verdict it has been given, each with its reason.
 
 **Settled**:
 The verdict that the vision of record settles the ticket: its cited passages choose one reading. It carries a citation.
 
-**Small**:
-The verdict that a ticket the vision does not settle is small and reasonable, so it goes ahead anyway: a fix, chore, refactor, test, docs or performance change that adds nothing users can see or do, touches no high-stakes area or pin, and has one reading. It carries why it is both.
+**Unopposed**:
+The verdict that no vision line settles the ticket, but none contradicts it, it touches no pin and its readings are not consequential, so it is cleared. entail keeps no list of change categories or high-stakes areas of its own: what matters for a project is said in its vision and pins. It carries why nothing opposes the ticket and, where readings differed, the one entail chose.
+_Avoid_: Small
 
 **Needs the owner**:
-The verdict that the ticket goes to the board: the vision cannot settle it and it is not small, it contradicts a vision passage, or it touches a pin.
+The verdict that the ticket goes to the board: it contradicts a vision line, touches a pin, or has consequential readings, or an automatic verdict failed its checks or challenge.
 
 **Citation**:
 The vision passage that a settled verdict, or any call that says the vision settles something, relies on: one or more whole vision lines, quoted word for word, at the vision's commit.
@@ -63,10 +64,10 @@ The vision passage that a settled verdict, or any call that says the vision sett
 A topic the owner has said must always come to them, even where the vision settles it or no decision exists yet, optionally with paths and keywords that also mark it as touched. The vision itself is always pinned, in every repo.
 
 **Challenge**:
-An independent second judgment that tries to overturn an automatic verdict by finding another reading, an uncited assumption, a touched pin or a high-stakes area; if it succeeds, the ticket needs the owner.
+An independent second judgment that tries to overturn an automatic verdict by finding a vision line the ticket contradicts, a touched pin, a consequential reading or an uncited assumption; if it succeeds, the ticket needs the owner.
 
 **Criteria**:
-What one ticket's PR must contain, written by entail because an issue carries no implementation idea: a few numbered outcomes, namely what is true once the issue is resolved and any vision constraint the change must respect. Each outcome is traced to its source (the issue, a vision line, a small category or the owner's answer) and may carry mechanical checks. They are published on the issue when the ticket is cleared and are frozen from then on; only a new version written by a new call changes them.
+What one ticket's PR must contain, written by entail because an issue carries no implementation idea: a few numbered outcomes, namely what is true once the issue is resolved and any vision constraint the change must respect. Each outcome is traced to its source (the issue, a vision line or the owner's answer) and may carry mechanical checks. They are published on the issue when the ticket is cleared and are frozen from then on; only a new version written by a new call changes them.
 _Avoid_: Acceptance criteria, requirements
 
 **Mechanical check**:
@@ -116,6 +117,9 @@ Final: the owner's answer said not to go ahead; someone other than entail closed
 **Board item**:
 One product decision raised to the owner about one ticket, carrying what the ticket was, what happened and why it was raised. A ticket has at most one open board item at a time.
 _Avoid_: Question, card, escalation
+
+**Withdrawn**:
+What becomes of an open board item whose basis changed before it was answered: someone else closed the issue, or a vision change or pin change touched the item. A withdrawn item takes no answer; its ticket is cancelled or decided again.
 
 **Answer**:
 The owner's response to one board item, recorded under the name of whoever gave it. It settles that ticket only and is final once given. An answer that does not let the ticket go ahead is "don't go ahead", and the ticket is cancelled.

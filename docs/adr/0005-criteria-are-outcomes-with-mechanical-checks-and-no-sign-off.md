@@ -13,12 +13,13 @@ entail writes each cleared ticket's criteria itself, because an issue is a reque
 
 ## Consequences
 
-- **Writing.** A separate read-only `claude -p --json-schema` run writes the criteria, after a settled or small verdict passes its mechanical checks, or after a board answer lets the ticket go ahead.
+- **Writing.** A separate read-only `claude -p --json-schema` run writes the criteria, after a settled or unopposed verdict passes its mechanical checks, or after a board answer lets the ticket go ahead.
 - **Checks before clearing.** entail checks the output mechanically:
   - between one and five criteria;
   - each has a source that exists;
   - each mechanical check is a known kind with valid arguments;
-  - a small ticket carries leaves-path fences for every pin's paths and the vision's;
+  - an unopposed ticket carries leaves-path fences for every pin's paths and the vision's (ADR-0011; this was a small ticket before);
+  - where entail chose between readings, a criterion states the reading chosen;
   - no line starts with `/`.
 
   The existing challenge then runs once over the verdict and the criteria together. Invalid output is a machine failure and is retried. A product call, or a challenge that succeeds, sends the ticket to the board.

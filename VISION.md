@@ -15,12 +15,13 @@ A board answer enters the vision only when it truly makes sense as a general sta
 The vision stays proportionate to the real complexity of the project, so months of daily answers do not make it grow much, and it is never padded first and cut back later.
 A vision is first written with the /vision skill; entail checks work against it and grows it as above.
 
-## What the vision cannot settle goes to the owner
+## What the vision does not allow goes to the owner
 
-Whatever the vision cannot settle comes back to the owner, including new things that contradict nothing but that nothing asked for, with exactly two exceptions: small, reasonable tickets and rulings learned from repeated board answers.
-A small, reasonable ticket starts automatically even where the vision is silent, because removing that friction is what entail is for.
-Small is not enough on its own; a small change the owner probably does not want, such as turning the headings pink, does not start by itself.
-The vision does not settle a call when two or more defensible readings lead to observably different outcomes and nothing in it chooses between them.
+A ticket comes back to the owner when it contradicts the vision, touches a pin, or has readings the vision makes consequential, unless rulings learned from repeated board answers settle it.
+A ticket the vision does not contradict and that touches no pin is cleared, even where the vision is silent, because removing that friction is what entail is for.
+What matters for a given project, such as an interface people depend on, new features being opt-in or how it looks, is said in that project's vision and pins, not built into entail.
+Readings are consequential when they lead to observably different outcomes, a vision line or pin bears on that difference, and nothing in the vision chooses between them.
+Where readings differ only in detail the vision does not speak to, entail picks the more conventional one and states it in the criteria.
 Sufficiency is judged for the ticket at hand, not for the whole vision.
 When unsure, entail asks, because a wrong "already settled" silently applies a ruling to a case it never covered, while an extra question is cheap.
 Every "the vision settles this" cites the passage relied on, and a vision change flags in-flight work that relied on the old text.
@@ -31,7 +32,7 @@ Tolerance scales with stakes: a minor wrong call is acceptable and fixable later
 
 entail rests on the bet that models are intelligent enough already, and that what is missing is the engineering to use them.
 A ticket the vision plainly settles starts work from an issue or mention without asking the owner, on a zero-ceremony path.
-A ticket too large for one PR is broken by entail into smaller tickets, each judged on its own: the settled ones start and the rest go to the board.
+A ticket too large for one PR is broken by entail into smaller tickets, each judged on its own: the ones it clears start and the rest go to the board.
 A PR that passes its criteria merges automatically; finishing settled work does not wait on the owner any more than starting it does.
 Every call settled automatically is logged with its reason, so it can be audited later.
 Choices a model does not notice it is making cannot be caught reliably, so entail makes them visible and attributable afterwards instead of claiming to prevent them.
@@ -63,5 +64,5 @@ Every verdict persists with its reason.
 entail works with or without firstmate; without it quality may drop and firstmate's own features are missing, but everything entail does stays possible.
 Personal use and local-first operation are acceptable.
 
-A change aligns when it lets a ticket the vision settles move from intake through a criteria-checked merge without the owner, or when it brings a call the vision cannot settle to the owner with what the ticket was, what happened, and why it was raised.
-A change should be resisted when it lets entail act on a call the vision does not settle outside its two named exceptions, records anyone's words as the owner's, grows the vision with rulings that are not general statements, settles a call without citing the vision passage or past answers it relies on, or without logging the reason, moves a question or its answer into chat, makes entail depend on firstmate, or puts work-management traffic on the board.
+A change aligns when it lets a ticket the vision settles or does not contradict move from intake through a criteria-checked merge without the owner, or when it brings a call the vision does not allow to the owner with what the ticket was, what happened, and why it was raised.
+A change should be resisted when it lets entail clear a ticket that contradicts the vision, touches a pin, or has readings the vision makes consequential, without the owner's answer or a ruling learned from repeated answers, records anyone's words as the owner's, grows the vision with rulings that are not general statements, settles a call without citing the vision passage or past answers it relies on, or without logging the reason, moves a question or its answer into chat, makes entail depend on firstmate, or puts work-management traffic on the board.

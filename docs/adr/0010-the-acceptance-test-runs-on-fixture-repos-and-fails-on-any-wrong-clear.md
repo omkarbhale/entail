@@ -27,3 +27,15 @@ Passing is asymmetric, as VISION.md is: a wrong "already settled" is costly, whi
 
   Each run reports its model runs and estimated cost, with no threshold in MVP-1.
 - The fixture's vision, its tickets with their expected outcomes, and the pass checks are recorded on [What exactly is MVP-1's acceptance test?](https://github.com/omkarbhale/entail/issues/28), where this was decided.
+
+## Amendment: tickets the vision does not contradict are cleared (ADR-0011)
+
+ADR-0011 replaced the **small** verdict: a ticket the vision does not contradict, that touches no pin and has no consequential readings is cleared, and minor diverging readings are settled by the more conventional one. Two fixture tickets expected on the board would now be wrong if they stayed there, so the expected outcomes change:
+
+- **T5, colour**: cleared, not on the board. Always colouring the counts would contradict "It prints one line of counts per input, as plain text that other tools can parse.", so the one defensible reading is colour only in a terminal. The criteria require plain output when it is piped. Settled or unopposed are both acceptable. End state: merged.
+- **T6, `--json`**: cleared, not on the board. entail picks one JSON object per input, one per line, which is the conventional reading and keeps one line of counts per input, and states it in the criteria. End state: merged.
+- **T3, refactor**: unopposed, not small. It is still fenced off `src/format.js` and VISION.md.
+- **T9, the pinned rename**: still needs the owner for the pin. The harness now answers it in its own words, "Rename only; keep every exported name and the printed output unchanged.", and the criteria cite that answer. End state: merged. T8 still covers an item left unanswered.
+- **T13, new, consequential readings**: "Word counts differ from other tools on text with non-breaking spaces." Whether a non-breaking space separates words changes the counts, and "A word is a run of characters between whitespace." bears on that without choosing. So it needs the owner. The harness answers in its own words, "Any Unicode whitespace separates words, including a non-breaking space.", and the criteria cite that answer. End state: merged.
+
+The rest of the test is unchanged. Clearing T7, T8, T9 or T13 without an answer is still a wrong clear and fails the test.
