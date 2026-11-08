@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { DEFAULT_GLOBAL_SETTINGS, type GlobalSettings } from "../src/global-settings.ts";
 import { LOCK_FILE } from "../src/lock.ts";
+import { makeNotice, NOTICES_FILE } from "../src/notice.ts";
 import { OPERATIONAL_LOG_FILE } from "../src/operational-log.ts";
 import { startRun, type RunningEntail } from "../src/run.ts";
 import { BoardPortTakenError } from "../src/server.ts";
@@ -94,4 +95,18 @@ test("entail run fails with a clear message and releases the lock when the board
   assert.match(readFileSync(join(dir, OPERATIONAL_LOG_FILE), "utf8"), /"event":"board-server-failed"/);
   // The store was closed, so it opens again.
   Store.openIn(dir).close();
+});
+
+test("entail run sends notices through the connector the global settings name", async (t) => {
+  const dir = dataDirectory(t);
+  saveSettings(dir, { boardPort: await freePort(), noticeConnector: "file" });
+  const entail = await start(t, dir);
+
+  const sent = await entail.notifier.notify(
+    makeNotice({ kind: "health", text: "entail keeps stopping.", link: `${entail.server.info.origin}/repos` }),
+  );
+  assert.equal(sent, true);
+  const notices = readFileSync(join(dir, NOTICES_FILE), "utf8").split("\n").filter((line) => line !== "");
+  assert.equal(notices.length, 1);
+  assert.equal(JSON.parse(notices[0]!).text, "entail keeps stopping.");
 });
