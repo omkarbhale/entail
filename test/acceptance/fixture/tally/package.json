@@ -1,0 +1,15 @@
+{
+  "name": "tally",
+  "version": "0.1.0",
+  "description": "Counts the words, lines and characters in text.",
+  "type": "module",
+  "bin": {
+    "tally": "src/cli.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

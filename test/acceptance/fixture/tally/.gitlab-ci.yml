@@ -1,0 +1,4 @@
+test:
+  image: node:24
+  script:
+    - npm test
