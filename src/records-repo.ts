@@ -151,20 +151,21 @@ export class RecordsRepo {
     if (remote === null) return "no-remote";
     const at = (this.#options.now?.() ?? new Date()).toISOString();
     const state = readRecordsPushState(this.#options.dataDirectory);
+    let commit: string;
     try {
-      const commit = (await this.#git.text(["rev-parse", "--verify", "HEAD"])).trim();
+      commit = (await this.#git.text(["rev-parse", "--verify", "HEAD"])).trim();
       await this.#git.run(["push", "--quiet", remote, `HEAD:refs/heads/${RECORDS_BRANCH}`], {
         timeoutMs: this.#options.pushTimeoutMs ?? RECORDS_PUSH_TIMEOUT_MS,
       });
-      this.#writePushState({ lastSuccess: { at, remote, commit }, lastFailure: null });
-      this.#options.log?.info("records-pushed", { commit });
-      return "pushed";
     } catch (error) {
       const message = errorText(error);
       this.#writePushState({ ...state, lastFailure: { at, remote, error: message } });
       this.#options.log?.warn("records-push-failed", { error: message });
       return "failed";
     }
+    this.#writePushState({ lastSuccess: { at, remote, commit }, lastFailure: null });
+    this.#options.log?.info("records-pushed", { commit });
+    return "pushed";
   }
 
   #work(args: string[], okExitCodes: number[] = []) {
@@ -173,8 +174,12 @@ export class RecordsRepo {
 
   #writePushState(state: RecordsPushState): void {
     const file = join(this.#options.dataDirectory, RECORDS_PUSH_FILE);
-    writeFileSync(`${file}.tmp`, `${JSON.stringify(state, null, 2)}\n`);
-    renameSync(`${file}.tmp`, file);
+    try {
+      writeFileSync(`${file}.tmp`, `${JSON.stringify(state, null, 2)}\n`);
+      renameSync(`${file}.tmp`, file);
+    } catch (error) {
+      this.#options.log?.warn("records-push-state-failed", { error: errorText(error) });
+    }
   }
 }
 
