@@ -22,6 +22,10 @@ _Avoid_: Config, repo config, preferences
 A repo setting under which entail neither reads nor writes on the repo's forge, while its tickets keep their states and its issues keep their labels. On resume, entail catches up on everything that changed meanwhile.
 _Avoid_: Disabled, suspended, frozen
 
+**Halt**:
+Work entail stops on its own because something outside it is wrong. A halt covers either all of entail (`git` or `claude` missing or logged out, or the subscription's usage limit), one host (its CLI logged out or logged in as another account, or the host not answering), or one repo (its records missing, or its vision gone). It clears by itself once that is fixed. A halt is not a call and never a board item, and unlike paused it is never the owner's setting.
+_Avoid_: Outage, error, pause
+
 **Ticket**:
 entail's own record about one issue it has taken into intake, holding its verdicts, criteria, board items, PRs, calls and state. An issue entail never took in has no ticket, and an issue has at most one.
 _Avoid_: Task, item, story
