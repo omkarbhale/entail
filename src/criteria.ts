@@ -587,7 +587,8 @@ function basisOf(store: Store, ticket: TicketRecord, owedCall: CallRecord, calls
     return { verdictCall: owedCall, verdict: owedCall.detail as RecordedVerdict, goAhead: null, answers: [], pinsSeen: [] };
   }
   const verdictCallId = (owedCall.detail as { verdictCallId?: unknown } | null)?.verdictCallId;
-  const verdictCall = calls.find((call) => call.id === verdictCallId && call.kind === "verdict");
+  // A re-check that raised the ticket holds the call at its vision in a verdict's shape (ADR-0016).
+  const verdictCall = calls.find((call) => call.id === verdictCallId && (call.kind === "verdict" || call.kind === "recheck"));
   if (verdictCall === undefined) return null;
   return {
     verdictCall,
@@ -770,7 +771,7 @@ async function writeCriteria(options: CriteriaOptions, ticket: TicketRecord, owe
 }
 
 /** Why a ticket was cleared, and the call's citation, from the verdict's cited lines. */
-function whyCleared(location: RepoLocation, verdict: RecordedVerdict, vision: readonly VisionLine[], readingChosen: Reading | null): { why: WhyCleared; citation: Citation | null; reason: string } {
+export function whyCleared(location: RepoLocation, verdict: RecordedVerdict, vision: readonly VisionLine[], readingChosen: Reading | null): { why: WhyCleared; citation: Citation | null; reason: string } {
   const citedLines = [...new Set(verdict.citations.flatMap((citation) => citation.lines).map(collapseWhitespace))];
   const byIdentity = new Map(vision.map((line) => [line.identity, line]));
   const cited = citedLines.flatMap((identity) => {

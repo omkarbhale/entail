@@ -3,9 +3,10 @@ import { arrayOf, nullable, object, oneOf, string, type Infer } from "./schema.t
 /**
  * The verdict, criteria and grade schemas, written once here, emitted as JSON
  * Schema for `claude -p --json-schema` and used to check each run's structured
- * output (spec section 1). The other run kinds (challenge, re-check, landing
- * challenge and generic criteria proposal) define their schemas with the same
- * builder in the steps that make those runs.
+ * output (spec section 1). The re-check's schema shares the verdict's fields.
+ * The other run kinds (challenge, landing challenge and generic criteria
+ * proposal) define their schemas with the same builder in the steps that make
+ * those runs.
  *
  * A schema states only the output's shape. What it cannot state, such as a
  * citation appearing word for word in VISION.md or one to five criteria, is a
@@ -24,6 +25,34 @@ const visionLine = string("A whole line of VISION.md, quoted word for word.");
  */
 export const CLOSE_EVIDENCE_KINDS = ["duplicate_issue", "fixing_commit", "findings"] as const;
 
+/** The fields the verdict and the re-check share. */
+const readings = arrayOf(
+  object({
+    id: string("R1, R2, … in order."),
+    reading: string(),
+    observed_outcome: string("The outcome a user would observe under this reading."),
+  }),
+);
+const pinsTouched = arrayOf(object({ pin: string("The pin's topic sentence."), why: string() }));
+const visionCheck = arrayOf(
+  object({
+    line: visionLine,
+    mark: oneOf(["matches", "contradicts", "does_not_settle"]),
+  }),
+  "Every vision line that bears on the issue, and only those.",
+);
+const citations = arrayOf(
+  object({
+    lines: arrayOf(visionLine, "One or more whole lines, quoted word for word."),
+    reading: string("The id of the reading the passage chooses."),
+  }),
+  "For settled: the passages that choose the reading. Empty otherwise.",
+);
+const whyUnopposed = nullable(string(), "For unopposed: why no vision line opposes the ticket. null otherwise.");
+const readingChosen = nullable(string(), "For unopposed: the id of the more conventional reading. null otherwise.");
+const whyRaised = nullable(oneOf(["contradiction", "consequential_readings", "pin"]), "For needs the owner: why it is raised. null otherwise.");
+const openReadings = arrayOf(string(), "For needs the owner: the ids of the readings left open. Empty otherwise.");
+
 /**
  * The decider's output for one ticket (spec section 6, ADR-0011, ADR-0007).
  * entail adds the model, session id, vision sha, duration, cost and usage.
@@ -33,36 +62,18 @@ export const verdictSchema = object({
     value: oneOf(["fits", "oversized"], "oversized only when the ticket plainly holds several independent deliverables or is not reviewable as one PR; when unsure, it fits."),
     reason: string(),
   }),
-  readings: arrayOf(
-    object({
-      id: string("R1, R2, … in order."),
-      reading: string(),
-      observed_outcome: string("The outcome a user would observe under this reading."),
-    }),
-  ),
-  pins_touched: arrayOf(object({ pin: string("The pin's topic sentence."), why: string() })),
-  vision_check: arrayOf(
-    object({
-      line: visionLine,
-      mark: oneOf(["matches", "contradicts", "does_not_settle"]),
-    }),
-    "Every vision line that bears on the issue, and only those.",
-  ),
+  readings,
+  pins_touched: pinsTouched,
+  vision_check: visionCheck,
   verdict: nullable(
     oneOf(["settled", "unopposed", "needs_the_owner", "close", "investigate"]),
     "null only when the ticket is oversized, which gets no verdict. close proposes closing the issue at intake because the repo's state settles that nothing is to be done. investigate asks for an investigation when the cause or validity of the issue is unknown.",
   ),
-  citations: arrayOf(
-    object({
-      lines: arrayOf(visionLine, "One or more whole lines, quoted word for word."),
-      reading: string("The id of the reading the passage chooses."),
-    }),
-    "For settled: the passages that choose the reading. Empty otherwise.",
-  ),
-  why_unopposed: nullable(string(), "For unopposed: why no vision line opposes the ticket. null otherwise."),
-  reading_chosen: nullable(string(), "For unopposed: the id of the more conventional reading. null otherwise."),
-  why_raised: nullable(oneOf(["contradiction", "consequential_readings", "pin"]), "For needs the owner: why it is raised. null otherwise."),
-  open_readings: arrayOf(string(), "For needs the owner: the ids of the readings left open. Empty otherwise."),
+  citations,
+  why_unopposed: whyUnopposed,
+  reading_chosen: readingChosen,
+  why_raised: whyRaised,
+  open_readings: openReadings,
   close_evidence: arrayOf(
     object({
       kind: oneOf(CLOSE_EVIDENCE_KINDS),
@@ -79,6 +90,31 @@ export const verdictSchema = object({
 });
 
 export type VerdictOutput = Infer<typeof verdictSchema>;
+
+/**
+ * A re-check's output (spec §12, ADR-0016): whether a change alters the
+ * ticket's prior call, and the call at the current vision in the verdict's
+ * own fields. "stands" keeps the prior verdict and reading, "goes_ahead_differently"
+ * settles another reading or is now unopposed, and "needs_the_owner" raises it.
+ */
+export const recheckSchema = object({
+  outcome: oneOf(
+    ["stands", "goes_ahead_differently", "needs_the_owner"],
+    "stands when the change does not alter the call; goes_ahead_differently when the vision now settles another reading or the ticket is now unopposed (or now settled); needs_the_owner when an added line contradicts it, a pin is touched, or its readings are now consequential.",
+  ),
+  readings,
+  pins_touched: pinsTouched,
+  vision_check: visionCheck,
+  verdict: oneOf(["settled", "unopposed", "needs_the_owner"], "The call at the current vision."),
+  citations,
+  why_unopposed: whyUnopposed,
+  reading_chosen: readingChosen,
+  why_raised: whyRaised,
+  open_readings: openReadings,
+  reason: string("The reason for the audit log: what the change does to the call."),
+});
+
+export type RecheckOutput = Infer<typeof recheckSchema>;
 
 /** The closed list of mechanical check kinds a criterion may carry (ADR-0005). */
 export const MECHANICAL_CHECK_KINDS = ["changes_path", "leaves_path", "check_passes"] as const;

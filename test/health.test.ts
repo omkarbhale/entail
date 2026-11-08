@@ -337,7 +337,11 @@ test("a vanished vision holds deciding and landing in its repo, and a vision bac
   await settle();
   assert.equal(passes.visionGoneSince(1), null);
   assert.deepEqual(started, ["verdict"], "the held step starts once the vision is back");
-  assert.deepEqual([...VISION_HALTED_STEPS], ["verdict", "findings", "criteria", "landing-check", "merge"], "deciding, writing criteria and landing are held");
+  assert.deepEqual(
+    [...VISION_HALTED_STEPS],
+    ["verdict", "findings", "criteria", "landing-check", "merge", "re-check", "withdraw-for-vision-change"],
+    "deciding, writing criteria, re-checking and landing are held",
+  );
 });
 
 test("no records push succeeding for 24 hours while a remote is set is warned, with one notice", async (t) => {

@@ -205,6 +205,19 @@ export interface RaiseRequest {
   landing?: LandingPinItem;
   /** A label the raise removes from the issue, as `entail:cleared` when a landing ticket goes on the board. */
   removeLabel?: string;
+  /** The vision change a re-check raised the ticket after, which its intake comment names (ADR-0016). */
+  visionChangeSha?: string | null;
+}
+
+/**
+ * What a raise also does beside its call, item and intake comment, such as a
+ * re-check's removing `entail:cleared` (ADR-0016): `record` runs in the raise's
+ * transaction to record intents for the raise call, and `send` after the
+ * intake comment is posted.
+ */
+export interface RaiseAlso {
+  record(callId: number): void;
+  send(callId: number): Promise<void>;
 }
 
 /** Where raising reads the vision: a git mirror of the repo. */
@@ -596,6 +609,7 @@ export async function raiseToBoard(
   request: RaiseRequest,
   pass: Pick<RepoPass, "repo" | "writer">,
   mirror: BoardMirror,
+  also?: RaiseAlso,
 ): Promise<BoardItemRecord | null> {
   const { store, log } = options;
   const repo = pass.repo;
@@ -641,7 +655,7 @@ export async function raiseToBoard(
     };
     const item = store.raiseBoardItem({ ticketId: ticket.id, callId: call.id, decision, whyRaised: why.kind, snapshot });
     const link = boardItemLink(options.boardOrigin, item.id);
-    const body = composeComment(ownerName, ticket.id, intakeCommentText({ visionCheck: check, next: raisedNextText(link), replaces }));
+    const body = composeComment(ownerName, ticket.id, intakeCommentText({ visionCheck: check, next: raisedNextText(link), replaces, visionChange: request.visionChangeSha ?? null }));
     store.recordForgeWriteIntent({
       repoId: repo.id,
       ticketId: ticket.id,
@@ -662,6 +676,7 @@ export async function raiseToBoard(
         payload: { action: "remove", label: request.removeLabel },
       });
     }
+    also?.record(call.id);
     return { item, call, body, link };
   });
   if (raised === null) {
@@ -678,6 +693,7 @@ export async function raiseToBoard(
   const write = { ticketId: request.ticket.id, callId: raised.call.id };
   await pass.writer().comment(write, "issue", request.ticket.issueNumber, raised.body);
   if (request.removeLabel !== undefined) await pass.writer().removeLabel(write, request.ticket.issueNumber, request.removeLabel);
+  await also?.send(raised.call.id);
   return raised.item;
 }
 

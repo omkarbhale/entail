@@ -231,11 +231,14 @@ export function clearedNextText(input: { criteria: readonly ListedCriterion[]; g
 /**
  * An intake comment's text: the vision check, then what happens next ending
  * with the fixed executor line. A comment that replaces an earlier intake
- * comment names it first.
+ * comment names it first, and one posted after a re-check names the vision
+ * change's sha too (ADR-0016).
  */
-export function intakeCommentText(input: { visionCheck: VisionCheck; next: string; replaces?: string | null }): string {
+export function intakeCommentText(input: { visionCheck: VisionCheck; next: string; replaces?: string | null; visionChange?: string | null }): string {
   const parts: string[] = [];
-  if (input.replaces) parts.push(`This replaces [entail's earlier intake comment](${input.replaces}).`, "");
+  const after = input.visionChange ? `after the vision change at \`${shortSha(input.visionChange)}\`` : null;
+  if (input.replaces) parts.push(`This replaces [entail's earlier intake comment](${input.replaces})${after === null ? "" : `, ${after}`}.`, "");
+  else if (after !== null) parts.push(`entail checked this issue again ${after}.`, "");
   parts.push(visionCheckSection(input.visionCheck), "", "### What happens next", "", input.next.trim(), "", EXECUTOR_LINE);
   return parts.join("\n");
 }

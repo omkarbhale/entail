@@ -46,6 +46,10 @@ export const ONE_TIME_COMMENTS = {
   notCounted: "pr-not-counted",
   /** The PR links a ticket that is already merged, through another PR. */
   alreadyMerged: "pr-already-merged",
+  /** A re-check after a vision change raised the PR's ticket to the owner (ADR-0016). */
+  raisedAfterRecheck: "pr-raised-after-recheck",
+  /** The owner answered "don't go ahead" on a ticket a re-check raised, so it was cancelled (ADR-0016). */
+  cancelledAfterRecheck: "pr-cancelled-after-recheck",
 } as const;
 
 export type OneTimeComment = (typeof ONE_TIME_COMMENTS)[keyof typeof ONE_TIME_COMMENTS];
@@ -170,6 +174,8 @@ async function followTicket(options: PullRequestOptions, ticket: TicketRecord, p
   // A PR whose pinned paths are on the board already said so in its landing comment (spec §11).
   if (NO_CRITERIA_YET.has(ticket.state) && landingItem === null) {
     for (const pr of counted) {
+      // A PR told its issue was raised to the owner after a vision change already knows why it is not checked.
+      if (ticket.state === "on-the-board" && commented(store, pass, ticket, pr, ONE_TIME_COMMENTS.raisedAfterRecheck)) continue;
       await commentOnce(options, pass, ticket, pr, ONE_TIME_COMMENTS.noCriteria, noCriteriaYetText(pass, ticket));
     }
   }
@@ -296,8 +302,18 @@ async function commentOnEndedTickets(options: PullRequestOptions, change: Extrac
   for (const ticket of ended) {
     if (!counts) await commentOnce(options, pass, ticket, pr, ONE_TIME_COMMENTS.notCounted, notCountedText(pass, ticket.issueNumber));
     else if (ticket.state === "merged") await commentOnce(options, pass, ticket, pr, ONE_TIME_COMMENTS.alreadyMerged, alreadyMergedText(store, pass, ticket));
-    else await commentOnce(options, pass, ticket, pr, ONE_TIME_COMMENTS.noCriteria, endedText(store, pass, ticket));
+    else if (!commented(store, pass, ticket, pr, ONE_TIME_COMMENTS.cancelledAfterRecheck)) {
+      // A PR told its ticket was cancelled after a re-check already has the comment that answers why it is not checked.
+      await commentOnce(options, pass, ticket, pr, ONE_TIME_COMMENTS.noCriteria, endedText(store, pass, ticket));
+    }
   }
+}
+
+/** Whether a one-time comment for this purpose was recorded on the PR for the ticket, posted or not yet. */
+function commented(store: Store, pass: RepoPass, ticket: TicketRecord, pr: Pick<PullRequest, "number">, purpose: OneTimeComment): boolean {
+  return store
+    .forgeWritesOn(pass.repo.id, "pr", pr.number)
+    .some((write) => write.kind === "comment" && write.ticketId === ticket.id && (write.payload as Partial<CommentPayload>).purpose === purpose);
 }
 
 /**
@@ -380,6 +396,19 @@ export function alreadyMergedText(store: Store, pass: Pick<RepoPass, "forge">, t
   return [
     `#${ticket.issueNumber} is already merged${through}.`,
     `entail no longer checks this ${pr}, and does not close it.`,
+  ].join("\n\n");
+}
+
+/**
+ * The one comment on an open PR whose ticket a re-check raised to the owner,
+ * after the owner answered "don't go ahead" (ADR-0016): the ticket is
+ * cancelled, and entail neither checks nor closes the PR.
+ */
+export function cancelledAfterRecheckText(pass: Pick<RepoPass, "forge">, issueNumber: number): string {
+  const pr = pass.forge.wording.pullRequest;
+  return [
+    `The owner decided not to go ahead with #${issueNumber} after a vision change, so its ticket is cancelled.`,
+    `entail does not check or merge this ${pr}, and does not close it.`,
   ].join("\n\n");
 }
 
