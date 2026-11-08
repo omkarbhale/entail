@@ -5,6 +5,7 @@ import { OperationalLog, type OperationalLogOptions } from "./operational-log.ts
 import { Enroller } from "./enrollment.ts";
 import { Limiter } from "./forge-limit.ts";
 import { ClaudeRunner } from "./claude-runner.ts";
+import { deciderPlanner } from "./decider.ts";
 import type { ModelRunner } from "./model-runner.ts";
 import { ModelRuns } from "./model-runs.ts";
 import { InFlightWrites, settleUnconfirmedWrites } from "./forge-writer.ts";
@@ -143,7 +144,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     limiter,
     forgeFor,
     defaultBranchFor: options.passes?.defaultBranchFor,
-    planners: options.passes?.planners,
+    planners: options.passes?.planners ?? [deciderPlanner({ store, log, dataDirectory: options.dataDirectory })],
     inFlight,
     modelRuns,
   });
