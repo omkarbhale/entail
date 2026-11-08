@@ -3,6 +3,7 @@ import {
   assertEntailLabel,
   type Actor,
   type ChangeBatch,
+  type CheckReport,
   type CloseReason,
   type CommitChecks,
   type Forge,
@@ -19,6 +20,7 @@ import {
   type Project,
   type RepoAccess,
   type PullRequest,
+  type PullRequestComment,
   type PullRequestState,
 } from "../../src/forge/forge.ts";
 
@@ -180,7 +182,7 @@ export class StateForge implements Forge {
   async pullRequest(): Promise<never> {
     throw new Error("not supported");
   }
-  async pullRequestComments(): Promise<never> {
+  async pullRequestComments(_number: number): Promise<PullRequestComment[]> {
     throw new Error("not supported");
   }
   async linkedPullRequests(_issueNumber: number): Promise<PullRequest[]> {
@@ -189,7 +191,7 @@ export class StateForge implements Forge {
   async linkedIssues(_pullRequestNumber: number): Promise<number[]> {
     throw new Error("not supported");
   }
-  async checks(): Promise<never> {
+  async checks(_pullRequestNumber: number, _sha: string, _named: readonly string[]): Promise<CheckReport> {
     throw new Error("not supported");
   }
   async recentDefaultBranchChecks(): Promise<CommitChecks[]> {
