@@ -691,3 +691,16 @@ test("a PR waiting on a second linked ticket raises no item; the item is raised 
   assert.equal(h.notices().length, 1);
   assert.deepEqual(h.forge.merges, []);
 });
+
+test("when the last linked ticket passes, a pin only an earlier-passed ticket has not seen still raises instead of merging", async (t) => {
+  const h = await harness(t);
+  const first = h.cleared(1);
+  const second = h.cleared(2, { verdict: "unopposed" });
+  h.forge.open(12, [1, 2]);
+  await h.pass(4);
+
+  const decisionOf = (id: number) => (h.calls(id, "landing")[0]!.detail as PassingLandingDetail).merge.decision;
+  assert.deepEqual([decisionOf(first.id), decisionOf(second.id)].sort(), ["owner", "waiting"]);
+  assert.deepEqual(h.forge.merges, [], "nothing merges unasked");
+  assert.equal(h.setup.store.boardItemsForTicket(first.id).length + h.setup.store.boardItemsForTicket(second.id).length, 1);
+});
