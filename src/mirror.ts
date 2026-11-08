@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { chmod, lstat, mkdir, readdir, rename, rm, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { chmod, lstat, mkdir, readdir, readlink, realpath, rename, rm, stat } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Git, GitError } from "./git.ts";
+import type { OperationalLog } from "./operational-log.ts";
 
 /** The forges an enrolled repo can live on (ADR-0015). */
 export type ForgeName = "github" | "gitlab";
@@ -80,12 +81,19 @@ export interface MirrorOptions {
   dataDirectory: string;
   key: MirrorKey;
   remote: MirrorRemote;
+  /** Where a checkout records the symlinks it left out. */
+  log?: OperationalLog;
 }
 
 /** A read-only checkout of the repo at one commit, for model runs to read. */
 export interface Checkout {
   directory: string;
   commit: string;
+  /**
+   * Paths of symlinks the commit holds that the checkout leaves out because
+   * they point outside it. Empty when an existing checkout is reused.
+   */
+  dropped: string[];
 }
 
 /**
@@ -102,10 +110,12 @@ export class Mirror {
   readonly directory: string;
   readonly checkoutsDirectory: string;
   readonly git: Git;
+  readonly #log: OperationalLog | undefined;
 
   private constructor(options: MirrorOptions, paths: { mirror: string; checkouts: string }) {
     this.key = options.key;
     this.remote = options.remote;
+    this.#log = options.log;
     this.directory = paths.mirror;
     this.checkoutsDirectory = paths.checkouts;
     // Only the forge CLI's helper authenticates, never one from the owner's
@@ -233,22 +243,25 @@ export class Mirror {
   /**
    * A read-only checkout of the repo at a commit, for a model run to read. It
    * is kept in the data directory and reused for the same commit; its files
-   * and directories cannot be written until {@link removeCheckout}.
+   * and directories cannot be written until {@link removeCheckout}. Symlinks
+   * pointing outside the checkout are left out and logged.
    */
   async checkout(commit: string): Promise<Checkout> {
     if (!FULL_SHA.test(commit)) throw new RangeError(`a checkout needs a full commit sha, not ${commit}`);
     const sha = await this.resolve(commit);
     const directory = join(this.checkoutsDirectory, sha);
-    if (await exists(directory)) return { directory, commit: sha };
+    if (await exists(directory)) return { directory, commit: sha, dropped: [] };
 
     await mkdir(this.checkoutsDirectory, { recursive: true, mode: 0o700 });
     const staging = `${directory}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
     const index = `${staging}.index`;
+    let dropped: string[] = [];
     try {
       await mkdir(staging);
       const env = { GIT_INDEX_FILE: index };
       await this.git.run([`--work-tree=${staging}`, "read-tree", sha], { env });
       await this.git.run([`--work-tree=${staging}`, "checkout-index", "--all", "--force"], { env });
+      dropped = await dropEscapingLinks(staging);
       await makeReadOnly(staging);
       await rename(staging, directory);
     } catch (error) {
@@ -257,7 +270,10 @@ export class Mirror {
     } finally {
       await rm(index, { force: true });
     }
-    return { directory, commit: sha };
+    if (dropped.length > 0) {
+      this.#log?.warn("checkout.symlinks_dropped", { commit: sha, dropped });
+    }
+    return { directory, commit: sha, dropped };
   }
 
   /** Removes the read-only checkout at a commit, if there is one. */
@@ -274,6 +290,45 @@ async function exists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Removes every symlink whose target lies outside the tree, whether written
+ * as an absolute path, with `..`, or reached through another link, and returns
+ * their paths relative to the tree, sorted.
+ */
+async function dropEscapingLinks(root: string): Promise<string[]> {
+  const links: string[] = [];
+  const walk = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) await walk(path);
+      else if (entry.isSymbolicLink()) links.push(path);
+    }
+  };
+  await walk(root);
+
+  const inside = (path: string): boolean => {
+    const from = relative(root, path);
+    return from === "" || (from !== ".." && !from.startsWith(`..${sep}`) && !isAbsolute(from));
+  };
+  const dropped: string[] = [];
+  const drop = async (link: string): Promise<void> => {
+    await rm(link, { force: true });
+    dropped.push(relative(root, link).split(sep).join("/"));
+  };
+
+  const remaining: string[] = [];
+  for (const link of links) {
+    if (inside(resolve(dirname(link), await readlink(link)))) remaining.push(link);
+    else await drop(link);
+  }
+  const realRoot = await realpath(root);
+  for (const link of remaining) {
+    const real = await realpath(link).catch(() => null);
+    if (real !== null && relative(realRoot, real).split(sep)[0] === "..") await drop(link);
+  }
+  return dropped.sort();
 }
 
 /** Takes write permission off every file and directory, never following a link. */

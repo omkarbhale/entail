@@ -140,3 +140,15 @@ test("a VISION.md that is missing, empty, blank or only headings is reported as 
   const dir = repo.remove("VISION.md").write("VISION.md/notes.md", "Not a vision.\n").commit("vision is a directory");
   assert.equal((await readVision(git, dir)).status, "missing");
 });
+
+test("lines inside fenced code blocks are not vision lines and leave the heading alone", () => {
+  const content = "# Usage\n\nRun it.\n\n```sh\n# install\n---\nnpm i tally\n```\n\nIt counts.\n\n~~~~\n## Fake\n```\nstill code\n~~~~\nDone.\n";
+  assert.deepEqual(
+    splitVisionLines(content).map((line) => [line.heading, line.text, line.lineNumber]),
+    [
+      ["Usage", "Run it.", 3],
+      ["Usage", "It counts.", 11],
+      ["Usage", "Done.", 18],
+    ],
+  );
+});

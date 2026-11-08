@@ -52,13 +52,15 @@ export function collapseWhitespace(text: string): string {
 
 const ATX_HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/u;
 const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/u;
-const THEMATIC_BREAK = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/u;
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/u;
+const THEMATIC_BREAK =/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/u;
 
 /**
  * Splits the text of VISION.md into its vision lines.
  *
  * Every non-blank line is a vision line except a heading (`#` style, or a line
- * underlined with `=` or `-`) and a thematic break. Each vision line keeps the
+ * underlined with `=` or `-`), a thematic break, and anything in a fenced code
+ * block (``` or ~~~), fence lines included, which also leaves the heading alone. Each vision line keeps the
  * nearest heading above it.
  */
 export function splitVisionLines(content: string): VisionLine[] {
@@ -66,8 +68,22 @@ export function splitVisionLines(content: string): VisionLine[] {
   const lines: VisionLine[] = [];
   let heading: string | null = null;
 
+  let fence: { char: string; length: number } | null = null;
+
   for (let index = 0; index < raw.length; index++) {
     const text = raw[index] ?? "";
+    if (fence !== null) {
+      const close = FENCE.exec(text);
+      if (close && close[1]?.[0] === fence.char && (close[1]?.length ?? 0) >= fence.length && (close[2] ?? "").trim() === "") {
+        fence = null;
+      }
+      continue;
+    }
+    const open = FENCE.exec(text);
+    if (open && !(open[1]?.startsWith("`") && (open[2] ?? "").includes("`"))) {
+      fence = { char: open[1]?.[0] ?? "`", length: open[1]?.length ?? 3 };
+      continue;
+    }
     if (text.trim() === "") continue;
 
     const atx = ATX_HEADING.exec(text);

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { forgeRemote, Mirror, mirrorPaths, pullRequestHeadRef, type ForgeName } from "../src/mirror.ts";
+import { OperationalLog } from "../src/operational-log.ts";
 import { readVision } from "../src/vision.ts";
 import { FixtureRepo, git, tempDirectory } from "./git-fixture.ts";
 
@@ -186,4 +187,43 @@ test("a read-only checkout at a recorded sha holds the repo as it was then", asy
   await mirror.removeCheckout(fork);
   assert.ok(!existsSync(checkout.directory));
   await assert.rejects(mirror.checkout("main"), RangeError, "a checkout is at a recorded sha, not a branch name");
+});
+
+test("a checkout leaves out symlinks pointing outside it, logs them, and keeps in-tree ones", async (t) => {
+  const repo = new FixtureRepo(t);
+  repo.write("VISION.md", VISION).write("docs/guide.md", "guide\n");
+  mkdirSync(join(repo.work, "docs"), { recursive: true });
+  symlinkSync("/etc/hostname", join(repo.work, "absolute"));
+  symlinkSync("../../outside", join(repo.work, "docs", "escaping"));
+  symlinkSync("guide.md", join(repo.work, "docs", "inside"));
+  symlinkSync("docs/inside", join(repo.work, "chain"));
+  symlinkSync("docs", join(repo.work, "dirlink"));
+  symlinkSync("dirlink/../../x", join(repo.work, "viaLink"));
+  const commit = repo.commit("links");
+  repo.push("main");
+
+  const dataDirectory = tempDirectory(t, "data");
+  const lines: string[] = [];
+  const log = new OperationalLog(dataDirectory, { echo: (line) => lines.push(line) });
+  const mirror = await Mirror.open({
+    dataDirectory,
+    key: { forge: "github", host: "forge.example", projectId: 42 },
+    remote: { url: repo.remote, credentialHelper: null },
+    log,
+  });
+  await mirror.updateDefaultBranch();
+
+  const checkout = await mirror.checkout(commit);
+  assert.deepEqual(checkout.dropped, ["absolute", "docs/escaping", "viaLink"]);
+  for (const gone of checkout.dropped) assert.throws(() => lstatSync(join(checkout.directory, gone)), { code: "ENOENT" });
+  assert.ok(lstatSync(join(checkout.directory, "docs", "inside")).isSymbolicLink());
+  assert.ok(lstatSync(join(checkout.directory, "chain")).isSymbolicLink());
+  assert.ok(lstatSync(join(checkout.directory, "dirlink")).isSymbolicLink());
+  assert.equal(readFileSync(join(checkout.directory, "chain"), "utf8"), "guide\n");
+
+  const entries = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.level, "warn");
+  assert.equal(entries[0]?.commit, commit);
+  assert.deepEqual(entries[0]?.dropped, checkout.dropped);
 });
