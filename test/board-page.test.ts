@@ -199,15 +199,19 @@ test("the item view shows the six parts in the order of spec §13", async (t) =>
   const form = parsed.forms.find((f) => f.controls.some((c) => c.name === "answer"))!;
   const labels = form.controls.filter((c) => c.type === "radio").map((c) => c.label);
   assert.equal(labels.length, 4);
-  assert.match(labels[0]!, /^Any Unicode whitespace separates words “new york” counts as 2 words\.$/, "each option with the outcome a user would observe");
+  assert.match(
+    labels[0]!,
+    /^Any Unicode whitespace separates words “new york” counts as 2 words\. This goes against a vision line for this ticket only\. The line stays as it is; to change the rule, edit VISION\.md\.$/,
+    "each option with the outcome a user would observe, and the warning when going ahead goes against a vision line",
+  );
   assert.match(labels[2]!, /^Answer in my own words$/);
   assert.match(labels[3]!, /^Don't go ahead/, "then don't go ahead");
   assert.ok(form.controls.some((c) => c.type === "checkbox" && /Show my note on the issue/.test(c.label)));
   assert.match(parsed.text, /Add a note/);
   assert.deepEqual(
     form.controls.filter((c) => c.type === "hidden").map((c) => [c.name, c.value]),
-    [["item", String(item.id)], ["version", String(BOARD_ITEM_VERSION)]],
-    "the form carries the item version it shows",
+    [["token", board.server.info.token], ["item", String(item.id)], ["version", String(BOARD_ITEM_VERSION)]],
+    "the form carries the per-start token and the item version it shows",
   );
 });
 
@@ -251,9 +255,9 @@ test("a withdrawn item's form is locked: nothing in it can be sent", async (t) =
   const page = await board.get(`/?item=${item.id}`);
   const form = parsePage(page.body).forms.find((f) => f.controls.some((c) => c.name === "answer"))!;
   assert.ok(form.controls.filter((c) => c.type === "radio" || c.type === "checkbox").every((c) => c.disabled), "every choice is disabled");
-  assert.match(page.body, /<form id="answer-form" class="answer" data-locked="true">/);
+  assert.match(page.body, /<form id="answer-form" class="answer" method="post" action="\/board\/answer" data-locked="true">/);
   assert.equal((page.body.match(/<textarea [^>]* readonly>/g) ?? []).length, 2, "text fields stay readable to copy, but read-only");
-  assert.ok(!form.controls.some((c) => c.tag === "button" || c.type === "submit"), "no button sends it");
+  assert.ok(form.controls.filter((c) => c.tag === "button" || c.type === "submit").every((c) => c.disabled), "no button sends it");
   assert.match(page.body, /document\.addEventListener\("submit"[\s\S]*dataset\.locked === "true"\) event\.preventDefault\(\)/, "a locked form refuses to submit");
   assert.equal(stateOf(page.body).key, "withdrawn:");
 });
@@ -352,7 +356,8 @@ test("the board offers no reordering, postponing, later, pause or split", async 
     assert.doesNotMatch(page.body, /draggable/);
   }
   const page = await board.get(`/?item=${answered.item.id}`);
-  assert.match(stateOf(page.body).text, /^Answered by Ada Owner at .*: Any Unicode whitespace separates words\s*Next decision$/);
+  assert.match(stateOf(page.body).text, /^Answered by Ada Owner at .* · item version 1\s*The answer: Any Unicode whitespace separates words\s/);
+  assert.match(stateOf(page.body).text, /Next decision$/);
 });
 
 /** An element as much as the page's script touches it. */

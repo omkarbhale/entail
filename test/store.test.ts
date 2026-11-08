@@ -168,6 +168,8 @@ test("a store from schema 1 is migrated to the current schema and keeps its reco
     }
     db.exec(`DROP TABLE ${table}`);
   }
+  // Nor the item version an answer was given to.
+  db.exec("ALTER TABLE answers DROP COLUMN item_version");
   db.exec("PRAGMA user_version = 1");
   db.close();
 
@@ -632,6 +634,29 @@ test("a board item is raised by its call, answered or withdrawn once, and cited 
   const edited = store.recordCall({ ticketId: other.id, kind: "verdict", reason: "the issue was edited", stateTo: "deciding" });
   store.withdrawBoardItem({ boardItemId: otherItem.id, callId: edited.id, reason: "the issue was edited" });
   assert.throws(() => store.recordAnswer({ boardItemId: otherItem.id, answeredBy: "Owner", shape: "dont-go-ahead" }), /withdrawn/);
+});
+
+test("an answer records the item version it was given to, and one from before schema 5 reads as the first version", (t) => {
+  const dir = tempDirectory(t);
+  const first = Store.openIn(dir);
+  const repo = enroll(first);
+  const raiseItem = (issueNumber: number) => {
+    const ticket = first.takeIn({ repoId: repo.id, issueNumber });
+    const call = first.recordCall({ ticketId: ticket.id, kind: "raise", reason: "r", stateTo: "on-the-board" });
+    return first.raiseBoardItem({ ticketId: ticket.id, callId: call.id, decision: "Go ahead?", whyRaised: "pin", snapshot: { version: 3 } });
+  };
+  const versioned = first.recordAnswer({ boardItemId: raiseItem(1).id, itemVersion: 3, answeredBy: "Owner", shape: "dont-go-ahead" });
+  assert.equal(versioned.itemVersion, 3);
+  assert.throws(() => first.recordAnswer({ boardItemId: raiseItem(2).id, itemVersion: 0, answeredBy: "Owner", shape: "dont-go-ahead" }), /CHECK/);
+  first.close();
+
+  // Take the store back to schema 4, whose answers had no item version.
+  const db = new DatabaseSync(join(dir, STORE_FILE));
+  db.exec("ALTER TABLE answers DROP COLUMN item_version");
+  db.exec("PRAGMA user_version = 4");
+  db.close();
+  const store = openStore(t, dir);
+  assert.equal(store.answerFor(versioned.boardItemId)?.itemVersion, 1);
 });
 
 test("enrolling records the repo, its first settings version, every vision line's origin and the open issues at once", (t) => {

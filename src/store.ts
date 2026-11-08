@@ -251,6 +251,8 @@ export interface BoardItemRecord extends NewBoardItem {
 
 export interface NewAnswer {
   boardItemId: number;
+  /** The item version the board form showed and the answer was given to; the first version when not given. */
+  itemVersion?: number;
   /** Whoever gave the answer. */
   answeredBy: string;
   shape: AnswerShape;
@@ -267,6 +269,8 @@ export interface AnswerRecord {
   boardItemId: number;
   answeredAt: string;
   answeredBy: string;
+  /** The item version the answer was given to. */
+  itemVersion: number;
   shape: AnswerShape;
   optionId: string | null;
   text: string | null;
@@ -768,11 +772,12 @@ export class Store {
   /** Records the owner's answer. An answer is not a call; the change it causes is a call citing it. */
   recordAnswer(answer: NewAnswer): AnswerRecord {
     const id = this.#insert(
-      `INSERT INTO answers (board_item_id, answered_at, answered_by, shape, option_id, text, note, show_note_on_issue)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO answers (board_item_id, answered_at, answered_by, item_version, shape, option_id, text, note, show_note_on_issue)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       answer.boardItemId,
       this.#time(),
       answer.answeredBy,
+      answer.itemVersion ?? 1,
       answer.shape,
       answer.optionId ?? null,
       answer.text ?? null,
@@ -1195,6 +1200,7 @@ function toAnswer(row: Row): AnswerRecord {
     boardItemId: num(row.board_item_id),
     answeredAt: str(row.answered_at),
     answeredBy: str(row.answered_by),
+    itemVersion: num(row.item_version),
     shape: str(row.shape) as AnswerShape,
     optionId: strOrNull(row.option_id),
     text: strOrNull(row.text),
