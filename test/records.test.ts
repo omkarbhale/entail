@@ -21,6 +21,9 @@ import {
   RecordsRepo,
 } from "../src/records-repo.ts";
 import { SCHEMA_VERSION } from "../src/store-schema.ts";
+import { CURSORS_FILE } from "../src/cursors.ts";
+import { LOCK_FILE, LockHeldError } from "../src/lock.ts";
+import { restoreRecords, RestoreError } from "../src/records-restore.ts";
 import { Store } from "../src/store.ts";
 import { git, tempDirectory } from "./git-fixture.ts";
 
@@ -98,6 +101,7 @@ function populatedStore(dir: string): Store {
 
   store.recordVisionLineOrigin({ repoId: repo.id, line: "Colours are fine.", origin: "agent-proposed-owner-approved", commitSha: "b".repeat(40), source: "trailer" });
   store.recordVisionChange({ repoId: repo.id, commitSha: "b".repeat(40), blobSha: "c".repeat(40), previousBlobSha: "d".repeat(40), removed: [], added: ["Colours are fine."] });
+  store.recordFreshStart({ repoId: repo.id, confirmedBy: "Ada", markedIssueNumbers: [4, 3] });
   return store;
 }
 
@@ -372,4 +376,86 @@ test("saves run one at a time, in the order asked", async (t) => {
   assert.ok(subjects.length <= 2);
   const dir = join(dataDirectory, RECORDS_DIRECTORY);
   assert.equal(readFileSync(join(dir, tableFile("tickets")), "utf8"), exportRecords(store.path).get(tableFile("tickets")));
+});
+
+// Restoring
+
+/** A records repo pushed to a bare remote from a store holding every kind of record. */
+async function pushedRecords(t: TestContext): Promise<Repo & { remote: string }> {
+  const repo = recordsRepo(t);
+  const remote = bareRemote(t);
+  repo.setRemote(remote);
+  const saved = await repo.records.save("answer");
+  assert.ok(!("error" in saved) && saved.push === "pushed");
+  return { ...repo, remote };
+}
+
+test("restoring clones the records repo and imports it into a fresh store with every ticket, call, answer and settings version", async (t) => {
+  const { store, remote } = await pushedRecords(t);
+  const dataDirectory = tempDirectory(t, "new-machine");
+
+  const restored = await restoreRecords({ dataDirectory, remote });
+  assert.equal(restored.storePath, join(dataDirectory, "store.sqlite"));
+  assert.equal(restored.setAside, null, "the data directory held nothing to set aside");
+  assert.equal(restored.commit, git(remote, "rev-parse", `refs/heads/${RECORDS_BRANCH}`));
+  assert.deepEqual(exportRecords(restored.storePath), exportRecords(store.path), "the restored store is the same records");
+
+  const fresh = Store.openIn(dataDirectory);
+  t.after(() => fresh.close());
+  for (const ticket of [1, 2, 3]) {
+    assert.deepEqual(fresh.getTicket(ticket), store.getTicket(ticket), `ticket ${ticket} and its current state`);
+    assert.deepEqual(fresh.callsForTicket(ticket), store.callsForTicket(ticket), `ticket ${ticket}'s calls`);
+    assert.deepEqual(fresh.boardItemsForTicket(ticket), store.boardItemsForTicket(ticket), `ticket ${ticket}'s board items and answers`);
+  }
+  assert.deepEqual(fresh.settingsHistory(1), store.settingsHistory(1), "every settings version");
+  assert.deepEqual(fresh.globalSettingsHistory(), store.globalSettingsHistory(), "every global settings version");
+  assert.deepEqual(fresh.freshStarts(1), store.freshStarts(1));
+
+  // The records repo carries on from the remote's history, so the next push is a fast-forward.
+  const records = new RecordsRepo({ dataDirectory, storePath: fresh.path, remote: () => remote });
+  fresh.takeIn({ repoId: 1, issueNumber: 11 });
+  const saved = await records.save("answer");
+  assert.ok(!("error" in saved));
+  assert.equal(saved.push, "pushed");
+  assert.deepEqual(log(remote, `refs/heads/${RECORDS_BRANCH}`), ["entail records: after an answer", "entail records: after an answer"]);
+});
+
+test("restoring refuses a data directory that holds records unless asked to replace them, and then sets them aside", async (t) => {
+  const { store, remote } = await pushedRecords(t);
+  const dataDirectory = tempDirectory(t, "started-fresh");
+  const before = Store.openIn(dataDirectory);
+  before.saveGlobalSettings({ ...DEFAULT_GLOBAL_SETTINGS, ownerDisplayName: "Ada" }, "Ada");
+  before.close();
+  writeFileSync(join(dataDirectory, CURSORS_FILE), "{}\n");
+
+  await assert.rejects(restoreRecords({ dataDirectory, remote }), (error: unknown) => error instanceof RestoreError && /--replace/.test(error.message));
+  const untouched = Store.openIn(dataDirectory);
+  assert.equal(untouched.globalSettingsHistory().length, 1, "the store is as it was");
+  untouched.close();
+  assert.equal(existsSync(join(dataDirectory, RECORDS_DIRECTORY)), false);
+
+  const restored = await restoreRecords({ dataDirectory, remote, replace: true, now: () => new Date(Date.UTC(2026, 10, 9, 13, 0, 0)) });
+  assert.equal(restored.setAside, join(dataDirectory, "before-restore-2026-11-09T13-00-00-000Z"));
+  assert.ok(readdirSync(restored.setAside!).includes("store.sqlite"), "the earlier store is set aside, not deleted");
+  assert.ok(readdirSync(restored.setAside!).includes(CURSORS_FILE), "with the cursors that belong to it");
+  assert.equal(existsSync(join(dataDirectory, CURSORS_FILE)), false);
+  assert.deepEqual(exportRecords(join(dataDirectory, "store.sqlite")), exportRecords(store.path));
+  assert.ok(!readdirSync(dataDirectory).some((name) => name.startsWith("restoring-")), "nothing is left staged");
+});
+
+test("restoring refuses while entail is running, and a remote it cannot fetch leaves the data directory as it was", async (t) => {
+  const { remote } = await pushedRecords(t);
+  const running = tempDirectory(t, "running");
+  // A live process holds the lock, as a running entail would.
+  writeFileSync(join(running, LOCK_FILE), `${JSON.stringify({ pid: process.ppid, startedAt: new Date().toISOString() })}\n`);
+  await assert.rejects(restoreRecords({ dataDirectory: running, remote }), LockHeldError);
+  assert.equal(existsSync(join(running, "store.sqlite")), false);
+
+  const dataDirectory = tempDirectory(t, "missing-remote");
+  await assert.rejects(
+    restoreRecords({ dataDirectory, remote: join(dataDirectory, "no-such-remote.git") }),
+    (error: unknown) => error instanceof RestoreError && /could not be fetched/.test(error.message),
+  );
+  assert.deepEqual(readdirSync(dataDirectory), [], "no store, no records repo and nothing staged");
+  await assert.rejects(restoreRecords({ dataDirectory, remote: "--upload-pack=touch /tmp/x" }), RestoreError);
 });

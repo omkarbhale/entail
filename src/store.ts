@@ -112,6 +112,27 @@ export interface EnrollmentRecord {
   openIssueNumbers: number[];
 }
 
+/**
+ * A fresh start the owner confirmed for a repo whose issues carried entail's
+ * hidden marker with no records behind them (ADR-0009). Every issue it lists
+ * is left alone, and only new issues are taken in. It is not a call.
+ */
+export interface NewFreshStart {
+  repoId: number;
+  /** The owner's name as recorded with the confirmation. */
+  confirmedBy: string;
+  /** The issues that carried the marker with no records, which entail leaves alone from now on. */
+  markedIssueNumbers: readonly number[];
+}
+
+export interface FreshStartRecord {
+  id: number;
+  repoId: number;
+  confirmedAt: string;
+  confirmedBy: string;
+  markedIssueNumbers: number[];
+}
+
 export interface SettingsVersionRecord {
   id: number;
   repoId: number;
@@ -537,6 +558,33 @@ export class Store {
     const row = this.#get(
       `SELECT 1 AS open FROM enrollments e, json_each(e.open_issue_numbers) n
        WHERE e.id = (SELECT max(id) FROM enrollments WHERE repo_id = ?) AND n.value = ?`,
+      repoId,
+      issueNumber,
+    );
+    return row !== undefined;
+  }
+
+  /** Records a fresh start the owner confirmed for a repo (ADR-0009). It is not a call. */
+  recordFreshStart(freshStart: NewFreshStart): FreshStartRecord {
+    const id = this.#insert(
+      "INSERT INTO fresh_starts (repo_id, confirmed_at, confirmed_by, marked_issue_numbers) VALUES (?, ?, ?, ?)",
+      freshStart.repoId,
+      this.#time(),
+      freshStart.confirmedBy,
+      JSON.stringify([...new Set(freshStart.markedIssueNumbers)].sort((a, b) => a - b)),
+    );
+    return mapOrNull(this.#get("SELECT * FROM fresh_starts WHERE id = ?", id), toFreshStart)!;
+  }
+
+  /** Every fresh start confirmed for a repo, oldest first. */
+  freshStarts(repoId: number): FreshStartRecord[] {
+    return this.#all("SELECT * FROM fresh_starts WHERE repo_id = ? ORDER BY id", repoId).map(toFreshStart);
+  }
+
+  /** Whether a fresh start for the repo left the issue alone, so entail never takes it in (ADR-0009). */
+  leftAloneAtFreshStart(repoId: number, issueNumber: number): boolean {
+    const row = this.#get(
+      `SELECT 1 AS alone FROM fresh_starts f, json_each(f.marked_issue_numbers) n WHERE f.repo_id = ? AND n.value = ? LIMIT 1`,
       repoId,
       issueNumber,
     );
@@ -1142,6 +1190,16 @@ function toEnrollment(row: Row): EnrollmentRecord {
     visionSha: str(row.vision_sha),
     settingsVersionId: num(row.settings_version_id),
     openIssueNumbers: parse(row.open_issue_numbers) as number[],
+  };
+}
+
+function toFreshStart(row: Row): FreshStartRecord {
+  return {
+    id: num(row.id),
+    repoId: num(row.repo_id),
+    confirmedAt: str(row.confirmed_at),
+    confirmedBy: str(row.confirmed_by),
+    markedIssueNumbers: parse(row.marked_issue_numbers) as number[],
   };
 }
 

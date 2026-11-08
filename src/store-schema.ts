@@ -1,7 +1,7 @@
 import { FINAL_STATES, INITIAL_STATE, TICKET_STATES, TICKET_TRANSITIONS } from "./ticket-states.ts";
 
 /** Bumped whenever the schema below changes; a store from a newer entail is refused. */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /**
  * Every table of the store except `ticket_states`. The store itself refuses
@@ -23,6 +23,7 @@ export const APPEND_ONLY_TABLES = [
   "enrollment_model_runs",
   "forge_write_intents",
   "forge_write_confirmations",
+  "fresh_starts",
 ] as const;
 
 export const VISION_ORIGINS = [
@@ -67,6 +68,7 @@ const KEYS: Readonly<Record<(typeof APPEND_ONLY_TABLES)[number] | "ticket_states
   enrollment_model_runs: [["id"]],
   forge_write_intents: [["id"]],
   forge_write_confirmations: [["intent_id"]],
+  fresh_starts: [["id"]],
 };
 
 const noReplace = ([table, keys]: [string, readonly (readonly string[])[]]) => `
@@ -137,6 +139,20 @@ CREATE TABLE enrollment_model_runs (
   CHECK ((output IS NULL) <> (failure IS NULL))
 ) STRICT;
 CREATE INDEX enrollment_model_runs_by_enrollment ON enrollment_model_runs (enrollment_id, id);
+`;
+
+// The owner confirmed a fresh start for a repo whose issues carried entail's
+// hidden marker with no records behind it: those issues are left alone, and
+// only new ones are taken in (ADR-0009). Like a settings save, it is not a call.
+const FRESH_STARTS_TABLE = `
+CREATE TABLE fresh_starts (
+  id INTEGER PRIMARY KEY,
+  repo_id INTEGER NOT NULL REFERENCES repos(id),
+  confirmed_at TEXT NOT NULL,
+  confirmed_by TEXT NOT NULL CHECK (confirmed_by <> ''),
+  marked_issue_numbers TEXT NOT NULL ${jsonArray("marked_issue_numbers")}
+) STRICT;
+CREATE INDEX fresh_starts_by_repo ON fresh_starts (repo_id, id);
 `;
 
 const ENROLLMENTS_SETTINGS_OF_REPO = `
@@ -308,6 +324,7 @@ CREATE TABLE vision_changes (
 
 ${ENROLLMENTS_TABLE}
 ${ENROLLMENT_MODEL_RUNS_TABLE}
+${FRESH_STARTS_TABLE}
 -- A forge write recorded before it is sent; confirmed by a row in
 -- forge_write_confirmations once sent or settled on start (ADR-0017).
 CREATE TABLE forge_write_intents (
@@ -472,4 +489,6 @@ export const MIGRATIONS: Readonly<Record<number, string>> = {
   ].join(""),
   // 4 -> 5: the item version each answer was given to; answers before it were to the first version.
   4: "ALTER TABLE answers ADD COLUMN item_version INTEGER NOT NULL DEFAULT 1 CHECK (item_version > 0);",
+  // 5 -> 6: fresh starts.
+  5: [FRESH_STARTS_TABLE, appendOnly("fresh_starts"), noReplace(["fresh_starts", KEYS.fresh_starts])].join(""),
 };

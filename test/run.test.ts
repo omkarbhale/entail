@@ -17,7 +17,8 @@ import { readRecordsPushState, RECORDS_BRANCH, RECORDS_DIRECTORY } from "../src/
 import { git, tempDirectory } from "./git-fixture.ts";
 import { enrollmentSettings } from "../src/repo-settings.ts";
 import { freePort, send } from "./http-client.ts";
-import { IntakeForge, issue, STILL_HEAD } from "./pass-fixture.ts";
+import { actor, IntakeForge, issue, issueComment, OWNER_ID, STILL_HEAD } from "./pass-fixture.ts";
+import { hiddenMarker } from "../src/comment-rules.ts";
 
 const running = new WeakMap<TestContext, RunningEntail[]>();
 
@@ -131,7 +132,7 @@ async function until(condition: () => boolean): Promise<void> {
   assert.ok(condition(), "the condition was met in time");
 }
 
-test("entail starts in spec order: lock, store, settle intents, the server, then the passes", async (t) => {
+test("entail starts in spec order: lock, store, the records check, settle intents, the server, then the passes", async (t) => {
   const dir = dataDirectory(t);
   saveSettings(dir, { boardPort: await freePort() });
   const store = Store.openIn(dir);
@@ -162,12 +163,56 @@ test("entail starts in spec order: lock, store, settle intents, the server, then
 
   const events = logEvents(dir);
   const at = (event: string) => events.indexOf(event);
+  assert.ok(at("records-check-clear") >= 0 && at("records-check-clear") < at("intent-settled"), "the records check runs before intents are settled");
   assert.ok(at("intent-settled") >= 0 && at("intent-settled") < at("intents-settled"));
   assert.ok(at("intents-settled") < at("started"), "intents are settled before the server starts");
   assert.ok(at("started") < at("poll"), "the passes start after the server");
   assert.deepEqual(entail.store.unconfirmedForgeWrites(), []);
   assert.deepEqual(forge.state.labels[3], ["entail:cleared"], "the label was applied again");
   assert.ok(entail.store.latestTicketForIssue(repo.id, 5), "the pass took the owner's new issue in");
+});
+
+test("a repo whose issues carry the marker with no records gets no forge read or write at start beyond the check", async (t) => {
+  const dir = dataDirectory(t);
+  saveSettings(dir, { boardPort: await freePort() });
+  const store = Store.openIn(dir);
+  const { repo } = store.enroll({
+    repo: { forge: "github", host: "github.com", projectId: 5001, path: "acme/tally", ownerAccountId: OWNER_ID, ownerLogin: "owner" },
+    settings: enrollmentSettings("owner-stated", "squash"),
+    savedBy: "Ada",
+    visionSha: "c0ffee",
+    visionLines: ["Tally counts words in text."],
+    visionOrigin: "owner-stated",
+    openIssueNumbers: [],
+  });
+  // A store restored from an older copy of the records: ticket 1 is here, but
+  // entail later took in issue 4 as ticket 2, which this store never saw.
+  const ticket = store.takeIn({ repoId: repo.id, issueNumber: 3 });
+  store.recordForgeWriteIntent({ repoId: repo.id, ticketId: ticket.id, kind: "label", target: "issue", number: 3, payload: { action: "add", label: "entail:cleared" } });
+  store.close();
+
+  const forge = new IntakeForge();
+  forge.issues = [issue(4, { createdAt: new Date(Date.now() + 60_000).toISOString() })];
+  forge.commentChanges = [
+    issueComment(8001, 3, actor(OWNER_ID), `Speaking from Ada's entail:\n\nTaken in.\n\n${hiddenMarker(ticket.id)}`),
+    issueComment(8002, 4, actor(OWNER_ID), `Speaking from Ada's entail:\n\nTaken in.\n\n${hiddenMarker(2)}`),
+  ];
+  const entail = await startRun({
+    dataDirectory: dir,
+    log: { echo: null },
+    passes: { forgeFor: () => forge, defaultBranchFor: async () => STILL_HEAD, planners: [] },
+  });
+  running.get(t)!.push(entail);
+
+  const events = logEvents(dir);
+  assert.ok(events.indexOf("records-missing") >= 0 && events.indexOf("records-missing") < events.indexOf("started"));
+  assert.deepEqual(entail.recordsCheck.standing(repo.id).status, "missing");
+  const [outcome] = await entail.passes.runPass();
+  assert.equal(outcome?.outcome, "waiting-for-records");
+  assert.equal(entail.store.unconfirmedForgeWrites().length, 1, "its unconfirmed intent waits too");
+  assert.deepEqual(forge.reads, { changes: 1, transferred: 0, comments: 0 }, "the check is the only read");
+  assert.deepEqual(forge.state.sends, { comment: 0, addLabel: 0, removeLabel: 0, close: 0, merge: 0 }, "and nothing is written");
+  assert.equal(entail.store.latestTicketForIssue(repo.id, 4), null, "nothing is taken in");
 });
 
 test("stopping starts no new work, waits for in-flight forge writes up to the limit, then releases the lock", async (t) => {

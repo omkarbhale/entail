@@ -11,6 +11,7 @@ import { takeInIfNew } from "./intake.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import { ModelRuns } from "./model-runs.ts";
 import type { OperationalLog } from "./operational-log.ts";
+import type { RecordsCheck, RecordsStanding } from "./records-check.ts";
 import type { RepoSettings } from "./repo-settings.ts";
 import type { RepoRecord, SettingsVersionRecord, Store, TicketRecord } from "./store.ts";
 
@@ -71,6 +72,7 @@ export type OwedStepPlanner = (ticket: TicketRecord, pass: RepoPass) => OwedStep
 export type RepoPassOutcome =
   | { repoId: number; outcome: "polled"; takenIn: number[]; started: number[] }
   | { repoId: number; outcome: "paused" | "stopping" }
+  | { repoId: number; outcome: "waiting-for-records"; since: string; markedIssues: number[] }
   | { repoId: number; outcome: "rate-limited" | "backing-off"; until: string }
   | { repoId: number; outcome: "failed"; error: string };
 
@@ -95,6 +97,12 @@ export interface PassesOptions {
    * the global "Model-run limit". Stopping the passes interrupts them.
    */
   modelRuns?: ModelRuns;
+  /**
+   * The check for marked issues with no records (spec §3). When given, a repo
+   * is polled only once the check found its records: a repo not yet checked
+   * is checked first, and a repo missing records is left alone. None by default.
+   */
+  recordsCheck?: RecordsCheck;
 }
 
 /** The forge adapter for an enrolled repo, through the owner's CLI, its subprocesses limited by `limiter`. */
@@ -108,7 +116,7 @@ export function repoForge(repo: RepoRecord, limiter: Limiter): Forge {
 
 /**
  * entail's passes (spec §1, ADR-0017). Every poll interval, for each enrolled
- * repo that is not paused, a pass:
+ * repo that is not paused or missing its records (spec §3), a pass:
  *
  * 1. checks the default branch head with `git ls-remote` and reads what
  *    changed on the forge, taking in the owner's new issues and handing each
@@ -138,6 +146,7 @@ export class Passes {
   readonly #changeHandlers: readonly ChangeHandler[];
   readonly #inFlight: InFlightWrites;
   readonly #modelRuns: ModelRuns;
+  readonly #recordsCheck: RecordsCheck | undefined;
 
   readonly #forges = new Map<number, Forge>();
   readonly #defaultBranches = new Map<number, Promise<DefaultBranchSource>>();
@@ -173,6 +182,7 @@ export class Passes {
     this.#planners = options.planners ?? [];
     this.#changeHandlers = options.changeHandlers ?? [];
     this.#inFlight = options.inFlight ?? new InFlightWrites();
+    this.#recordsCheck = options.recordsCheck;
     const store = options.store;
     this.#modelRuns =
       options.modelRuns ??
@@ -241,6 +251,19 @@ export class Passes {
     }
     const backoff = this.#backoff.get(repoId);
     if (backoff && now < backoff.until) return { repoId, outcome: "backing-off", until: new Date(backoff.until).toISOString() };
+
+    if (this.#recordsCheck) {
+      // A repo is read and written only once its records are found (spec §3).
+      let standing: RecordsStanding;
+      try {
+        standing = await this.#recordsCheck.check(repo);
+      } catch (error) {
+        return this.#failed(repo, error);
+      }
+      if (standing.status === "missing") {
+        return { repoId, outcome: "waiting-for-records", since: standing.since, markedIssues: standing.markedIssues };
+      }
+    }
 
     const forge = this.#forge(repo);
     const key = projectKey({ forge: repo.forge, host: repo.host, id: repo.projectId });

@@ -12,7 +12,9 @@ import { backoffDelay, BACKOFF_MAX_MS, Passes, type DefaultBranchSource, type Ow
 import { enrollmentSettings } from "../src/repo-settings.ts";
 import type { RepoRecord } from "../src/store.ts";
 import { FixtureRepo } from "./git-fixture.ts";
-import { actor, comment, IntakeForge, issue, OWNER_ID, passSetup, STILL_HEAD, type PassSetup } from "./pass-fixture.ts";
+import { actor, comment, IntakeForge, issue, issueComment, OWNER_ID, passSetup, STILL_HEAD, type PassSetup } from "./pass-fixture.ts";
+import { hiddenMarker } from "../src/comment-rules.ts";
+import { RecordsCheck } from "../src/records-check.ts";
 
 function passes(setup: PassSetup, forges: Map<number, IntakeForge> | IntakeForge, options: Partial<PassesOptions> = {}): Passes {
   return new Passes({
@@ -417,4 +419,47 @@ test("a host whose CLI is logged out is reported halted and clears after a succe
   const after = await engine.runPass();
   assert.equal(after[0]?.outcome, "polled");
   assert.equal(engine.hostHalted("github.com"), false);
+});
+
+test("a repo missing its records is left alone after the check, and after a fresh start only new issues are taken in", async (t) => {
+  const setup = passSetup(t);
+  const repo = setup.enroll();
+  const forge = new IntakeForge();
+  // Issue 3 would be taken in on its own, but entail acted on it before, from records this store does not hold.
+  forge.issues = [issue(3), issue(5)];
+  forge.commentChanges = [issueComment(8001, 3, actor(OWNER_ID), `Speaking from Ada's entail:\n\nTaken in.\n\n${hiddenMarker(42)}`)];
+  const recordsCheck = new RecordsCheck({ store: setup.store, forgeFor: () => forge, log: setup.log });
+  const run = passes(setup, forge, { recordsCheck });
+
+  for (let pass = 0; pass < 2; pass++) {
+    const [outcome] = await run.runPass();
+    assert.equal(outcome?.outcome, "waiting-for-records");
+    assert.deepEqual(outcome?.outcome === "waiting-for-records" ? outcome.markedIssues : null, [3]);
+  }
+  assert.equal(forge.reads.changes, 1, "no forge read beyond the check");
+  assert.deepEqual(forge.reads, { changes: 1, transferred: 0, comments: 0 });
+  assert.deepEqual(forge.state.sends, { comment: 0, addLabel: 0, removeLabel: 0, close: 0, merge: 0 }, "and no write");
+  assert.deepEqual(setup.store.ticketsInFlight(repo.id), []);
+
+  recordsCheck.confirmFreshStart(repo.id, "Ada");
+  const [outcome] = await run.runPass();
+  assert.equal(outcome?.outcome, "polled");
+  assert.equal(setup.store.latestTicketForIssue(repo.id, 3), null, "the marked issue is left alone");
+  assert.ok(setup.store.latestTicketForIssue(repo.id, 5), "a new issue is taken in");
+});
+
+test("a repo whose records check failed at start is checked on its next pass before it is polled", async (t) => {
+  const setup = passSetup(t);
+  const repo = setup.enroll();
+  const forge = new IntakeForge();
+  forge.issues = [issue(5)];
+  const recordsCheck = new RecordsCheck({ store: setup.store, forgeFor: () => forge, log: setup.log });
+  forge.failChanges = new Error("host unreachable");
+  await assert.rejects(recordsCheck.check(repo));
+
+  const [outcome] = await passes(setup, forge, { recordsCheck }).runPass();
+  assert.equal(outcome?.outcome, "polled");
+  assert.equal(recordsCheck.mayAct(repo.id), true);
+  assert.equal(forge.reads.changes, 3, "the failed check, the check on the pass, then the poll");
+  assert.ok(setup.store.latestTicketForIssue(repo.id, 5));
 });

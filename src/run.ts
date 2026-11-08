@@ -22,7 +22,9 @@ import { reposPages } from "./repos-page.ts";
 import { startServer, type BoardPortTakenError, type LocalServer } from "./server.ts";
 import { globalSettingsPage } from "./settings-page.ts";
 import { RecordsRepo } from "./records-repo.ts";
-import { Store, type StoreOpenError } from "./store.ts";
+import { checkEveryRepo, RecordsCheck } from "./records-check.ts";
+import { Store, type RepoRecord, type StoreOpenError } from "./store.ts";
+import type { Forge } from "./forge/forge.ts";
 import { ticketPage } from "./ticket-page.ts";
 
 /** How long stopping waits for in-flight forge writes to confirm (ADR-0017). */
@@ -61,6 +63,8 @@ export interface RunningEntail {
   modelRuns: ModelRuns;
   /** The records repo, committed after every answer, hourly and on stop, and pushed to the global settings' remote. */
   records: RecordsRepo;
+  /** The check for marked issues with no records, and each repo's standing on it (spec §3). */
+  recordsCheck: RecordsCheck;
   /** Stops entail and releases the lock. Calling it again does nothing. */
   stop(reason: string): void;
   /** Settles once entail has stopped. */
@@ -69,8 +73,10 @@ export interface RunningEntail {
 
 /**
  * Starts `entail run` in spec §1's order (ADR-0017): takes the single-copy
- * lock, opens the operational log and the store, settles unconfirmed forge
- * writes by reading the forge, starts the local server on the board port from
+ * lock, opens the operational log and the store, runs the check for marked
+ * issues with no records on every enrolled repo (spec §3), settles
+ * unconfirmed forge writes by reading the forge in the repos found clear,
+ * starts the local server on the board port from
  * the global settings (the board page, spec §13, the Repos page with
  * enrollment and the global settings page, spec §15, and the read-only Calls
  * page and ticket pages, spec §14),
@@ -82,8 +88,7 @@ export interface RunningEntail {
  * {@link StoreOpenError} when the store cannot be opened; and
  * {@link BoardPortTakenError} when the board port is taken. After the lock is
  * taken, a failure releases it before throwing. Later tickets add the
- * start-up checks for `git`, `claude`, each host's login and marked issues
- * with no records.
+ * start-up checks for `git`, `claude` and each host's login.
  */
 export async function startRun(options: RunOptions): Promise<RunningEntail> {
   const lock = acquireLock(options.dataDirectory);
@@ -111,9 +116,13 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
   const limiter = options.passes?.limiter ?? new Limiter();
   const forgeFor = options.passes?.forgeFor ?? ((repo) => repoForge(repo, limiter));
   const inFlight = new InFlightWrites();
+  const recordsCheck = new RecordsCheck({ store, forgeFor, log });
 
   try {
-    await settleIntents(store, forgeFor, log);
+    // A repo missing its records gets no forge write, settled or new, until
+    // the owner restores them or confirms a fresh start (spec §3).
+    await checkEveryRepo(store, recordsCheck);
+    await settleIntents(store, (repo) => (recordsCheck.mayAct(repo.id) ? forgeFor(repo) : null), log);
   } catch (error) {
     log.error("settle-failed", { error: error instanceof Error ? error.message : String(error) });
     store.close();
@@ -145,7 +154,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
         hostHalted: (host) => passes?.hostHalted(host) ?? false,
         afterAnswer: () => void records.save("answer"),
       }),
-      ...reposPages({ store, enroller, dataDirectory: options.dataDirectory }),
+      ...reposPages({ store, enroller, dataDirectory: options.dataDirectory, recordsCheck }),
       ...callsPages(store),
       ticketPage({ store, retryState: (ticketId) => modelRuns.retryState(String(ticketId)) }),
       globalSettingsPage(store, { dataDirectory: options.dataDirectory }),
@@ -192,6 +201,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     changeHandlers: options.passes?.changeHandlers ?? [pullRequests.onChange, closes.onChange],
     inFlight,
     modelRuns,
+    recordsCheck,
   });
   passes = running;
   running.start();
@@ -216,6 +226,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     inFlight,
     modelRuns,
     records,
+    recordsCheck,
     stop(reason: string) {
       if (stopping) return;
       stopping = true;
@@ -241,7 +252,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
 }
 
 /** Settles every unconfirmed forge write before the first pass, logging each. */
-async function settleIntents(store: Store, forgeFor: NonNullable<PassesOptions["forgeFor"]>, log: OperationalLog): Promise<void> {
+async function settleIntents(store: Store, forgeFor: (repo: RepoRecord) => Forge | null, log: OperationalLog): Promise<void> {
   const settled = await settleUnconfirmedWrites(store, forgeFor);
   for (const write of settled) {
     if ("error" in write) log.warn("intent-settle-failed", { intentId: write.intentId, kind: write.kind, error: write.error.message });

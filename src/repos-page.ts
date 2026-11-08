@@ -20,6 +20,7 @@ import { isMergeMethod, MERGE_METHOD_LABELS, PRESELECTED_VISION_ORIGIN, readRepo
 import { REPO_SETTINGS_PATH, repoSettingsPage } from "./repo-settings-page.ts";
 import { TOKEN_FIELD, type FormRequest, type Page, type PageRequest, type Reply } from "./server.ts";
 import { SETTINGS_PATH } from "./settings-page.ts";
+import type { RecordsCheck, RecordsStanding } from "./records-check.ts";
 import type { RepoRecord, Store, VisionOrigin } from "./store.ts";
 import { VISION_ORIGINS } from "./store-schema.ts";
 import { readVision } from "./vision.ts";
@@ -27,6 +28,12 @@ import { readVision } from "./vision.ts";
 export const REPOS_PATH = "/repos";
 export const CHECK_PATH = "/repos/check";
 export const ENROLL_PATH = "/repos/enroll";
+/** Where the owner confirms a fresh start for a repo missing its records (spec §3). */
+export const FRESH_START_PATH = "/repos/fresh-start";
+/** The fresh start form's field naming the repo, by its record id. */
+export const FRESH_START_REPO_FIELD = "repo";
+/** How the owner restores the records repo, with entail stopped (spec §3). */
+export const RESTORE_COMMAND = "entail restore <records remote> --replace";
 export { REPO_SETTINGS_PATH };
 
 /** The enrollment form's field names. */
@@ -63,8 +70,12 @@ const CHECK_KIND_LABELS: Readonly<Record<MechanicalCheckKind, string>> = {
 /** At most this many generic criteria rows are read from one form. */
 const MAX_CRITERIA_ROWS = 100;
 
-/** A repo's state on the Repos page (spec §15). A paused repo is the owner's setting; no vision is a halt. */
-export type RepoState = "active" | "pausing" | "paused" | "no vision";
+/**
+ * A repo's state on the Repos page (spec §15). A paused repo is the owner's
+ * setting; waiting for records and no vision are halts (spec §16), and a repo
+ * whose records have not been checked yet is left alone until they are.
+ */
+export type RepoState = "active" | "pausing" | "paused" | "waiting for records" | "checking records" | "no vision";
 
 /**
  * What the running process knows about a repo beyond its records. The pass
@@ -86,6 +97,12 @@ export interface ReposPageOptions {
   now?: () => Date;
   /** The forge adapter for an enrolled repo, which its settings page uses to resolve executor usernames. */
   createForge?: (setting: ForgeSetting) => Forge;
+  /**
+   * The check for marked issues with no records (spec §3): run on every repo
+   * enrolled here, shown as each repo's state, and cleared by a fresh start
+   * confirmed here. Without it every repo counts as having its records.
+   */
+  recordsCheck?: RecordsCheck;
 }
 
 /** Why nothing was enrolled: a refusal, or a review that is no longer open. */
@@ -108,6 +125,10 @@ export const ORIGIN_LABELS: Readonly<Record<VisionOrigin, string>> = {
  * to its settings, and holds the enrollment form. Enrolling is two steps: the
  * stated repo is checked and its review screen shown, then the owner confirms
  * it. Enrolling is unavailable until the owner's display name is set.
+ *
+ * A newly enrolled repo then gets the check for marked issues with no
+ * records. A repo missing its records says so here, with how to restore them
+ * and a form to confirm a fresh start instead (spec §3, ADR-0009).
  */
 export function reposPages(options: ReposPageOptions): Page[] {
   const { store, enroller } = options;
@@ -134,7 +155,9 @@ export function reposPages(options: ReposPageOptions): Page[] {
       async get(request) {
         const enrolled = Number(request.url.searchParams.get("enrolled"));
         const just = Number.isSafeInteger(enrolled) && enrolled > 0 ? store.getRepo(enrolled) : null;
-        return reposView(request, options, emptyStated(), [], just, 200);
+        const freshStarted = Number(request.url.searchParams.get("fresh-start"));
+        const fresh = Number.isSafeInteger(freshStarted) && freshStarted > 0 ? store.getRepo(freshStarted) : null;
+        return reposView(request, options, emptyStated(), [], just, 200, fresh);
       },
     },
     {
@@ -201,16 +224,45 @@ export function reposPages(options: ReposPageOptions): Page[] {
           genericCriteria: criteria,
         });
         if (!result.ok) return reposView(request, options, statedFrom(review), result.refusals, null, 422);
+        // The check at enrollment (spec §3). A check that could not read the
+        // forge is logged and run again on the repo's next pass.
+        await options.recordsCheck?.check(result.repo).catch(() => undefined);
         return { redirect: `${REPOS_PATH}?enrolled=${result.repo.id}` };
+      },
+    },
+    {
+      path: FRESH_START_PATH,
+      async post(request: FormRequest) {
+        const refuse = (problem: string) => reposView(request, options, emptyStated(), [], null, 409, null, problem);
+        const id = Number(request.form.get(FRESH_START_REPO_FIELD));
+        const repo = Number.isSafeInteger(id) && id > 0 ? store.getRepo(id) : null;
+        if (repo === null) return refuse("No such repo is enrolled.");
+        const name = readGlobalSettings(store).settings.ownerDisplayName;
+        if (name === null) return refuse("A fresh start is recorded with your display name. Set it in the global settings first.");
+        // Only a repo the check found missing records has a fresh start to confirm.
+        if (options.recordsCheck?.confirmFreshStart(repo.id, name) == null) {
+          return refuse(`${repo.path} on ${repo.host} is not waiting for records, so there is no fresh start to confirm.`);
+        }
+        return { redirect: `${REPOS_PATH}?fresh-start=${repo.id}` };
       },
     },
     repoSettingsPage({ store, dataDirectory: options.dataDirectory, createForge: options.createForge }),
   ];
 }
 
-/** The state shown for a repo: the owner's pause first, then a vanished vision, else active. */
-export function repoState(paused: boolean, pausing: boolean, visionPresent: boolean | null): RepoState {
+/**
+ * The state shown for a repo: the owner's pause first, then missing records,
+ * then records not checked yet, then a vanished vision, else active.
+ */
+export function repoState(
+  paused: boolean,
+  pausing: boolean,
+  visionPresent: boolean | null,
+  records: RecordsStanding["status"] = "clear",
+): RepoState {
   if (paused) return pausing ? "pausing" : "paused";
+  if (records === "missing") return "waiting for records";
+  if (records === "unchecked") return "checking records";
   if (visionPresent === false) return "no vision";
   return "active";
 }
@@ -236,9 +288,12 @@ async function reposView(
   refusals: readonly Problem[],
   justEnrolled: RepoRecord | null,
   status: number,
+  freshStarted: RepoRecord | null = null,
+  problem?: string,
 ): Promise<Reply> {
   const { store } = options;
   const repos = store.listRepos();
+  const standing = (repo: RepoRecord): RecordsStanding => options.recordsCheck?.standing(repo.id) ?? { status: "clear", checkedAt: "" };
   const rows = await Promise.all(
     repos.map(async (repo) => {
       const paused = readRepoSettings(store, repo.id)?.settings.paused === true;
@@ -246,6 +301,7 @@ async function reposView(
         paused,
         paused && (options.activity?.pausing?.(repo) ?? false),
         await mirrorVisionPresent(options.dataDirectory, repo),
+        standing(repo).status,
       );
       const poll = options.activity?.lastSuccessfulPoll?.(repo) ?? null;
       return `<tr>
@@ -270,8 +326,21 @@ ${rows.join("\n")}
   const enrolledNotice =
     justEnrolled === null
       ? ""
-      : `<p class="notice" role="status">Enrolled ${escapeHtml(justEnrolled.path)} on ${escapeHtml(justEnrolled.host)}. ` +
-        `Issues you open there from now on are taken in; pull in an issue that was already open with an <code>/entail</code> comment.</p>`;
+      : standing(justEnrolled).status === "missing"
+        ? `<p class="notice" role="status">Enrolled ${escapeHtml(justEnrolled.path)} on ${escapeHtml(justEnrolled.host)}, but its issues carry entail's hidden marker with no records behind it, so entail does nothing there yet. See below.</p>`
+        : `<p class="notice" role="status">Enrolled ${escapeHtml(justEnrolled.path)} on ${escapeHtml(justEnrolled.host)}. ` +
+          `Issues you open there from now on are taken in; pull in an issue that was already open with an <code>/entail</code> comment.</p>`;
+  const freshStartNotice =
+    freshStarted === null
+      ? ""
+      : `<p class="notice" role="status">Confirmed a fresh start for ${escapeHtml(freshStarted.path)} on ${escapeHtml(freshStarted.host)}. ` +
+        `entail leaves the issues that carried its marker alone and takes in only new ones.</p>`;
+  const problemHtml = problem === undefined ? "" : `<div class="error" role="alert"><p>${escapeHtml(problem)}</p></div>`;
+  const waiting = repos
+    .map((repo) => ({ repo, standing: standing(repo) }))
+    .filter((entry): entry is { repo: RepoRecord; standing: Extract<RecordsStanding, { status: "missing" }> } => entry.standing.status === "missing")
+    .map(({ repo, standing: missing }) => waitingForRecordsHtml(request, repo, missing))
+    .join("\n");
   const refused =
     refusals.length === 0
       ? ""
@@ -306,12 +375,35 @@ ${(["github", "gitlab"] as const).map((f) => `<option value="${f}"${stated.forge
 
   const body = `<h1>Repos</h1>
 ${enrolledNotice}
+${freshStartNotice}
+${problemHtml}
 ${list}
+${waiting}
 <h2>Enroll a repo</h2>
 ${refused}
 ${form}
 <p class="muted"><a href="${SETTINGS_PATH}">Global settings</a></p>`;
   return { status, html: renderPage(request, { title: "Repos", body }) };
+}
+
+/**
+ * Why a repo is waiting for its records, and the two ways out: restoring the
+ * records repo with entail stopped, or confirming a fresh start (spec §3).
+ */
+function waitingForRecordsHtml(request: PageRequest, repo: RepoRecord, missing: Extract<RecordsStanding, { status: "missing" }>): string {
+  const count = missing.markedIssues.length;
+  const issues = missing.markedIssues.map((n) => `#${n}`).join(", ");
+  return `<section class="waiting-for-records" data-repo="${repo.id}">
+<h2>${escapeHtml(repo.path)} is waiting for its records</h2>
+<p>${count === 1 ? "One issue carries" : `${count} issues carry`} entail's hidden marker, but entail has no records for ${count === 1 ? "it" : "them"}: ${escapeHtml(issues)}. entail acted there before, from records this machine does not hold, so it does nothing in this repo, reading or writing, until you restore those records or confirm a fresh start. Waiting since ${timeHtml(missing.since)}.</p>
+<p><strong>Restore the records:</strong> stop entail, run <code>${escapeHtml(RESTORE_COMMAND)}</code> to clone your records repo into a fresh store, and start entail again. Anything entail recorded on this machine is set aside, not deleted.</p>
+<form method="post" action="${FRESH_START_PATH}">
+<input type="hidden" name="${TOKEN_FIELD}" value="${escapeHtml(request.server.token)}">
+<input type="hidden" name="${FRESH_START_REPO_FIELD}" value="${repo.id}">
+<p><strong>Or start fresh:</strong> entail leaves ${count === 1 ? "that issue" : `those ${count} issues`} alone for good and takes in only issues opened from now on. Their earlier tickets, calls and answers stay lost.</p>
+<button type="submit">Confirm a fresh start for ${escapeHtml(repo.path)}</button>
+</form>
+</section>`;
 }
 
 interface ReviewState {
