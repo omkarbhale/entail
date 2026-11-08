@@ -28,6 +28,8 @@ export interface HeldLock {
 
 export const LOCK_FILE = "entail.lock";
 
+const START_TIME_TOLERANCE_MS = 5_000;
+
 /** Another copy of entail is running and holds the lock. */
 export class LockHeldError extends Error {
   readonly holder: LockHolder;
@@ -126,7 +128,7 @@ export function holderIsRunning(holder: LockHolder): boolean {
   if (!processExists(holder.pid)) return false;
   const started = Date.parse(psField("lstart", holder.pid));
   const lockedAt = Date.parse(holder.startedAt);
-  if (!Number.isNaN(started) && !Number.isNaN(lockedAt)) return started <= lockedAt;
+  if (!Number.isNaN(started) && !Number.isNaN(lockedAt)) return started <= lockedAt + START_TIME_TOLERANCE_MS;
   const command = psField("args", holder.pid);
   return command === "" || /entail/i.test(command);
 }

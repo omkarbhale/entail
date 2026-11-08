@@ -100,3 +100,12 @@ test("a lock written by a live process that started before it still refuses a se
   writeFileSync(join(dir, LOCK_FILE), `${JSON.stringify({ pid: child.pid, startedAt: after })}\n`);
   assert.throws(() => acquireLock(dir, { pid: 8888 }), LockHeldError);
 });
+
+test("a live holder whose process start reads slightly after the lock was written still refuses a second copy", (t) => {
+  const dir = dataDirectory(t);
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  t.after(() => child.kill());
+  const justBefore = new Date(Date.now() - 2_000).toISOString();
+  writeFileSync(join(dir, LOCK_FILE), `${JSON.stringify({ pid: child.pid, startedAt: justBefore })}\n`);
+  assert.throws(() => acquireLock(dir, { pid: 9999 }), LockHeldError);
+});
