@@ -24,6 +24,7 @@ export const CALL_KIND_LABELS: Readonly<Record<(typeof CALL_KINDS)[number], stri
   investigation: "investigation",
   criteria: "criteria",
   decline: "declined",
+  raise: "raised to the board",
   "close-at-intake": "closed at intake",
   recheck: "re-check",
   landing: "landing check",

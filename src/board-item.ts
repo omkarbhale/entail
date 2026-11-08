@@ -347,8 +347,7 @@ function happened(store: Store, ticket: TicketRecord): { calls: HappenedCall[]; 
     for (const call of store.callsForTicket(current.id)) {
       calls.push({ ticketId: call.ticketId, callId: call.id, kind: call.kind, madeAt: call.madeAt, reason: call.reason, stateChange: call.stateChange });
     }
-    for (const item of store.boardItemsForTicket(current.id)) {
-      const answer = store.answerFor(item.id);
+    for (const { item, answer } of store.boardItemsForTicket(current.id)) {
       if (answer === null) continue;
       answers.push({
         ticketId: current.id,

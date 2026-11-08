@@ -173,7 +173,7 @@ test("a needs-the-owner verdict creates exactly one open board item, one intake 
   const items = h.setup.store.boardItemsForTicket(ticket.id);
   assert.equal(items.length, 1, "one board item");
   const item = h.setup.store.openBoardItem(ticket.id)!;
-  assert.equal(item.id, items[0]!.id, "and it is open");
+  assert.equal(item.id, items[0]!.item.id, "and it is open");
   assert.equal(item.callId, raise.id);
   assert.equal(item.whyRaised, "contradiction");
   assert.equal(item.decision, "Go ahead with issue #7, although it contradicts the vision line “tally never reaches the network.”?");
