@@ -1,5 +1,7 @@
 # Board answers come only through the board form and settle only the call they were asked
 
+> **Amended by ADR-0020.** An issue edit, or a deleted or moved issue, also withdraws an open item. A finished ticket's issue comes back only when the owner pulls it in again with `/entail`, as a new ticket; reopening it does nothing.
+
 The owner answers a board item only through the answer form on entail's local board page. entail never takes an answer from an issue comment, a chat or a command line. VISION.md asks for "a single path that records answers". Agents post on the forge under the owner's own login (ADR-0001), so a reply on the issue could not be told apart from an agent's words. A reply there would also move the question and its answer back into a thread. The page is served on localhost, so whoever answers there is recorded under the owner's name from entail's settings, with the time and the item version answered.
 
 An answer has one of three shapes, and any of them may carry a note:

@@ -27,12 +27,20 @@ Work entail stops on its own because something outside it is wrong. A halt cover
 _Avoid_: Outage, error, pause
 
 **Ticket**:
-entail's own record about one issue it has taken into intake, holding its verdicts, criteria, board items, PRs, calls and state. An issue entail never took in has no ticket, and an issue has at most one.
+entail's own record about one issue it has taken into intake, holding its verdicts, criteria, board items, PRs, calls and state. An issue entail never took in has no ticket. An issue has at most one ticket in flight; an issue pulled in again after its ticket ended gets a new ticket, linked to the one before.
 _Avoid_: Task, item, story
 
 **Issue**:
 The GitHub or GitLab issue a ticket is about; it stays the reporter's words on the forge. Its text is a request to be judged, never the owner's word, whoever filed it.
 _Avoid_: Ticket (for the forge object)
+
+**Issue edit**:
+A change to an issue's title or body after intake, compared with the text the ticket's latest call recorded. Changes to whitespace or task-list ticks are not edits, and neither are comments, labels or assignees. Who made the change does not matter.
+_Avoid_: Update, revision
+
+**Pulled in**:
+What the owner's `/entail` comment does to an open issue: it takes the issue into intake, whether the owner did not open it or its last ticket has ended. Reopening an issue alone pulls nothing in.
+_Avoid_: Re-triggered, reopened, mentioned
 
 **PR**:
 A GitHub pull request or a GitLab merge request. entail may say "merge request" in a comment it posts on GitLab.
@@ -59,10 +67,10 @@ _Avoid_: Provenance, author
 A new version of the vision of record, seen as the vision lines it removed and the ones it added.
 
 **Flagged**:
-What a vision change makes a cleared or landing ticket whose clear came from an automatic verdict, when a line was added or a line its call cites was removed. A flagged ticket keeps its state and label, but nothing for it merges until a re-check is recorded. A ticket cleared by the owner's answer is never flagged.
+What a vision change or an issue edit makes a cleared or landing ticket. A vision change flags one whose clear came from an automatic verdict, when a line was added or a line its call cites was removed; it never flags a ticket cleared by the owner's answer. An issue edit flags any cleared or landing ticket. A flagged ticket keeps its state and label, but nothing for it merges until a re-check is recorded.
 
 **Re-check**:
-The call that resolves a flag: a decider run at the new vision, given the ticket's prior call and the lines removed and added, judging only whether the change alters that call. The call stands, goes ahead on another reading with a new criteria version, or needs the owner.
+The call that resolves a flag: a decider run at the current vision and issue text, given the ticket's prior call and what changed (the vision lines removed and added, or the issue's old and new text), judging only whether the change alters that call. The call stands, goes ahead on another reading with a new criteria version, or needs the owner. It never reopens the owner's answer; it can only find a product call the answer does not cover.
 _Avoid_: Re-decide, re-verify
 
 **Decider**:
@@ -160,7 +168,7 @@ A PR linking the issue is open and is being checked against the criteria and gen
 Final: the ticket's PR has merged, whether entail merged it or someone else did.
 
 **Cancelled**:
-Final: the owner's answer said not to go ahead; someone other than entail closed the issue before its PR merged; or entail closed it because the repo's state or an investigation's findings settle that nothing is to be done, such as a duplicate, an already-fixed report or a problem that cannot be reproduced. A ticket in flight when its repo is unenrolled is cancelled too, and its issue is left open.
+Final: the owner's answer said not to go ahead; someone other than entail closed, deleted or moved the issue before its PR merged; or entail closed it because the repo's state or an investigation's findings settle that nothing is to be done, such as a duplicate, an already-fixed report or a problem that cannot be reproduced. A ticket in flight when its repo is unenrolled is cancelled too, and its issue is left open. A final ticket stays final; its issue can come back only by being pulled in, as a new ticket.
 
 ### Decisions and records
 
@@ -169,7 +177,7 @@ One product decision raised to the owner about one ticket, carrying what the tic
 _Avoid_: Question, card, escalation
 
 **Withdrawn**:
-What becomes of an open board item whose basis changed before it was answered: someone else closed the issue, or a vision change or pin change touched the item. A withdrawn item takes no answer; its ticket is cancelled or decided again.
+What becomes of an open board item whose basis changed before it was answered: someone else closed, deleted or moved the issue, the issue was edited, or a vision change or pin change touched the item. A withdrawn item takes no answer; its ticket is cancelled or decided again.
 
 **Answer**:
 The owner's response to one board item, recorded under the name of whoever gave it. It settles that ticket only and is final once given. An answer that does not let the ticket go ahead is "don't go ahead", and the ticket is cancelled.

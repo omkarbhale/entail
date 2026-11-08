@@ -1,5 +1,7 @@
 # A flagged ticket is re-checked in place, and nothing merges until the re-check is recorded
 
+> **Amended by ADR-0020.** An issue edit also flags a cleared or landing ticket, including one cleared by the owner's answer, whose answer the re-check cannot reopen. Just before merging, entail re-reads the issue's title and body as well as VISION.md.
+
 When a vision change flags a cleared or landing ticket, the ticket keeps its state and its `entail:cleared` label, so an executor keeps working. entail runs a **re-check**: one read-only decider run at the new vision sha. It is given the prior call (its citation, vision check and reading chosen) and the lines the change removed and added, and it answers one narrow question: does this change alter that call? No PR for the ticket merges until the re-check call is recorded. VISION.md says a vision change flags in-flight work that relied on the old text, and that a large rework or significant drift never happens unasked. The narrow question keeps model noise from reopening what the change did not touch, which is why re-deciding every in-flight ticket was rejected on [How are vision lines identified and their origins kept outside the prose?](https://github.com/omkarbhale/entail/issues/20).
 
 ## Which tickets are flagged
