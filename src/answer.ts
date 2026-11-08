@@ -182,48 +182,73 @@ function quoteBlock(text: string): string {
 export const CRITERIA_TO_COME =
   "The criteria C1…Cn follow here once entail has written them from this decision, each citing it, then the label `entail:cleared`.";
 
+/** An answer as the issue quotes it, with whoever gave it once it is recorded. */
+export type QuotedAnswer = Pick<ChosenAnswer, "shape" | "optionId" | "text" | "note" | "showNoteOnIssue"> & { answeredBy?: string };
+
+/** An answer given on a ticket, with the board item it answered. */
+export interface GivenAnswer {
+  answer: AnswerRecord;
+  snapshot: Partial<BoardItemSnapshot>;
+}
+
+/** Whether an answer lets its ticket go ahead: any answer but "don't go ahead" (ADR-0008). */
+export function goesAhead(answer: Pick<ChosenAnswer, "shape">): boolean {
+  return answer.shape !== "dont-go-ahead";
+}
+
 /**
  * The decision an answer quotes on the issue, attributed to the owner (spec
  * §9 "After an answer"): the chosen option or the owner's own words, and the
- * note only when the owner ticked "Show my note on the issue".
+ * note only when the owner ticked "Show my note on the issue". A recorded
+ * answer is attributed to whoever gave it; one under review, to `owner`.
  */
-export function answerDecisionText(
-  owner: string,
-  answer: Pick<ChosenAnswer, "shape" | "optionId" | "text" | "note" | "showNoteOnIssue">,
-  snapshot: Partial<BoardItemSnapshot>,
-  forge: string | undefined,
-): string {
+export function answerDecisionText(owner: string, answer: QuotedAnswer, snapshot: Partial<BoardItemSnapshot>, forge: string | undefined): string {
+  const by = answer.answeredBy ?? owner;
   const parts: string[] = [];
   if (answer.shape === "dont-go-ahead") {
-    parts.push(`${owner} decided not to go ahead with this issue, so entail closes it${notPlanned(forge)} and nothing is taken forward.`);
+    parts.push(`${by} decided not to go ahead with this issue, so entail closes it${notPlanned(forge)} and nothing is taken forward.`);
   } else {
-    parts.push(`${owner} decided:`, "", quoteBlock(answerWords(answer, snapshot)));
+    parts.push(`${by} decided:`, "", quoteBlock(answerWords(answer, snapshot)));
     const option = chosenOption(answer, snapshot);
     if (option !== null) parts.push("", `What a user would observe: ${option.outcome.trim()}`);
   }
-  if (answer.note !== null && answer.showNoteOnIssue) parts.push("", `A note from ${owner}:`, "", quoteBlock(answer.note));
+  if (answer.note !== null && answer.showNoteOnIssue) parts.push("", `A note from ${by}:`, "", quoteBlock(answer.note));
   return parts.join("\n");
+}
+
+/** What else a going-ahead comment carries once the criteria are written. */
+export interface AnswerCommentParts {
+  /** Earlier answers on the ticket that still go ahead, quoted before this one, oldest first. */
+  earlier?: readonly GivenAnswer[];
+  /** What follows the decision: the criteria once written; {@link CRITERIA_TO_COME} until then. */
+  next?: string;
+  /** The intake comment this one replaces, named first. */
+  replaces?: string | null;
 }
 
 /**
  * The exact comment entail posts on the issue for an answer, attribution
  * line and hidden marker included. Going ahead, it is the next intake
- * comment: the item's vision check, then the decision, with the criteria to
- * follow where {@link CRITERIA_TO_COME} stands. "Don't go ahead" says the
+ * comment: the item's vision check, then the decision (after any earlier
+ * decision still in force on the ticket), then the criteria, which stand as
+ * {@link CRITERIA_TO_COME} until they are written. "Don't go ahead" says the
  * issue is closed. A private note never appears in it.
  */
 export function answerComment(
   owner: string,
   ticketId: number,
-  answer: Pick<ChosenAnswer, "shape" | "optionId" | "text" | "note" | "showNoteOnIssue">,
+  answer: QuotedAnswer,
   snapshot: Partial<BoardItemSnapshot>,
   forge: string | undefined,
+  more: AnswerCommentParts = {},
 ): string {
   const decision = answerDecisionText(owner, answer, snapshot, forge);
   if (answer.shape === "dont-go-ahead") return composeComment(owner, ticketId, decision);
+  const decisions = [...(more.earlier ?? []).map((given) => answerDecisionText(owner, given.answer, given.snapshot, forge)), decision];
   const parts: string[] = [];
+  if (more.replaces) parts.push(`This replaces [entail's earlier intake comment](${more.replaces}).`, "");
   if (snapshot.visionCheck !== undefined) parts.push(visionCheckSection(snapshot.visionCheck), "");
-  parts.push("### What happens next", "", decision, "", CRITERIA_TO_COME, "", EXECUTOR_LINE);
+  parts.push("### What happens next", "", decisions.join("\n\n"), "", (more.next ?? CRITERIA_TO_COME).trim(), "", EXECUTOR_LINE);
   return composeComment(owner, ticketId, parts.join("\n"));
 }
 

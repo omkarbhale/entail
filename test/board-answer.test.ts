@@ -34,7 +34,7 @@ interface Fixture {
   post(fields: Record<string, string>, options?: { token?: boolean }): Promise<{ status: number; body: string; location?: string }>;
 }
 
-async function serveBoard(t: TestContext): Promise<Fixture> {
+async function serveBoard(t: TestContext, options: { hostHalted?: (host: string) => boolean } = {}): Promise<Fixture> {
   const dir = mkdtempSync(join(tmpdir(), "entail-answer-"));
   let now = new Date(2026, 10, 9, 9, 0, 0).getTime();
   const store = Store.openIn(dir, { now: () => new Date((now += 1000)) });
@@ -89,7 +89,10 @@ async function serveBoard(t: TestContext): Promise<Fixture> {
   };
 
   let answersRecorded = 0;
-  const server = await startServer({ port: 0, pages: boardPages({ store, now: () => new Date(now), afterAnswer: () => answersRecorded++ }) });
+  const server = await startServer({
+    port: 0,
+    pages: boardPages({ store, now: () => new Date(now), hostHalted: options.hostHalted, afterAnswer: () => answersRecorded++ }),
+  });
   t.after(async () => {
     await server.close();
     store.close();
@@ -377,6 +380,34 @@ test("the receipt shows who answered, when, the item version, the new state, wha
   assert.ok(!parsePage(receipt.body).forms.some((f) => f.action === BOARD_ANSWER_PATH), "the receipt takes the form's place");
   const live = await board.get(`/board/live?item=${item.id}`);
   assert.doesNotMatch(live.body, /id="select"/, "the page does not move on by itself");
+});
+
+test("an answer recorded while its host is halted keeps its comment, and the receipt says it is posted when the host answers again", async (t) => {
+  let halted = false;
+  const board = await serveBoard(t, { hostHalted: (host) => halted && host === "github.com" });
+  const { item } = board.raise(board.github, 7, { kind: "contradiction" });
+  const recorded = await board.post(fields(item, { answer: "dont-go-ahead", step: "record" }));
+  halted = true;
+  const receipt = parsePage((await board.get(recorded.location!)).body).text;
+  assert.match(receipt, /entail cannot reach github\.com now\. Your answer is recorded, and the comment is kept and posted when github\.com answers again\./);
+  assert.match(receipt, /The comment entail posts on the issue/);
+  const live = await board.get(`/board/live?item=${item.id}`);
+  assert.match(live.body, /data-key="answered:[^"]*:waiting"/, "the receipt is swapped in again when the host halts");
+});
+
+test("once the answer's comment is posted, the receipt links it", async (t) => {
+  const board = await serveBoard(t);
+  const { ticket, item } = board.raise(board.github, 7, { kind: "contradiction" });
+  const recorded = await board.post(fields(item, { answer: "dont-go-ahead", step: "record" }));
+  assert.doesNotMatch((await board.get(recorded.location!)).body, /Posted on the issue/);
+
+  const answer = board.store.answerFor(item.id)!;
+  const call = board.store.recordCall({ ticketId: ticket.id, kind: "cancel-on-answer", reason: "The owner decided not to go ahead.", answerId: answer.id, stateTo: "cancelled" });
+  const intent = board.store.recordForgeWriteIntent({ repoId: board.github.id, ticketId: ticket.id, callId: call.id, kind: "comment", target: "issue", number: 7, payload: { body: "x" } });
+  board.store.confirmForgeWrite({ intentId: intent.id, comment: { id: "c1", url: "https://github.com/acme/tally/issues/7#issuecomment-1" } });
+  const receipt = await board.get(recorded.location!);
+  assert.match(receipt.body, /Posted on the issue: <a href="https:\/\/github\.com\/acme\/tally\/issues\/7#issuecomment-1">entail's comment<\/a>\./);
+  assert.match(receipt.body, /data-key="answered:[^"]*:posted"/);
 });
 
 test("the acceptance board driver answers through the real form: review, then record as the owner", async (t) => {
