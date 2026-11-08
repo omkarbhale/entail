@@ -121,6 +121,10 @@ _Avoid_: Question, card, escalation
 The owner's response to one board item, recorded under the name of whoever gave it. It settles that ticket only and is final once given. An answer that does not let the ticket go ahead is "don't go ahead", and the ticket is cancelled.
 _Avoid_: Ruling, decline, approval
 
+**Option**:
+One way to go ahead that a board item offers the owner, usually one of the ticket's readings with the outcome a user would observe. The owner may instead answer in their own words.
+_Avoid_: Choice, alternative
+
 **Call**:
 One decision entail made itself about a ticket, recorded with its reason and, where the vision settled it, its citation. A board answer is not a call; the change it causes is a call that cites the answer.
 _Avoid_: Event, action
