@@ -1,4 +1,5 @@
 import { ChangeDeduplicator } from "./changes.ts";
+import { ClaudeRunner } from "./claude-runner.ts";
 import { CursorStore } from "./cursors.ts";
 import { createForge } from "./forge/create-forge.ts";
 import { ForgeLoggedOutError, projectKey, RateLimitedError, type Forge, type ForgeKind } from "./forge/forge.ts";
@@ -8,6 +9,7 @@ import { ForgeWriter, InFlightWrites } from "./forge-writer.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import { takeInIfNew } from "./intake.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
+import { ModelRuns } from "./model-runs.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import type { RepoSettings } from "./repo-settings.ts";
 import type { RepoRecord, SettingsVersionRecord, Store, TicketRecord } from "./store.ts";
@@ -37,6 +39,8 @@ export interface RepoPass {
   head: { branch: string; commit: string };
   /** A forge writer whose writes stopping waits for. */
   writer(): ForgeWriter;
+  /** Where a step makes its model runs, so the limit, order, retries and pause hold across all repos. */
+  modelRuns: ModelRuns;
 }
 
 /** One step a ticket is owed, started by the pass unless the ticket already has a step running. */
@@ -75,6 +79,11 @@ export interface PassesOptions {
   planners?: readonly OwedStepPlanner[];
   /** Counts forge writes in flight, so stopping can wait for them. */
   inFlight?: InFlightWrites;
+  /**
+   * Where steps make their model runs; by default `claude -p` runs limited by
+   * the global "Model-run limit". Stopping the passes interrupts them.
+   */
+  modelRuns?: ModelRuns;
 }
 
 /** The forge adapter for an enrolled repo, through the owner's CLI, its subprocesses limited by `limiter`. */
@@ -115,6 +124,7 @@ export class Passes {
   readonly #defaultBranchFor: (repo: RepoRecord) => Promise<DefaultBranchSource>;
   readonly #planners: readonly OwedStepPlanner[];
   readonly #inFlight: InFlightWrites;
+  readonly #modelRuns: ModelRuns;
 
   readonly #forges = new Map<number, Forge>();
   readonly #defaultBranches = new Map<number, Promise<DefaultBranchSource>>();
@@ -147,6 +157,10 @@ export class Passes {
         }));
     this.#planners = options.planners ?? [];
     this.#inFlight = options.inFlight ?? new InFlightWrites();
+    const store = options.store;
+    this.#modelRuns =
+      options.modelRuns ??
+      new ModelRuns({ runner: new ClaudeRunner(), log: options.log, limit: () => readGlobalSettings(store).settings.modelRunLimit });
   }
 
   /** How many tickets have a step running now. */
@@ -160,12 +174,16 @@ export class Passes {
     this.#next(0);
   }
 
-  /** Starts no new pass and no new step. Resolves once the pass in progress, if any, has finished. */
+  /**
+   * Starts no new pass and no new step, and interrupts model runs, which stay
+   * owed and run again on the next start. Resolves once the pass in progress,
+   * if any, and the interrupted runs have ended.
+   */
   async stop(): Promise<void> {
     this.#stopping = true;
     clearTimeout(this.#timer);
     this.#timer = undefined;
-    await this.#current;
+    await Promise.all([this.#current, this.#modelRuns.stop()]);
   }
 
   #next(delayMs: number): void {
@@ -237,6 +255,7 @@ export class Passes {
       settings,
       head: { branch: head.branch, commit: head.commit },
       writer: () => this.#writer(repo, forge),
+      modelRuns: this.#modelRuns,
     });
     return { repoId, outcome: "polled", takenIn, started };
   }

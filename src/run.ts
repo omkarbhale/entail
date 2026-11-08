@@ -4,6 +4,9 @@ import { Notifier } from "./notice.ts";
 import { OperationalLog, type OperationalLogOptions } from "./operational-log.ts";
 import { Enroller } from "./enrollment.ts";
 import { Limiter } from "./forge-limit.ts";
+import { ClaudeRunner } from "./claude-runner.ts";
+import type { ModelRunner } from "./model-runner.ts";
+import { ModelRuns } from "./model-runs.ts";
 import { InFlightWrites, settleUnconfirmedWrites } from "./forge-writer.ts";
 import { Passes, repoForge, type PassesOptions } from "./pass.ts";
 import { reposPages } from "./repos-page.ts";
@@ -19,6 +22,8 @@ export interface RunOptions {
   log?: OperationalLogOptions;
   /** Replaces what the passes reach the forge and git through; the owner's own CLIs by default. */
   passes?: Pick<PassesOptions, "forgeFor" | "defaultBranchFor" | "planners" | "limiter">;
+  /** Makes every model run; `claude -p` on the owner's subscription by default. */
+  modelRunner?: ModelRunner;
   /** How long stopping waits for in-flight forge writes; {@link STOP_WAIT_MS} by default. */
   stopWaitMs?: number;
 }
@@ -41,6 +46,8 @@ export interface RunningEntail {
   passes: Passes;
   /** The forge writes in flight, which stopping waits for. */
   inFlight: InFlightWrites;
+  /** Every model run, limited by the global "Model-run limit"; stopping interrupts them. */
+  modelRuns: ModelRuns;
   /** Stops entail and releases the lock. Calling it again does nothing. */
   stop(reason: string): void;
   /** Settles once entail has stopped. */
@@ -124,6 +131,11 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     log,
   });
 
+  const modelRuns = new ModelRuns({
+    runner: options.modelRunner ?? new ClaudeRunner(),
+    log,
+    limit: () => readGlobalSettings(store).settings.modelRunLimit,
+  });
   const passes = new Passes({
     store,
     log,
@@ -133,6 +145,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     defaultBranchFor: options.passes?.defaultBranchFor,
     planners: options.passes?.planners,
     inFlight,
+    modelRuns,
   });
   passes.start();
   const stopWaitMs = options.stopWaitMs ?? STOP_WAIT_MS;
@@ -153,14 +166,16 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     notifier,
     passes,
     inFlight,
+    modelRuns,
     stop(reason: string) {
       if (stopping) return;
       stopping = true;
       log.info("stopping", { reason });
       void (async () => {
-        // Start no new work, then wait up to the limit for the pass in
-        // progress and for forge writes in flight to confirm. Writes left
-        // unconfirmed are settled on the next start.
+        // Start no new work and interrupt model runs, then wait up to the
+        // limit for the pass in progress, the interrupted runs and forge
+        // writes in flight to confirm. Writes left unconfirmed are settled on
+        // the next start, and interrupted runs are run again.
         await waitAtMost(stopWaitMs, Promise.all([passes.stop(), inFlight.settle(stopWaitMs)]));
         if (inFlight.count > 0) log.warn("writes-unconfirmed-at-stop", { count: inFlight.count });
         await server.close();

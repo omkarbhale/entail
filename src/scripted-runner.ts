@@ -9,8 +9,14 @@ import {
   type RunOptions,
 } from "./model-runner.ts";
 
-/** One recorded result: an output, or a machine failure. */
-export type ScriptedOutcome = { output: unknown; facts?: Partial<RunFacts> } | { failure: MachineFailure; facts?: Partial<RunFacts> | null };
+/**
+ * One recorded result: an output, or a machine failure. With `until`, the run
+ * stays in flight until that promise settles, or rejects with the signal's
+ * reason if it is interrupted first.
+ */
+export type ScriptedOutcome = ({ output: unknown; facts?: Partial<RunFacts> } | { failure: MachineFailure; facts?: Partial<RunFacts> | null }) & {
+  until?: Promise<unknown>;
+};
 
 /**
  * The model runner unit tests use in place of `claude` (spec, Testing
@@ -46,6 +52,7 @@ export class ScriptedRunner implements ModelRunner {
     if (outcome === undefined) {
       throw new Error(`no scripted outcome for a ${request.kind} run on ticket ${request.ticket ?? "(none)"}`);
     }
+    if (outcome.until) await held(outcome.until, options.signal);
     const facts = (overrides: Partial<RunFacts> | null | undefined): RunFacts => ({
       sessionId: `scripted-${this.requests.length}`,
       model: request.model,
@@ -58,6 +65,25 @@ export class ScriptedRunner implements ModelRunner {
       return { ok: false, failure: outcome.failure, facts: outcome.facts === null ? null : facts(outcome.facts) };
     }
     return acceptOutput(request.schema, outcome.output, facts(outcome.facts));
+  }
+}
+
+/** Waits for `until`, unless `signal` interrupts first. */
+async function held(until: Promise<unknown>, signal: AbortSignal | undefined): Promise<void> {
+  if (!signal) {
+    await until;
+    return;
+  }
+  signal.throwIfAborted();
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    await Promise.race([until, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
   }
 }
 
