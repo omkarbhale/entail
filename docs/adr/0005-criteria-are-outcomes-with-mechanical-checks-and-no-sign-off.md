@@ -24,5 +24,5 @@ entail writes each cleared ticket's criteria itself, because an issue is a reque
   The existing challenge then runs once over the verdict and the criteria together. Invalid output is a machine failure and is retried. A product call, or a challenge that succeeds, sends the ticket to the board.
 - **Freezing.** entail's record is the authority. The issue comment is a copy, and editing it changes nothing. Executors and PR text cannot change criteria, and a change is a new version written by a new call.
 - **Landing.** The landing check runs mechanical checks first, and no grade overrules a failed one. A fresh session grades the rest. Every "met" quotes its evidence word for word from the PR at the checked head, and no evidence means not met.
-- **Unknown causes.** When the cause of a reported problem is unknown, a criterion requires the PR to identify and explain it. Investigation happens inside the executor's PR, not as a separate state.
+- **Unknown causes.** Criteria are written only once the problem is known. When the cause or validity of a report is unknown, the ticket is investigated first (ADR-0006).
 - Decided on [What form do intake criteria take, and when does writing them need the owner?](https://github.com/omkarbhale/entail/issues/21).
