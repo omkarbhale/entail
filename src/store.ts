@@ -273,6 +273,33 @@ export interface AnswerRecord {
   showNoteOnIssue: boolean;
 }
 
+/** Why and when an open board item was withdrawn, and by which call. */
+export interface WithdrawalRecord {
+  boardItemId: number;
+  callId: number;
+  withdrawnAt: string;
+  reason: string;
+}
+
+/** A board item with how it ended: answered, withdrawn, or neither while it is open. */
+export interface BoardItemHistory {
+  item: BoardItemRecord;
+  answer: AnswerRecord | null;
+  withdrawal: WithdrawalRecord | null;
+}
+
+/**
+ * Which calls to list. Every part is optional and they combine. Days are
+ * `YYYY-MM-DD` in UTC, as calls' times are stored, and both ends are included.
+ */
+export interface CallFilter {
+  repoId?: number;
+  ticketId?: number;
+  kind?: string;
+  fromDay?: string;
+  toDay?: string;
+}
+
 export interface NewWithdrawal {
   boardItemId: number;
   /** The call that takes the ticket off the board: deciding it again, cancelling it or checking it again. */
@@ -611,6 +638,11 @@ export class Store {
     return this.#all(`${TICKET_SELECT} WHERE t.repo_id = ? AND s.state NOT IN (${FINAL_STATE_LIST}) ORDER BY t.id`, repoId).map(toTicket);
   }
 
+  /** The ticket that pulled the same issue in again after this one ended, if any (ADR-0020). */
+  successorOf(ticketId: number): TicketRecord | null {
+    return mapOrNull(this.#get(`${TICKET_SELECT} WHERE t.predecessor_id = ? ORDER BY t.id LIMIT 1`, ticketId), toTicket);
+  }
+
   /** The issue's newest ticket, in flight or final. */
   latestTicketForIssue(repoId: number, issueNumber: number): TicketRecord | null {
     return mapOrNull(
@@ -693,6 +725,30 @@ export class Store {
     ).map((row) => this.#toCall(row));
   }
 
+  /** Every call the filter keeps, across all repos, newest first. */
+  listCalls(filter: CallFilter = {}): CallRecord[] {
+    const where = callWhere(filter);
+    return this.#all(
+      `SELECT c.*, t.repo_id FROM calls c JOIN tickets t ON t.id = c.ticket_id WHERE ${where.sql} ORDER BY c.id DESC`,
+      ...where.params,
+    ).map((row) => this.#toCall(row));
+  }
+
+  /** The days with calls the filter keeps, newest first, with how many calls each. */
+  callDays(filter: CallFilter = {}): { day: string; calls: number }[] {
+    const where = callWhere(filter);
+    return this.#all(
+      `SELECT substr(c.made_at, 1, 10) AS day, count(*) AS n FROM calls c JOIN tickets t ON t.id = c.ticket_id
+       WHERE ${where.sql} GROUP BY day ORDER BY day DESC`,
+      ...where.params,
+    ).map((row) => ({ day: str(row.day), calls: num(row.n) }));
+  }
+
+  /** One model run behind a call, with its full input and output. */
+  getModelRun(id: number): ModelRunRecord | null {
+    return mapOrNull(this.#get("SELECT * FROM model_runs WHERE id = ?", id), toModelRun);
+  }
+
   // The board
 
   raiseBoardItem(item: NewBoardItem): BoardItemRecord {
@@ -746,6 +802,18 @@ export class Store {
       ),
       toBoardItem,
     );
+  }
+
+  /** Every board item raised for a ticket, oldest first, each with its answer or withdrawal. */
+  boardItemsForTicket(ticketId: number): BoardItemHistory[] {
+    return this.#all("SELECT * FROM board_items WHERE ticket_id = ? ORDER BY id", ticketId).map((row) => {
+      const item = toBoardItem(row);
+      return {
+        item,
+        answer: mapOrNull(this.#get("SELECT * FROM answers WHERE board_item_id = ?", item.id), toAnswer),
+        withdrawal: mapOrNull(this.#get("SELECT * FROM board_item_withdrawals WHERE board_item_id = ?", item.id), toWithdrawal),
+      };
+    });
   }
 
   // The vision of record
@@ -813,6 +881,11 @@ export class Store {
       confirmation.comment?.url ?? null,
       json(confirmation.result),
     );
+  }
+
+  /** The forge writes a call recorded, confirmed or not, oldest first. */
+  forgeWritesForCall(callId: number): ForgeWriteIntentRecord[] {
+    return this.#all("SELECT * FROM forge_write_intents WHERE call_id = ? ORDER BY id", callId).map(toIntent);
   }
 
   /** Forge writes recorded but never confirmed, oldest first, to settle on start. */
@@ -892,6 +965,23 @@ export class Store {
       })),
     };
   }
+}
+
+/** The WHERE clause for a {@link CallFilter}, over `calls c JOIN tickets t`. */
+function callWhere(filter: CallFilter): { sql: string; params: SQLInputValue[] } {
+  const parts: string[] = [];
+  const params: SQLInputValue[] = [];
+  const add = (sql: string, value: SQLInputValue | undefined) => {
+    if (value === undefined) return;
+    parts.push(sql);
+    params.push(value);
+  };
+  add("t.repo_id = ?", filter.repoId);
+  add("c.ticket_id = ?", filter.ticketId);
+  add("c.kind = ?", filter.kind);
+  add("substr(c.made_at, 1, 10) >= ?", filter.fromDay);
+  add("substr(c.made_at, 1, 10) <= ?", filter.toDay);
+  return { sql: parts.length === 0 ? "1" : parts.join(" AND "), params };
 }
 
 const FINAL_STATE_LIST = FINAL_STATES.map((state) => `'${state}'`).join(", ");
@@ -1079,6 +1169,15 @@ function toAnswer(row: Row): AnswerRecord {
     text: strOrNull(row.text),
     note: strOrNull(row.note),
     showNoteOnIssue: row.show_note_on_issue === 1,
+  };
+}
+
+function toWithdrawal(row: Row): WithdrawalRecord {
+  return {
+    boardItemId: num(row.board_item_id),
+    callId: num(row.call_id),
+    withdrawnAt: str(row.withdrawn_at),
+    reason: str(row.reason),
   };
 }
 

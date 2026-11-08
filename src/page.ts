@@ -95,4 +95,11 @@ th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(-
 dl { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1rem; }
 dt { font-weight: 600; }
 dd { margin: 0; overflow-wrap: anywhere; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .25rem 0; padding: .5rem; font-size: .85em; background: var(--soft); border-radius: 4px; }
+.filters p { margin: .25rem 0; }
+.filters a, .filters span { margin-right: .5rem; }
+.filters [aria-current] { font-weight: 600; color: var(--fg); text-decoration: none; }
+.filter-name { font-weight: 600; }
+article.call, section.event { border-top: 1px solid var(--line); padding-top: .5rem; margin-top: 1rem; }
+ol.history { list-style: none; padding: 0; }
 `;

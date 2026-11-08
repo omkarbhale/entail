@@ -20,6 +20,8 @@ Enroll a repo on the Repos page, `http://127.0.0.1:7419/repos`, once your displa
 
 Each enrolled repo has a settings page, linked from the Repos page: generic criteria, merge method (GitHub only), shadow, who counts (anyone, or you plus listed executors), and pins. Every save is a new settings version, listed in the repo's settings history, and takes effect from the next pass.
 
+Every call entail makes is on the read-only Calls page, `http://127.0.0.1:7419/calls`, newest first, filterable by repo, ticket, kind and date. Each call shows its reason, citation permalinks, check and challenge results and links to the issue and PR, and links each model run's full input and output. Each ticket has a page with its whole history, the answers given on it under the name of whoever gave them, and whether its model step is failing and when it is tried again. Neither page asks anything or offers any action: to fix a wrong call, close the issue, revert the change, add a vision line or add a pin.
+
 ## Development
 
 ```sh
