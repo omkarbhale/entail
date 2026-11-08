@@ -10,6 +10,7 @@ import {
   type ForgeSetting,
   type ForgeTarget,
   type ForgeWording,
+  MergePendingError,
   type MergeOutcome,
   type PostedComment,
   type Project,
@@ -41,6 +42,8 @@ export interface StateForgeOptions {
   actorId?: number;
   /** Called before a write reaches the forge; throwing stops it there. */
   beforeWrite?: (write: WriteName) => void;
+  /** Makes a merge throw {@link MergePendingError} after it was sent, as a merge still running when the wait ended. */
+  mergePending?: boolean;
   /** Called after a write was applied and saved; throwing (or exiting) loses the answer. */
   afterWrite?: (write: WriteName) => void;
 }
@@ -113,6 +116,7 @@ export class StateForge implements Forge {
       if (pr.state === "merged") return { merged: true, mergeCommitSha: pr.mergeCommitSha };
       if (pr.state !== "open") return { merged: false, refusal: "the pull request is closed" };
       if (pr.headSha !== sha) return { merged: false, refusal: "the head moved" };
+      if (this.#options.mergePending) throw new MergePendingError(this.setting.host, prNumber, 0);
       const mergeCommitSha = `merge-of-${sha}`;
       state.prs[prNumber] = { ...pr, state: "merged", mergeCommitSha };
       return { merged: true, mergeCommitSha };

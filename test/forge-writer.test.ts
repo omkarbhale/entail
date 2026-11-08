@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { CommentRuleError, composeComment } from "../src/comment-rules.ts";
+import { MergePendingError } from "../src/forge/forge.ts";
 import { ForgeWriter, settleUnconfirmedWrites } from "../src/forge-writer.ts";
 import { Store, type RepoRecord, type TicketRecord } from "../src/store.ts";
 import { StateForge, type StateForgeOptions, type WriteName } from "./forge/state-forge.ts";
@@ -128,6 +129,31 @@ test("a merge whose answer was lost is found merged when asked again, not sent t
   const writer = new ForgeWriter(store, forge, repo, OWNER);
   await assert.rejects(writer.merge({ ticketId: ticket.id }, 4, HEAD), /timed out/);
   assert.deepEqual(await writer.merge({ ticketId: ticket.id }, 4, HEAD), { merged: true, mergeCommitSha: `merge-of-${HEAD}` });
+  assert.equal(forge.state.sends.merge, 1);
+  assert.deepEqual(store.unconfirmedForgeWrites(), []);
+});
+
+test("a merge still pending at the wait stays unconfirmed, and is confirmed merged from the PR's state without being sent again", async (t) => {
+  const { store, repo, ticket } = world(t);
+  const forge = new StateForge({ mergePending: true }, { prs: { 4: { state: "open", headSha: HEAD, mergeCommitSha: null } } });
+  const writer = new ForgeWriter(store, forge, repo, OWNER);
+  await assert.rejects(writer.merge({ ticketId: ticket.id }, 4, HEAD), MergePendingError);
+  assert.deepEqual(store.unconfirmedForgeWrites().map((i) => i.kind), ["merge"], "no refusal was recorded");
+
+  forge.state.prs[4] = { state: "merged", headSha: HEAD, mergeCommitSha: "late-merge" };
+  assert.deepEqual(await writer.merge({ ticketId: ticket.id }, 4, HEAD), { merged: true, mergeCommitSha: "late-merge" });
+  assert.equal(forge.state.sends.merge, 1, "the merge was not sent again");
+  assert.deepEqual(store.unconfirmedForgeWrites(), []);
+});
+
+test("settling on start confirms a merge that was pending at the wait and has merged since", async (t) => {
+  const { store, repo, ticket } = world(t);
+  const forge = new StateForge({ mergePending: true }, { prs: { 4: { state: "open", headSha: HEAD, mergeCommitSha: null } } });
+  const writer = new ForgeWriter(store, forge, repo, OWNER);
+  await assert.rejects(writer.merge({ ticketId: ticket.id }, 4, HEAD), MergePendingError);
+  forge.state.prs[4] = { state: "merged", headSha: HEAD, mergeCommitSha: "late-merge" };
+  const settled = await settleUnconfirmedWrites(store, () => forge);
+  assert.deepEqual(settled.map((s) => s.settled), ["merged, by the PR's state"]);
   assert.equal(forge.state.sends.merge, 1);
   assert.deepEqual(store.unconfirmedForgeWrites(), []);
 });

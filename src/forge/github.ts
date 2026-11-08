@@ -13,6 +13,7 @@ import {
   type ForgeInstance,
   ForgeLoggedOutError,
   ForgeRequestError,
+  MergePendingError,
   type ForgeSetting,
   type ForgeTarget,
   type ForgeWording,
@@ -36,7 +37,7 @@ const DEFAULT_RATE_LIMIT_WAIT_MS = 60_000;
 const REPO_PATH = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 /** How often a merge GitHub is still running in the background is read again. */
 const MERGE_POLL_INTERVAL_MS = 2_000;
-/** How long to wait for a background merge before reporting it as not merged. */
+/** How long to wait for a background merge before it counts as still pending. */
 const MERGE_WAIT_MS = 120_000;
 
 export interface GitHubForgeOptions {
@@ -216,7 +217,7 @@ export class GitHubForge implements Forge {
    * Merges through `merge-async`, pinned to `sha`, as a direct merge that
    * bypasses no rules. GitHub may run the merge in the background, so a
    * pending merge is read again until it merges or fails, or until
-   * {@link MERGE_WAIT_MS} has passed.
+   * {@link MERGE_WAIT_MS} has passed, which throws {@link MergePendingError}.
    */
   async merge(prNumber: number, sha: string, method?: MergeMethod): Promise<MergeOutcome> {
     const path = `repos/${this.setting.path}/pulls/${prNumber}/merge-async`;
@@ -241,7 +242,7 @@ export class GitHubForge implements Forge {
         throw new ForgeRequestError(this.setting.host, started.status, "PUT", path, `unexpected merge status ${String(status)}`);
       }
       if (Date.now() >= deadline) {
-        return { merged: false, refusal: `GitHub had not finished the merge after ${Math.round(this.#mergeWaitMs / 1000)} seconds` };
+        throw new MergePendingError(this.setting.host, prNumber, this.#mergeWaitMs);
       }
       if (this.#mergePollIntervalMs > 0) await sleep(this.#mergePollIntervalMs);
       result = await this.#getJson(`${path}/${encodeURIComponent(details.uuid)}`);

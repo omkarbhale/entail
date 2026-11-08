@@ -235,8 +235,12 @@ export interface Forge {
 
   /**
    * Merges a PR only at `sha`, never bypassing rules and never through the
-   * forge's auto-merge. Every outcome but merged is returned as a refusal.
+   * forge's auto-merge. Every definitive outcome but merged is returned as a
+   * refusal.
    *
+   * @throws {MergePendingError} when the forge is still running the merge
+   *   after the wait. That is no outcome yet: the writer leaves the intent
+   *   unconfirmed, and asking again or settling on start reads the PR's state.
    * @throws {RateLimitedError} or {@link ForgeLoggedOutError} when the merge was not asked for at all.
    */
   merge(prNumber: number, sha: string, method?: MergeMethod): Promise<MergeOutcome>;
@@ -263,6 +267,19 @@ export class RateLimitedError extends Error {
     this.name = "RateLimitedError";
     this.host = host;
     this.resetAt = resetAt;
+  }
+}
+
+/** The forge was still running a merge when the wait for it ended, so the merge has no outcome yet. */
+export class MergePendingError extends Error {
+  readonly host: string;
+  readonly prNumber: number;
+
+  constructor(host: string, prNumber: number, waitedMs: number) {
+    super(`${host} had not finished merging #${prNumber} after ${Math.round(waitedMs / 1000)} seconds`);
+    this.name = "MergePendingError";
+    this.host = host;
+    this.prNumber = prNumber;
   }
 }
 
