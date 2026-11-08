@@ -16,6 +16,7 @@ export const CALL_KINDS = [
   "intake",
   "verdict",
   "investigation",
+  "findings",
   "criteria",
   "decline",
   "raise",

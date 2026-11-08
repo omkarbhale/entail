@@ -52,6 +52,7 @@ function needsTheOwner(fields: Partial<VerdictOutput> = {}): VerdictOutput {
     reading_chosen: null,
     why_raised: "consequential_readings",
     open_readings: ["R1", "R2"],
+    questions: [],
     close_evidence: [],
     reason: "Whether punctuation splits words is for the owner.",
     ...fields,

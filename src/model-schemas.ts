@@ -18,9 +18,11 @@ const visionLine = string("A whole line of VISION.md, quoted word for word.");
 /**
  * What a close at intake may rest on: the repo's own state, never the vision
  * (spec §6, ADR-0006). A duplicate is another issue in the repo; an already
- * fixed report is a commit on the default branch.
+ * fixed report is a commit on the default branch. A ticket decided again from
+ * its investigation's findings may also close on a findings entry that shows
+ * nothing is to be fixed (spec §8).
  */
-export const CLOSE_EVIDENCE_KINDS = ["duplicate_issue", "fixing_commit"] as const;
+export const CLOSE_EVIDENCE_KINDS = ["duplicate_issue", "fixing_commit", "findings"] as const;
 
 /**
  * The decider's output for one ticket (spec section 6, ADR-0011, ADR-0007).
@@ -47,8 +49,8 @@ export const verdictSchema = object({
     "Every vision line that bears on the issue, and only those.",
   ),
   verdict: nullable(
-    oneOf(["settled", "unopposed", "needs_the_owner", "close"]),
-    "null only when the ticket is oversized, which gets no verdict. close proposes closing the issue at intake because the repo's state settles that nothing is to be done.",
+    oneOf(["settled", "unopposed", "needs_the_owner", "close", "investigate"]),
+    "null only when the ticket is oversized, which gets no verdict. close proposes closing the issue at intake because the repo's state settles that nothing is to be done. investigate asks for an investigation when the cause or validity of the issue is unknown.",
   ),
   citations: arrayOf(
     object({
@@ -64,10 +66,14 @@ export const verdictSchema = object({
   close_evidence: arrayOf(
     object({
       kind: oneOf(CLOSE_EVIDENCE_KINDS),
-      ref: string("For duplicate_issue: the other issue's number. For fixing_commit: the commit's full sha."),
+      ref: string("For duplicate_issue: the other issue's number. For fixing_commit: the commit's full sha. For findings: the question id of the findings entry, such as Q1."),
       why: string("How this shows that nothing is to be done, in one plain sentence."),
     }),
     "For close: the evidence from the repo's state that nothing is to be done. Empty otherwise.",
+  ),
+  questions: arrayOf(
+    string("One question the investigation must establish, as one plain sentence."),
+    "For investigate: the questions Q1, Q2, … in order. Empty otherwise.",
   ),
   reason: string("The reason for the audit log."),
 });

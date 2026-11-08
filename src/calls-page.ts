@@ -25,6 +25,7 @@ export const CALL_KIND_LABELS: Readonly<Record<(typeof CALL_KINDS)[number], stri
   "go-ahead": "going ahead on the owner's answer",
   "cancel-on-answer": "cancelled on the owner's answer",
   investigation: "investigation",
+  findings: "findings arrived",
   criteria: "criteria",
   decline: "declined",
   "close-at-intake": "closed at intake",

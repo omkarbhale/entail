@@ -9,6 +9,7 @@ import { ClaudeRunner } from "./claude-runner.ts";
 import { boardPlanner } from "./board-item.ts";
 import { criteriaPlanner } from "./criteria.ts";
 import { deciderPlanner } from "./decider.ts";
+import { findingsPlanner } from "./investigation.ts";
 import type { ModelRunner } from "./model-runner.ts";
 import { ModelRuns } from "./model-runs.ts";
 import { InFlightWrites, settleUnconfirmedWrites } from "./forge-writer.ts";
@@ -187,6 +188,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
       boardPlanner({ store, log, dataDirectory: options.dataDirectory, notifier, boardOrigin: server.info.origin }),
       pullRequests.planner,
       landingPlanner({ store, log, dataDirectory: options.dataDirectory, afterMechanical: landingGrader({ store, log, dataDirectory: options.dataDirectory }) }),
+      findingsPlanner({ store, log }),
       // Last, so reading an issue live never delays a step the ticket owes.
       closes.planner,
     ],
