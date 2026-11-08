@@ -10,6 +10,7 @@ import { makeNotice, NOTICES_FILE } from "../src/notice.ts";
 import { OPERATIONAL_LOG_FILE } from "../src/operational-log.ts";
 import { startRun, type RunningEntail } from "../src/run.ts";
 import { BoardPortTakenError } from "../src/server.ts";
+import { CALLS_PATH } from "../src/calls-page.ts";
 import { SETTINGS_PATH } from "../src/settings-page.ts";
 import { Store } from "../src/store.ts";
 import { enrollmentSettings } from "../src/repo-settings.ts";
@@ -58,6 +59,9 @@ test("entail run serves the global settings page on the board port from the sett
   assert.match(page.body, /Global settings/);
   const started = readFileSync(join(dir, OPERATIONAL_LOG_FILE), "utf8").split("\n").find((line) => line.includes('"started"'));
   assert.ok(started?.includes(`"board":"http://127.0.0.1:${port}/"`), "the start names the board's address");
+  const calls = await send(port, { path: CALLS_PATH });
+  assert.equal(calls.status, 200, "the same process serves the Calls page");
+  assert.match(calls.body, /No call has been recorded yet\./);
 });
 
 test("settings are re-read on every read, except the port, which takes effect on the next start", async (t) => {

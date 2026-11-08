@@ -10,10 +10,12 @@ import type { ModelRunner } from "./model-runner.ts";
 import { ModelRuns } from "./model-runs.ts";
 import { InFlightWrites, settleUnconfirmedWrites } from "./forge-writer.ts";
 import { Passes, repoForge, type PassesOptions } from "./pass.ts";
+import { callsPages } from "./calls-page.ts";
 import { reposPages } from "./repos-page.ts";
 import { startServer, type BoardPortTakenError, type LocalServer } from "./server.ts";
 import { globalSettingsPage } from "./settings-page.ts";
 import { Store, type StoreOpenError } from "./store.ts";
+import { ticketPage } from "./ticket-page.ts";
 
 /** How long stopping waits for in-flight forge writes to confirm (ADR-0017). */
 export const STOP_WAIT_MS = 10_000;
@@ -59,8 +61,9 @@ export interface RunningEntail {
  * Starts `entail run` in spec §1's order (ADR-0017): takes the single-copy
  * lock, opens the operational log and the store, settles unconfirmed forge
  * writes by reading the forge, starts the local server on the board port from
- * the global settings (the Repos page with enrollment, and the global settings
- * page, spec §15), and then the passes. It stays up until
+ * the global settings (the Repos page with enrollment and the global settings
+ * page, spec §15, and the read-only Calls page and ticket pages, spec §14),
+ * and then the passes. It stays up until
  * {@link RunningEntail.stop}.
  *
  * Throws {@link LockHeldError} when another copy holds the lock;
@@ -109,10 +112,20 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
   // The port is read once: a running server keeps the port its links were posted with.
   const port = readGlobalSettings(store).settings.boardPort;
   const runner = options.modelRunner ?? new ClaudeRunner();
+  const modelRuns = new ModelRuns({
+    runner,
+    log,
+    limit: () => readGlobalSettings(store).settings.modelRunLimit,
+  });
   let server: LocalServer;
   try {
     const enroller = new Enroller({ store, dataDirectory: options.dataDirectory, runner, log });
-    const pages = [...reposPages({ store, enroller, dataDirectory: options.dataDirectory }), globalSettingsPage(store)];
+    const pages = [
+      ...reposPages({ store, enroller, dataDirectory: options.dataDirectory }),
+      ...callsPages(store),
+      ticketPage({ store, retryState: (ticketId) => modelRuns.retryState(String(ticketId)) }),
+      globalSettingsPage(store),
+    ];
     server = await startServer({ port, pages, log });
   } catch (error) {
     log.error("board-server-failed", { port, error: error instanceof Error ? error.message : String(error) });
@@ -133,11 +146,6 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     log,
   });
 
-  const modelRuns = new ModelRuns({
-    runner,
-    log,
-    limit: () => readGlobalSettings(store).settings.modelRunLimit,
-  });
   const passes = new Passes({
     store,
     log,
