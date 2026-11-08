@@ -37,10 +37,8 @@ export const TICKET_TRANSITIONS: Readonly<Record<TicketState, readonly TicketSta
   deciding: ["declined", "investigating", "cancelled", "cleared", "on-the-board", "merged"],
   // findings arrive (a ticket is investigated at most once)
   investigating: ["deciding", "cancelled", "merged"],
-  // an answer goes ahead, or the item is withdrawn; "don't go ahead"; and,
-  // for an item raised for a pinned path at landing (spec §11), a new push
-  // withdraws it and the landing check runs again
-  "on-the-board": ["deciding", "cancelled", "landing", "merged"],
+  // an answer goes ahead, or the item is withdrawn; "don't go ahead"
+  "on-the-board": ["deciding", "cancelled", "merged"],
   // a PR linking the issue is being checked; a re-check needs the owner
   cleared: ["landing", "on-the-board", "cancelled", "merged"],
   // merged; a pinned path touched or a re-check needs the owner; PR closed unmerged

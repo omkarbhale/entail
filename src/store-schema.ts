@@ -158,7 +158,6 @@ CREATE TABLE calls (
   state_from TEXT CHECK (state_from IS NULL OR state_from IN (${STATES})),
   state_to TEXT CHECK (state_to IS NULL OR state_to IN (${STATES})),
   CHECK ((state_from IS NULL) = (state_to IS NULL)),
-  CHECK ((issue_title IS NULL) = (issue_body IS NULL)),
   CHECK (no_contradiction_found = 0 OR (citation IS NULL AND answer_id IS NULL))
 ) STRICT;
 CREATE INDEX calls_by_ticket ON calls (ticket_id, id);

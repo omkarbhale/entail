@@ -242,7 +242,7 @@ test("ticket states and transitions follow spec §17, and final states cannot be
   const expected: Record<TicketState, TicketState[]> = {
     deciding: ["declined", "investigating", "cancelled", "cleared", "on-the-board", "merged"],
     investigating: ["deciding", "cancelled", "merged"],
-    "on-the-board": ["deciding", "cancelled", "landing", "merged"],
+    "on-the-board": ["deciding", "cancelled", "merged"],
     cleared: ["landing", "on-the-board", "cancelled", "merged"],
     landing: ["merged", "on-the-board", "cleared", "cancelled"],
     declined: [],
