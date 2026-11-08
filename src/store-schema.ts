@@ -1,7 +1,7 @@
 import { FINAL_STATES, INITIAL_STATE, TICKET_STATES, TICKET_TRANSITIONS } from "./ticket-states.ts";
 
 /** Bumped whenever the schema below changes; a store from a newer entail is refused. */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /**
  * Every table of the store except `ticket_states`. The store itself refuses
@@ -264,12 +264,14 @@ CREATE TABLE board_item_withdrawals (
   reason TEXT NOT NULL CHECK (reason <> '')
 ) STRICT;
 
--- An answer is final, one per board item, and not a call (ADR-0008).
+-- An answer is final, one per board item, and not a call (ADR-0008). It
+-- records the item version the board form showed (ADR-0012).
 CREATE TABLE answers (
   id INTEGER PRIMARY KEY,
   board_item_id INTEGER NOT NULL UNIQUE REFERENCES board_items(id),
   answered_at TEXT NOT NULL,
   answered_by TEXT NOT NULL CHECK (answered_by <> ''),
+  item_version INTEGER NOT NULL DEFAULT 1 CHECK (item_version > 0),
   shape TEXT NOT NULL CHECK (shape IN (${list(ANSWER_SHAPES)})),
   option_id TEXT,
   text TEXT,
@@ -468,4 +470,6 @@ export const MIGRATIONS: Readonly<Record<number, string>> = {
     appendOnly("enrollment_model_runs"),
     noReplace(["enrollment_model_runs", KEYS.enrollment_model_runs]),
   ].join(""),
+  // 4 -> 5: the item version each answer was given to; answers before it were to the first version.
+  4: "ALTER TABLE answers ADD COLUMN item_version INTEGER NOT NULL DEFAULT 1 CHECK (item_version > 0);",
 };

@@ -1,3 +1,22 @@
+import {
+  AGAINST_VISION_WARNING,
+  ANSWER_FIELDS,
+  answerComment,
+  answerOf,
+  answerOutcome,
+  answerWords,
+  draftFrom,
+  goesAgainstVisionLine,
+  itemVersion,
+  recordBoardAnswer,
+  refusalFor,
+  refusalText,
+  stepFrom,
+  versionFrom,
+  type AnswerDraft,
+  type AnswerRefusal,
+  type ChosenAnswer,
+} from "./answer.ts";
 import { BOARD_PATH, type BoardItemSnapshot, type BoardOption, type HappenedAnswer, type HappenedCall } from "./board-item.ts";
 import { CALL_KIND_LABELS, CALLS_PATH, issueUrl, recordId, repoLabel, ticketPath } from "./calls-page.ts";
 import { readGlobalSettings } from "./global-settings.ts";
@@ -5,7 +24,7 @@ import { MARK_WORDS, shortSha } from "./intake-comment.ts";
 import { escapeHtml, renderPage, timeHtml } from "./page.ts";
 import { readRepoSettings } from "./repo-settings.ts";
 import { SETTINGS_PATH } from "./settings-page.ts";
-import type { Page, PageRequest, Reply } from "./server.ts";
+import { TOKEN_FIELD, type FormRequest, type Page, type PageRequest, type Reply } from "./server.ts";
 import type { AnswerRecord, BoardItemHistory, RepoRecord, Store, WithdrawalRecord } from "./store.ts";
 import type { TicketState } from "./ticket-states.ts";
 import { VISION_PATH } from "./vision.ts";
@@ -16,8 +35,10 @@ import { VISION_PATH } from "./vision.ts";
  * item with its parts in order. The page asks entail's local process for the
  * board every few seconds and, without a reload, refreshes the list and locks
  * the form of an item that was withdrawn, answered or locked, keeping
- * whatever the owner typed. Answering through the form is spec §13
- * "Answering".
+ * whatever the owner typed. The answer form is the one path an answer enters
+ * entail (spec §13 "Answering", src/answer.ts): "Review answer" records
+ * nothing, "Record answer as <owner> (final)" records it, and a receipt then
+ * stays in place.
  */
 
 /** Where the page asks for the board while it is open: local traffic, no forge requests (ADR-0012). */
@@ -26,6 +47,8 @@ export const BOARD_LIVE_PATH = "/board/live";
 export const BOARD_POLL_MS = 3000;
 /** The query parameter naming the selected item, as {@link boardItemLink} writes it. */
 export const ITEM_PARAM = "item";
+/** Where the answer form posts: to review an answer, record it as final, or go back. */
+export const BOARD_ANSWER_PATH = "/board/answer";
 
 export interface BoardPageOptions {
   store: Store;
@@ -66,6 +89,7 @@ export function boardPages(options: BoardPageOptions): Page[] {
   return [
     { path: BOARD_PATH, nav: "Board", get: (request) => boardView(options, request) },
     { path: BOARD_LIVE_PATH, get: (request) => liveView(options, request) },
+    { path: BOARD_ANSWER_PATH, post: (request) => answerPost(options, request) },
   ];
 }
 
@@ -93,19 +117,29 @@ export function readBoard(options: BoardPageOptions): Board {
   };
   const board: Board = { open: [], endedToday: [] };
   for (const history of store.boardItemsOnBoard(startOfDay(now).toISOString())) {
-    const repo = repoOf(history.item.ticketId);
-    const status: BoardItemStatus = history.answer ? "answered" : history.withdrawal ? "withdrawn" : "open";
-    const entry: BoardEntry = {
-      history,
-      snapshot: (history.item.snapshot ?? {}) as Partial<BoardItemSnapshot>,
-      repo,
-      status,
-      lock: status === "open" ? lockOf(options, repo) : null,
-      next: history.withdrawal ? whatNext(store.getCall(history.withdrawal.callId)?.stateChange?.to ?? null) : null,
-    };
-    (status === "open" ? board.open : board.endedToday).push(entry);
+    const entry = entryOf(options, history, repoOf(history.item.ticketId));
+    (entry.status === "open" ? board.open : board.endedToday).push(entry);
   }
   return board;
+}
+
+/** One board item as the board shows it, with its repo. */
+function entryOf(options: BoardPageOptions, history: BoardItemHistory, repo: RepoRecord | null): BoardEntry {
+  const status: BoardItemStatus = history.answer ? "answered" : history.withdrawal ? "withdrawn" : "open";
+  return {
+    history,
+    snapshot: (history.item.snapshot ?? {}) as Partial<BoardItemSnapshot>,
+    repo,
+    status,
+    lock: status === "open" ? lockOf(options, repo) : null,
+    next: history.withdrawal ? whatNext(options.store.getCall(history.withdrawal.callId)?.stateChange?.to ?? null) : null,
+  };
+}
+
+/** Why an item's form is locked, in the words a refused answer gives. */
+function lockText(lock: ItemLock | null): string | null {
+  if (lock === null) return null;
+  return lock.kind === "paused" ? "this repo is paused." : `entail cannot reach ${lock.host}.`;
 }
 
 /** Whether an open item's form is locked, and why. */
@@ -167,18 +201,40 @@ function ownerName(store: Store): string | null {
   return readGlobalSettings(store).settings.ownerDisplayName;
 }
 
-function boardView(options: BoardPageOptions, request: PageRequest): Reply {
+/**
+ * What the selected item's form part shows in place of a fresh form: the
+ * form again with what the owner had filled in, perhaps with what is missing
+ * or why nothing was recorded, or the review of their answer.
+ */
+type FormPanel =
+  | { kind: "form"; draft: AnswerDraft; error?: string; refusal?: AnswerRefusal }
+  | { kind: "review"; draft: AnswerDraft; answer: ChosenAnswer };
+
+/** A reply to the answer form: the board, with the item it answered selected and its panel shown. */
+interface AnswerView {
+  itemId: number;
+  panel: FormPanel;
+  status: number;
+}
+
+function boardView(options: BoardPageOptions, request: PageRequest, view?: AnswerView): Reply {
   const now = (options.now ?? (() => new Date()))();
   const board = readBoard(options);
-  const selected = selectedId(request, board);
-  const entry = findEntry(board, selected.id);
+  const selected = view ? { id: view.itemId, asked: true } : selectedId(request, board);
   const owner = ownerName(options.store);
+  let entry = findEntry(board, selected.id);
+  if (entry === null && view !== undefined) {
+    // An item that left the board before today still shows the answer it refused, to copy.
+    const history = options.store.boardItem(view.itemId);
+    const ticket = history === null ? null : options.store.getTicket(history.item.ticketId);
+    if (history !== null) entry = entryOf(options, history, ticket === null ? null : options.store.getRepo(ticket.repoId));
+  }
   const live = `${BOARD_LIVE_PATH}${selected.id === null ? "" : `?${ITEM_PARAM}=${selected.id}`}`;
 
   let detail: string;
-  let status = 200;
+  let status = view?.status ?? 200;
   if (entry !== null) {
-    detail = renderItem(entry, now, nextOpenId(board));
+    detail = renderItem(entry, now, nextOpenId(board), { token: request.server.token, owner, panel: view?.panel ?? null });
   } else if (selected.asked) {
     const item = selected.id === null ? null : options.store.boardItem(selected.id);
     if (item === null) {
@@ -276,8 +332,17 @@ function whyTag(e: BoardEntry): string {
   return `<span class="tag why-${escapeHtml(kind.replaceAll("_", "-"))}">${escapeHtml(tag)}</span>`;
 }
 
+/** What rendering the selected item's form needs beyond the item. */
+interface FormContext {
+  /** The per-start token every form carries back. */
+  token: string;
+  /** The owner's display name, whom the answer is recorded as. */
+  owner: string | null;
+  panel: FormPanel | null;
+}
+
 /** The selected item: its parts in the order spec §13 lists them. */
-function renderItem(e: BoardEntry, now: Date, nextId: number | null): string {
+function renderItem(e: BoardEntry, now: Date, nextId: number | null, context: FormContext): string {
   const { item } = e.history;
   const s = e.snapshot;
   const where = whereOf(e);
@@ -294,7 +359,7 @@ ${renderItemState(e, nextId)}
 ${renderVisionCheck(s)}
 ${renderTicket(s, issueHref)}
 ${renderHappened(e)}
-${renderForm(e)}`;
+${renderFormPart(e, context)}`;
 }
 
 function renderVisionCheck(s: Partial<BoardItemSnapshot>): string {
@@ -365,35 +430,150 @@ function happenedAnswerWords(answer: HappenedAnswer): string {
   }
 }
 
-/** The answer form's fields (spec §13 "Answer shapes"). Recording an answer is spec §13 "Answering". */
-export const ANSWER_FIELDS = { item: "item", version: "version", answer: "answer", text: "text", note: "note", showNote: "show_note" } as const;
+/** The item's form part: the answer form, or the review of an answer (spec §13 "Answer shapes", "Answering"). */
+function renderFormPart(e: BoardEntry, context: FormContext): string {
+  const panel = context.panel;
+  const refusal =
+    panel?.kind === "form" && panel.refusal !== undefined
+      ? `<p class="refusal" role="alert"><strong>Not recorded.</strong> ${escapeHtml(refusalText(panel.refusal))}</p>\n`
+      : "";
+  const error = panel?.kind === "form" && panel.error !== undefined ? `<p class="error" role="alert">${escapeHtml(panel.error)}</p>\n` : "";
+  // An answered item's receipt stands in its place; a fresh page shows no form under it.
+  if (panel === null && e.status === "answered") return "";
+  const body = panel?.kind === "review" ? renderReview(e, context, panel.draft, panel.answer) : renderForm(e, context, panel?.draft ?? null);
+  return `<section data-part="form"><h3>Your answer</h3>
+${refusal}${error}${body}</section>`;
+}
 
-function renderForm(e: BoardEntry): string {
+function forgeOf(e: BoardEntry): string | undefined {
+  return e.repo?.forge ?? e.snapshot.ticket?.repo.forge;
+}
+
+/** The hidden fields every answer form carries: the per-start token, the item and the item version it showed. */
+function hiddenFields(e: BoardEntry, token: string): string {
+  return `<input type="hidden" name="${TOKEN_FIELD}" value="${escapeHtml(token)}">
+<input type="hidden" name="${ANSWER_FIELDS.item}" value="${e.history.item.id}">
+<input type="hidden" name="${ANSWER_FIELDS.version}" value="${itemVersion(e.snapshot)}">`;
+}
+
+function renderForm(e: BoardEntry, context: FormContext, draft: AnswerDraft | null): string {
   const options: BoardOption[] = e.snapshot.form?.options ?? [];
   const locked = e.status !== "open" || e.lock !== null;
   const off = locked ? " disabled" : "";
   const ro = locked ? " readonly" : "";
-  const github = (e.repo?.forge ?? e.snapshot.ticket?.repo.forge) === "github";
-  const choice = (value: string, title: string, outcome: string | null, cls = "") =>
-    `<label class="choice${cls}"><input type="radio" name="${ANSWER_FIELDS.answer}" value="${escapeHtml(value)}"${off}> <span class="t">${escapeHtml(title)}</span>${
+  const github = forgeOf(e) === "github";
+  const checked = (value: string) => (draft?.answer === value ? " checked" : "");
+  const choice = (value: string, title: string, outcome: string | null, extra = "", cls = "") =>
+    `<label class="choice${cls}"><input type="radio" name="${ANSWER_FIELDS.answer}" value="${escapeHtml(value)}"${checked(value)}${off}> <span class="t">${escapeHtml(title)}</span>${
       outcome ? `\n<span class="o">${escapeHtml(outcome)}</span>` : ""
-    }</label>`;
-  return `<section data-part="form"><h3>Your answer</h3>
-<form id="answer-form" class="answer" data-locked="${locked}">
-<input type="hidden" name="${ANSWER_FIELDS.item}" value="${e.history.item.id}">
-<input type="hidden" name="${ANSWER_FIELDS.version}" value="${e.snapshot.version ?? 1}">
+    }${extra}</label>`;
+  // When going ahead goes against a vision line, that option carries the one warning, with no link to edit the vision.
+  const warning = (o: BoardOption) => (o.againstVisionLine ? `\n<span class="warn">${escapeHtml(AGAINST_VISION_WARNING)}</span>` : "");
+  const note = draft?.note ?? "";
+  return `<form id="answer-form" class="answer" method="post" action="${BOARD_ANSWER_PATH}" data-locked="${locked}">
+${hiddenFields(e, context.token)}
 <fieldset>
 <legend>How to answer</legend>
-${options.map((o) => choice(`option:${o.id}`, o.title, o.outcome)).join("\n")}
+${options.map((o) => choice(`option:${o.id}`, o.title, o.outcome, warning(o))).join("\n")}
 ${choice("own-words", "Answer in my own words", null)}
-<textarea name="${ANSWER_FIELDS.text}" aria-label="Your own words" placeholder="What should happen? An executor will build from this."${ro}></textarea>
-${choice("dont-go-ahead", "Don't go ahead", `The ticket is cancelled and entail closes the issue${github ? " as not planned" : ""}.`, " stop")}
+<textarea name="${ANSWER_FIELDS.text}" aria-label="Your own words" placeholder="What should happen? An executor will build from this."${ro}>${escapeHtml(draft?.text ?? "")}</textarea>
+${choice("dont-go-ahead", "Don't go ahead", `The ticket is cancelled and entail closes the issue${github ? " as not planned" : ""}.`, "", " stop")}
 </fieldset>
-<details><summary>Add a note</summary>
-<textarea name="${ANSWER_FIELDS.note}" aria-label="Your note" placeholder="Optional. Kept in entail's records."${ro}></textarea>
-<label class="choice"><input type="checkbox" name="${ANSWER_FIELDS.showNote}" value="1"${off}> Show my note on the issue</label>
+<details${note.trim() === "" ? "" : " open"}><summary>Add a note</summary>
+<textarea name="${ANSWER_FIELDS.note}" aria-label="Your note" placeholder="Optional. Kept in entail's records."${ro}>${escapeHtml(note)}</textarea>
+<label class="choice"><input type="checkbox" name="${ANSWER_FIELDS.showNote}" value="1"${draft?.showNote ? " checked" : ""}${off}> Show my note on the issue</label>
 </details>
-</form></section>`;
+<p class="actions"><button type="submit" name="${ANSWER_FIELDS.step}" value="review"${off}>Review answer</button>
+<span class="hint">Nothing is recorded until you confirm.</span></p>
+</form>`;
+}
+
+/** Whether the note is private or shown on the issue, as the review and receipt say it. */
+function noteLine(answer: Pick<ChosenAnswer, "note" | "showNoteOnIssue">): string {
+  if (answer.note === null) return `<p class="muted">No note.</p>`;
+  return `<p><span class="muted">Your note, ${answer.showNoteOnIssue ? "shown on the issue" : "private: kept in entail's records only"}:</span></p>
+<blockquote class="note">${escapeHtml(answer.note)}</blockquote>`;
+}
+
+/** What happens next, with the ticket's new state. */
+function outcomeHtml(answer: ChosenAnswer, e: BoardEntry): string {
+  const outcome = answerOutcome(answer, forgeOf(e));
+  return `<p>The ticket's new state: <strong>${escapeHtml(outcome.stateWords)}</strong>.</p>
+<ul class="steps">
+${outcome.next.map((step) => `<li>${escapeHtml(step)}</li>`).join("\n")}
+</ul>`;
+}
+
+/**
+ * "Review answer": records nothing, and shows the answer, whether the note is
+ * private or shown, what happens next and the exact comment entail will post.
+ * "Record answer as <owner> (final)" records it; "Back" returns to the form
+ * with everything as the owner left it.
+ */
+function renderReview(e: BoardEntry, context: FormContext, draft: AnswerDraft, answer: ChosenAnswer): string {
+  const owner = context.owner ?? "";
+  const comment = answerComment(owner, e.history.item.ticketId, answer, e.snapshot, forgeOf(e));
+  const keep = (name: string, value: string) => `<input type="hidden" name="${name}" value="${escapeHtml(value)}">`;
+  return `<div id="review" class="review">
+<p><strong>Check your answer before it is recorded. Answers are final.</strong></p>
+<p><span class="muted">You answer:</span> <strong>${escapeHtml(answerWords(answer, e.snapshot))}</strong></p>
+${goesAgainstVisionLine(answer, e.snapshot) ? `<p class="warn">${escapeHtml(AGAINST_VISION_WARNING)}</p>\n` : ""}${noteLine(answer)}
+<h4>What happens next</h4>
+${outcomeHtml(answer, e)}
+<h4>On the issue, entail will post</h4>
+<pre class="comment">${escapeHtml(comment)}</pre>
+<form id="answer-form" class="answer" method="post" action="${BOARD_ANSWER_PATH}" data-locked="false">
+${hiddenFields(e, context.token)}
+${keep(ANSWER_FIELDS.answer, draft.answer)}
+${keep(ANSWER_FIELDS.text, draft.text)}
+${keep(ANSWER_FIELDS.note, draft.note)}
+${draft.showNote ? keep(ANSWER_FIELDS.showNote, "1") : ""}
+<p class="actions"><button type="submit" name="${ANSWER_FIELDS.step}" value="record">Record answer as ${escapeHtml(owner)} (final)</button>
+<button type="submit" name="${ANSWER_FIELDS.step}" value="back">Back</button></p>
+</form>
+</div>`;
+}
+
+/**
+ * The answer form's post. Every step reads the item again: an answer to a
+ * withdrawn item, an already answered item or an older version than the
+ * form showed is refused, and the page says so, keeping what the owner typed.
+ * Only the final step records, and the server has already checked the
+ * per-start token.
+ */
+function answerPost(options: BoardPageOptions, request: FormRequest): Reply {
+  const { store } = options;
+  const form = request.form;
+  const itemId = recordId(form.get(ANSWER_FIELDS.item) ?? "");
+  const history = itemId === null ? null : store.boardItem(itemId);
+  if (itemId === null || history === null) {
+    return {
+      status: 404,
+      html: renderPage(request, { title: "Board", body: `<h1>Board</h1>\n<p class="refusal">${escapeHtml(refusalText({ kind: "unknown" }))}</p>` }),
+    };
+  }
+  const draft = draftFrom(form);
+  const step = stepFrom(form);
+  const view = (panel: FormPanel, status: number) => boardView(options, request, { itemId, panel, status });
+  if (step === null) return view({ kind: "form", draft, error: "The form did not say which step to take. Review your answer again." }, 400);
+  if (step === "back") return view({ kind: "form", draft }, 200);
+
+  const ticket = store.getTicket(history.item.ticketId);
+  const repo = ticket === null ? null : store.getRepo(ticket.repoId);
+  const entry = entryOf(options, history, repo);
+  const shown = versionFrom(form);
+  const refusal = refusalFor(history, shown, lockText(entry.lock));
+  if (refusal !== null) return view({ kind: "form", draft, refusal }, 409);
+  const owner = ownerName(store);
+  if (owner === null) return view({ kind: "form", draft, refusal: { kind: "no-owner" } }, 409);
+  const chosen = answerOf(draft, entry.snapshot.form?.options ?? []);
+  if ("error" in chosen) return view({ kind: "form", draft, error: chosen.error }, 400);
+  if (step === "review") return view({ kind: "review", draft, answer: chosen.answer }, 200);
+
+  const result = recordBoardAnswer(store, { itemId, shownVersion: shown, answeredBy: owner, answer: chosen.answer, locked: lockText(entry.lock) });
+  if ("refused" in result) return view({ kind: "form", draft, refusal: result.refused }, 409);
+  // The receipt stays in place on the item; the page does not move on by itself.
+  return { redirect: itemPath(itemId) };
 }
 
 /**
@@ -451,24 +631,28 @@ export function whatNext(state: TicketState | null): string | null {
   }
 }
 
+/**
+ * The receipt, in place on the answered item: who answered, when, the item
+ * version answered, the ticket's new state, what happens next and the comment
+ * entail posts, with "Next decision" to the oldest open item. The page does
+ * not move on by itself.
+ */
 function answeredState(answer: AnswerRecord, e: BoardEntry, nextId: number | null): string {
+  let comment: string;
+  try {
+    comment = answerComment(answer.answeredBy, e.history.item.ticketId, answer, e.snapshot, forgeOf(e));
+  } catch {
+    comment = "";
+  }
   return stateBox(
     `answered:${nextId ?? ""}`,
     true,
-    `<strong>Answered by ${escapeHtml(answer.answeredBy)}</strong> at ${timeHtml(answer.answeredAt)}: ${escapeHtml(answerWords(answer, e))}${nextDecision(nextId)}`,
+    `<p><strong>Answered by ${escapeHtml(answer.answeredBy)}</strong> at ${timeHtml(answer.answeredAt)} · item version ${answer.itemVersion}</p>
+<p><span class="muted">The answer:</span> <strong>${escapeHtml(answerWords(answer, e.snapshot))}</strong></p>
+${noteLine(answer)}
+${outcomeHtml(answer, e)}
+${comment === "" ? "" : `<details><summary>The comment entail posts on the issue</summary>\n<pre class="comment">${escapeHtml(comment)}</pre></details>`}${nextDecision(nextId)}`,
   );
-}
-
-/** An answer in the owner's terms: the option's title, their own words, or "don't go ahead". */
-function answerWords(answer: AnswerRecord, e: BoardEntry): string {
-  switch (answer.shape) {
-    case "option":
-      return e.snapshot.form?.options.find((o) => o.id === answer.optionId)?.title ?? `option ${answer.optionId ?? ""}`;
-    case "own-words":
-      return `“${answer.text ?? ""}”`;
-    case "dont-go-ahead":
-      return "Don't go ahead.";
-  }
 }
 
 function renderLeftState(nextId: number | null): string {
@@ -515,6 +699,14 @@ form.answer[data-locked=true] { opacity: .75; }
 .state { margin: .75rem 0; padding: .6rem .8rem; border-radius: 6px; border: 1px solid var(--line); background: var(--soft); }
 .state p { margin: .25rem 0 0; }
 .empty { color: var(--muted); text-align: center; padding: 3rem 1rem; }
+form.answer .warn, .review .warn { display: block; margin-top: .35rem; font-size: .875rem; color: var(--bad); }
+form.answer .actions { display: flex; gap: .75rem; align-items: baseline; flex-wrap: wrap; }
+.review, .state-answered { border: 1px solid var(--accent); border-radius: 6px; padding: .6rem .8rem; }
+.review h4 { margin: 1rem 0 .25rem; font-size: .9rem; }
+pre.comment { white-space: pre-wrap; overflow-wrap: anywhere; }
+blockquote.note { margin: .25rem 0; padding: .35rem .75rem; border-left: 3px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
+.refusal { padding: .5rem .75rem; border-left: 3px solid var(--bad); background: var(--soft); }
+a.next-decision { display: inline-block; padding: .4rem 1rem; border: 1px solid var(--accent); border-radius: 4px; text-decoration: none; }
 @media (max-width: 52rem) { .inbox { grid-template-columns: minmax(0, 1fr); } }
 `;
 
