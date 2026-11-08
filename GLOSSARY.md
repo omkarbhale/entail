@@ -170,6 +170,10 @@ _Avoid_: Event, action
 **Audit log**:
 The append-only record of every call, readable by the owner on a page of its own, apart from the board. Reading it changes nothing; a wrong call is fixed through the issue, the vision or a pin.
 
+**Operational log**:
+What the running process did that is not a call: polls, retries, machine failures, pauses and failed notices. It is kept apart from the records, and losing it loses no decision.
+_Avoid_: Audit log (for these), event log
+
 **Records**:
 Everything entail keeps about the repos it serves: tickets, calls, answers, origins and vision changes. They are append-only, so a ticket's state changes only through a new call, and they are kept by entail, never in a project's repo or on its issues.
 _Avoid_: Database, history
