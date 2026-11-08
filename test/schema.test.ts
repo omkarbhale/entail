@@ -75,8 +75,8 @@ test("criteria and a grade in the spec's shape conform to their schemas", () => 
   const criteria: CriteriaOutput = {
     outcome: "criteria",
     criteria: [
-      { id: "C1", sentence: "Output is plain when piped.", source: { kind: "issue", ref: null }, checks: [] },
-      { id: "C2", sentence: "The output format is unchanged.", source: { kind: "vision_line", ref: "tally prints one line per file." }, checks: [{ kind: "leaves_path", argument: "src/format.js" }] },
+      { id: "C1", sentence: "Output is plain when piped.", source: { kind: "issue", ref: null }, checks: [], states_reading: "R1" },
+      { id: "C2", sentence: "The output format is unchanged.", source: { kind: "vision_line", ref: "tally prints one line per file." }, checks: [{ kind: "leaves_path", argument: "src/format.js" }], states_reading: null },
     ],
     product_call: null,
   };

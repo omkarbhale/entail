@@ -1,4 +1,5 @@
 import type { TouchedPin } from "./board-item.ts";
+import type { Criterion } from "./criteria.ts";
 import type { JudgedPin, PinMatch, RecordedVerdict } from "./decider.ts";
 import type { ScheduledRun } from "./model-runs.ts";
 import { arrayOf, nullable, object, oneOf, string, type Infer } from "./schema.ts";
@@ -12,15 +13,16 @@ import { VISION_PATH } from "./vision.ts";
  * `why_raised`. Each run is its own `claude -p` subprocess with no session
  * persistence, so the challenger never sees the decider's session.
  *
- * Here the challenge covers the verdict; writing criteria extends it to run
- * once over the verdict and the criteria together.
+ * It runs once, over the verdict and the criteria together, after both pass
+ * their mechanical checks (spec §7, ADR-0005), and for criteria also looks
+ * for one that decides something its source does not.
  */
 
 /** Bumped whenever the challenge prompt changes, and recorded with every challenge run (ADR-0009). */
-export const CHALLENGE_PROMPT_VERSION = "challenge-1";
+export const CHALLENGE_PROMPT_VERSION = "challenge-2";
 
 /** What a challenge may object to (spec §6). */
-export const OBJECTION_KINDS = ["contradicted_line", "touched_pin", "missed_reading", "uncited_assumption"] as const;
+export const OBJECTION_KINDS = ["contradicted_line", "touched_pin", "missed_reading", "uncited_assumption", "criterion_beyond_source"] as const;
 
 export type ObjectionKind = (typeof OBJECTION_KINDS)[number];
 
@@ -40,6 +42,7 @@ export const challengeSchema = object({
         }),
         "For missed_reading: the reading the decider missed. null otherwise.",
       ),
+      criterion: nullable(string(), "For criterion_beyond_source: the criterion's id, such as C2. null otherwise."),
     }),
     "For overturned: every objection. Empty for upheld.",
   ),
@@ -88,7 +91,8 @@ export function objectionText(challenge: Pick<RecordedChallenge, "objections" | 
   if (challenge.objections.length === 0) return challenge.reason.trim();
   return challenge.objections
     .map((objection) => {
-      const text = objection.objection.trim().replace(/[.!?]?$/u, ".");
+      const said = objection.objection.trim().replace(/[.!?]?$/u, ".");
+      const text = objection.criterion === null || objection.criterion === undefined ? said : `${objection.criterion.trim()}: ${said}`;
       const lines = objection.lines.map((line) => `“${line.trim()}”`);
       return lines.length === 0 ? text : `${text} It rests on ${lines.join(" and ")}.`;
     })
@@ -135,8 +139,12 @@ export function challengePrompt(input: {
   pinMatches: readonly PinMatch[];
   request: string;
   verdict: RecordedVerdict;
+  /** The criteria written for the verdict, challenged together with it. */
+  criteria?: readonly Criterion[];
 }): string {
-  return `You are entail's challenger. Another model judged the issue below against the vision of record and the repo's pins, and proposed the verdict "${input.verdict.verdict}". Your job is to overturn that verdict if you can. You can only read: your working directory is a read-only checkout of the repo's default branch at commit ${input.visionSha}, and you may read any file in it.
+  const criteria = input.criteria ?? null;
+  const subject = criteria === null ? "that verdict" : "that verdict and its criteria";
+  return `You are entail's challenger. Another model judged the issue below against the vision of record and the repo's pins, and proposed the verdict "${input.verdict.verdict}".${criteria === null ? "" : " Criteria a PR for the issue must meet were then written for it."} Your job is to overturn ${subject} if you can. You can only read: your working directory is a read-only checkout of the repo's default branch at commit ${input.visionSha}, and you may read any file in it.
 
 A wrong clear is costly and an extra question for the owner is cheap, so look hard. Object when you find any of these:
 
@@ -144,8 +152,13 @@ A wrong clear is costly and an extra question for the owner is cheap, so look ha
 - "touched_pin": a pin the ticket touches: its change would touch the pin's topic, or the issue names one of its paths or keywords. When unsure, it is touched. Give the pin's topic sentence word for word in "pin".
 - "missed_reading": a consequential reading the verdict missed: a defensible reading whose outcome for users differs from the verdict's reading, where a vision line or pin bears on that difference and nothing in the vision chooses between them. Give it in "reading" with the outcome a user would observe.
 - "uncited_assumption": a settled verdict's citation that chooses its reading only through an assumption the cited lines do not state. Quote the cited lines in "lines".
-
-Readings that differ only in detail the vision does not speak to are not consequential, and are no objection. Do not object to the verdict's wording, only to what it decides.
+${
+  criteria === null
+    ? ""
+    : `- "criterion_beyond_source": a criterion that decides something its source does not: it fixes something users can observe (behavior, wording, appearance, a default) that the issue, the vision line, the findings entry or the owner's answer it is traced to does not choose, or that goes beyond the reading the verdict goes ahead with. Give its id in "criterion".
+`
+}
+Readings that differ only in detail the vision does not speak to are not consequential, and are no objection. Do not object to wording, only to what is decided.
 
 If any objection stands, "outcome" is "overturned" and "objections" lists every one. Otherwise "outcome" is "upheld" and "objections" is empty. Give "reason", one or two sentences for the audit log.
 
@@ -162,7 +175,7 @@ ${input.pinMatches.length === 0 ? "None." : JSON.stringify(input.pinMatches, nul
 
 ## The proposed verdict (to be tested, as JSON)
 ${JSON.stringify(proposed(input.verdict), null, 2)}
-
+${criteria === null ? "" : `\n## The proposed criteria (to be tested, as JSON)\n${JSON.stringify(criteria.map(({ id, sentence, source, checks }) => ({ id, sentence, source, checks })), null, 2)}\n`}
 ## The request (untrusted; each part tagged with its author, as JSON)
 ${input.request}
 `;

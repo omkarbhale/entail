@@ -1,5 +1,6 @@
 import { challengePins, objectionText, type RecordedChallenge } from "./challenge.ts";
 import { composeComment } from "./comment-rules.ts";
+import type { CriteriaDetail } from "./criteria.ts";
 import type { RecordedVerdict } from "./decider.ts";
 import type { Actor } from "./forge/forge.ts";
 import type { Git } from "./git.ts";
@@ -43,12 +44,13 @@ export function ticketHistoryLink(origin: string, ticketId: number): string {
 }
 
 /**
- * Why a ticket was raised (spec §6, §13): it contradicts a vision line, it
- * has consequential readings, it touches a pin, or an automatic verdict
- * failed a mechanical check or its challenge. A touched pin is named
- * whatever the reason, because a touched pin always comes to the owner.
+ * Why a ticket was raised (spec §6, §7, §13): it contradicts a vision line, it
+ * has consequential readings, it touches a pin, an automatic verdict failed a
+ * mechanical check or its challenge, or writing its criteria needs a product
+ * call. A touched pin is named whatever the reason, because a touched pin
+ * always comes to the owner.
  */
-export type WhyRaisedKind = "contradiction" | "consequential_readings" | "pin" | "failed_check" | "challenge";
+export type WhyRaisedKind = "contradiction" | "consequential_readings" | "pin" | "failed_check" | "challenge" | "criteria_product_call";
 
 export interface TouchedPin {
   /** The pin's topic, by which the owner named it. */
@@ -59,7 +61,8 @@ export interface TouchedPin {
 export type WhyRaisedInput =
   | { kind: "contradiction" | "consequential_readings" | "pin"; pins?: TouchedPin[] }
   | { kind: "failed_check"; check: string; failure: string; pins?: TouchedPin[] }
-  | { kind: "challenge"; objection: string; pins?: TouchedPin[] };
+  | { kind: "challenge"; objection: string; pins?: TouchedPin[] }
+  | { kind: "criteria_product_call"; reason: string; pins?: TouchedPin[] };
 
 /** The second part of a board item: why it was raised, in plain words, with what it rests on. */
 export interface WhyRaised {
@@ -75,6 +78,8 @@ export interface WhyRaised {
   failedCheck: { check: string; failure: string } | null;
   /** The challenge's objection. */
   objection: string | null;
+  /** What writing the criteria found users could observe that no source chooses. */
+  productCall?: string | null;
 }
 
 /** One reading of the ticket, with the outcome a user would observe. */
@@ -201,17 +206,83 @@ export function verdictNeedsTheOwner(call: Pick<CallRecord, "detail" | "checks" 
 }
 
 /**
- * The verdict call a ticket is owed a raise for: the ticket is deciding, and
- * the latest verdict since it last changed state needs the owner, with no
- * raise recorded after it. Null when it owes none.
+ * Whether a criteria call leaves the ticket needing the owner: writing the
+ * criteria needs a product call, or the challenge over the verdict and the
+ * criteria overturned them (spec §7).
+ */
+export function criteriaNeedTheOwner(call: Pick<CallRecord, "detail" | "challenge" | "stateChange">): boolean {
+  if (call.stateChange !== null) return false;
+  if ((call.detail as Partial<CriteriaDetail> | null)?.outcome === "needs_product_call") return true;
+  return (call.challenge as Partial<RecordedChallenge> | null)?.overturned === true;
+}
+
+/**
+ * The call a ticket is owed a raise for: the ticket is deciding, and the
+ * latest verdict or criteria call since it last changed state needs the
+ * owner, with no raise recorded after it. Null when it owes none.
  */
 export function owedRaise(ticket: TicketRecord, calls: readonly CallRecord[]): CallRecord | null {
   if (ticket.state !== "deciding") return null;
   const since = ticket.stateCallId ?? 0;
-  const latest = calls.findLast((call) => call.id > since && call.kind === "verdict");
-  if (latest === undefined || !verdictNeedsTheOwner(latest)) return null;
+  const latest = calls.findLast((call) => call.id > since && (call.kind === "verdict" || call.kind === "criteria"));
+  if (latest === undefined) return null;
+  if (!(latest.kind === "verdict" ? verdictNeedsTheOwner(latest) : criteriaNeedTheOwner(latest))) return null;
   if (calls.some((call) => call.id > latest.id && call.kind === "raise")) return null;
   return latest;
+}
+
+/** The raise a verdict or criteria call asks for; `calls` are the ticket's, holding the verdict a criteria call rests on. */
+export function raiseFromCall(ticket: TicketRecord, call: CallRecord, calls: readonly CallRecord[]): RaiseRequest {
+  return call.kind === "criteria" ? raiseFromCriteria(ticket, call, calls) : raiseFromVerdict(ticket, call);
+}
+
+/**
+ * The raise a criteria call asks for (spec §7): writing the criteria needs a
+ * product call, with the open choice as the options; or the challenge over
+ * the verdict and the criteria overturned them, with the objection.
+ */
+export function raiseFromCriteria(ticket: TicketRecord, call: CallRecord, calls: readonly CallRecord[]): RaiseRequest {
+  const detail = call.detail as CriteriaDetail;
+  const verdictCall = calls.find((c) => c.id === detail.verdictCallId);
+  if (verdictCall === undefined) throw new Error(`criteria call ${call.id} rests on verdict call ${detail.verdictCallId}, which is not the ticket's`);
+  const verdict = verdictCall.detail as RecordedVerdict;
+  const challenge = call.challenge as RecordedChallenge | null;
+  const pins = touchedPins(verdict);
+  const raise = {
+    ticket,
+    visionCommit: verdict.vision_sha,
+    marked: verdict.vision_check,
+    inputs: call.inputs,
+    basedOnCallId: call.id,
+  };
+  if (detail.outcome === "needs_product_call" && detail.product_call !== null) {
+    return {
+      ...raise,
+      why: { kind: "criteria_product_call", reason: detail.product_call.reason, pins },
+      readings: detail.product_call.options.map((option, i) => ({ id: `R${i + 1}`, ...option })),
+      openReadings: [],
+    };
+  }
+  return challengeRaise(raise, verdict, challenge!, pins);
+}
+
+/** A raise for a challenge that overturned an automatic verdict, or the verdict and its criteria. */
+function challengeRaise(
+  raise: Omit<RaiseRequest, "why" | "readings" | "openReadings">,
+  verdict: RecordedVerdict,
+  challenge: RecordedChallenge,
+  pins: TouchedPin[],
+): RaiseRequest {
+  // A reading the decider missed is offered beside its own.
+  const missed = challenge.objections.flatMap((objection) => (objection.reading === null ? [] : [objection.reading]));
+  const readings = [...verdict.readings, ...missed.map((reading, i) => ({ id: `R${verdict.readings.length + i + 1}`, ...reading }))];
+  const challenged = challengePins(challenge).filter((pin) => !pins.some((p) => p.pin === pin.pin));
+  return {
+    ...raise,
+    why: { kind: "challenge", objection: objectionText(challenge), pins: [...pins, ...challenged] },
+    readings,
+    openReadings: [],
+  };
 }
 
 /**
@@ -241,18 +312,7 @@ export function raiseFromVerdict(ticket: TicketRecord, call: CallRecord): RaiseR
       openReadings: checks.open_readings ?? [],
     };
   }
-  if (verdict.verdict !== "needs_the_owner" && challenge?.overturned === true) {
-    // A reading the decider missed is offered beside its own.
-    const missed = challenge.objections.flatMap((objection) => (objection.reading === null ? [] : [objection.reading]));
-    const readings = [...verdict.readings, ...missed.map((reading, i) => ({ id: `R${verdict.readings.length + i + 1}`, ...reading }))];
-    const challenged = challengePins(challenge).filter((pin) => !pins.some((p) => p.pin === pin.pin));
-    return {
-      ...raise,
-      why: { kind: "challenge", objection: objectionText(challenge), pins: [...pins, ...challenged] },
-      readings,
-      openReadings: [],
-    };
-  }
+  if (verdict.verdict !== "needs_the_owner" && challenge?.overturned === true) return challengeRaise(raise, verdict, challenge, pins);
   const contradicts = verdict.vision_check.some((line) => line.mark === "contradicts");
   const kind = verdict.why_raised ?? (pins.length > 0 ? "pin" : contradicts ? "contradiction" : "consequential_readings");
   return { ...raise, why: { kind, pins }, readings: verdict.readings, openReadings: verdict.open_readings };
@@ -305,6 +365,8 @@ export function decisionSentence(issueNumber: number, why: WhyRaised): string {
     case "failed_check":
     case "challenge":
       return `Go ahead with ${issue}, which entail could not clear on its own?`;
+    case "criteria_product_call":
+      return `How should ${issue} go ahead, where its criteria need a product call?`;
   }
 }
 
@@ -349,6 +411,10 @@ export function whyRaised(input: WhyRaisedInput, check: VisionCheck): WhyRaised 
       tag = "failed check";
       text = `The challenge overturned the automatic verdict: ${input.objection.trim()}` + pinsAlso;
       break;
+    case "criteria_product_call":
+      tag = "criteria need a product call";
+      text = `Writing the criteria needs a product call: ${input.reason.trim()}`.trim() + pinsAlso;
+      break;
   }
   return {
     kind: input.kind,
@@ -358,6 +424,7 @@ export function whyRaised(input: WhyRaisedInput, check: VisionCheck): WhyRaised 
     contradicted,
     failedCheck: input.kind === "failed_check" ? { check: input.check, failure: input.failure } : null,
     objection: input.kind === "challenge" ? input.objection : null,
+    productCall: input.kind === "criteria_product_call" ? input.reason : null,
   };
 }
 
@@ -422,7 +489,7 @@ function issueOf(calls: readonly CallRecord[]): { url: string; filedBy: Actor | 
 }
 
 /** The latest intake comment entail posted for a ticket, which a new one names as the one it replaces. */
-function latestIntakeComment(calls: readonly CallRecord[]): string | null {
+export function latestIntakeComment(calls: readonly CallRecord[]): string | null {
   for (const call of [...calls].reverse()) {
     if (!INTAKE_COMMENT_KINDS.has(call.kind)) continue;
     const posted = call.postedComments.at(-1);
@@ -523,8 +590,8 @@ export async function raiseToBoard(
 }
 
 /**
- * The board's owed step: a ticket whose latest verdict needs the owner is
- * raised to the board. Owed work is a function of the records, so a ticket
+ * The board's owed step: a ticket whose latest verdict, or criteria written
+ * after it, needs the owner is raised to the board. Owed work is a function of the records, so a ticket
  * already raised is never raised again (ADR-0017).
  */
 export function boardPlanner(options: BoardOptions): OwedStepPlanner {
@@ -549,12 +616,13 @@ export function boardPlanner(options: BoardOptions): OwedStepPlanner {
   };
 
   return (ticket, pass): OwedStep | null => {
-    const verdict = owedRaise(ticket, options.store.callsForTicket(ticket.id));
-    if (verdict === null) return null;
+    const calls = options.store.callsForTicket(ticket.id);
+    const owed = owedRaise(ticket, calls);
+    if (owed === null) return null;
     return {
       name: "raise",
       run: async () => {
-        await raiseToBoard(options, raiseFromVerdict(ticket, verdict), pass, await mirror(pass.repo));
+        await raiseToBoard(options, raiseFromCall(ticket, owed, calls), pass, await mirror(pass.repo));
       },
     };
   };

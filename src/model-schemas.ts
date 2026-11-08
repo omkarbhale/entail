@@ -79,13 +79,20 @@ export const criteriaSchema = object({
           argument: string("A path glob for changes_path and leaves_path, a check name for check_passes."),
         }),
       ),
+      states_reading: nullable(string(), "The id of the reading this criterion states, when it states the reading chosen. null otherwise."),
     }),
     "For criteria: one to five. Empty for needs_product_call.",
   ),
   product_call: nullable(
     object({
-      reason: string(),
-      options: arrayOf(string(), "The open choice, one option each."),
+      reason: string("What users could observe that no source chooses, in one or two plain sentences."),
+      options: arrayOf(
+        object({
+          reading: string("One way to settle the open choice."),
+          observed_outcome: string("The outcome a user would observe this way."),
+        }),
+        "The open choice, one option each.",
+      ),
     }),
     "For needs_product_call: the product call. null otherwise.",
   ),

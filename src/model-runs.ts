@@ -34,6 +34,13 @@ export interface ScheduleOptions {
   since: string;
   /** Discards the run, waiting or in flight; the promise then rejects with the signal's reason. */
   signal?: AbortSignal;
+  /**
+   * Checks a structured output before it is taken: returns why the output is
+   * invalid, or null to take it. An invalid output, or a check that throws,
+   * is the "no structured output" machine failure, retried like any other
+   * (ADR-0005: invalid criteria are a machine failure).
+   */
+  accept?: (output: unknown) => string | null | Promise<string | null>;
 }
 
 /** A run that produced its structured output, after however many retries it took. */
@@ -77,6 +84,7 @@ interface Entry {
   since: number;
   seq: number;
   signal: AbortSignal | undefined;
+  accept: ScheduleOptions["accept"];
   resolve(run: ScheduledRun<unknown>): void;
   reject(error: unknown): void;
   /** The attempt in flight, if any. */
@@ -184,6 +192,7 @@ export class ModelRuns {
         since,
         seq: this.#seq++,
         signal: options.signal,
+        accept: options.accept,
         resolve: resolve as (run: ScheduledRun<unknown>) => void,
         reject,
         attempt: null,
@@ -252,6 +261,15 @@ export class ModelRuns {
         if (signal.aborted) return; // discarded; already settled
         // A runner classifies its failures; one that throws anyway is an error like any other.
         result = { ok: false, failure: { kind: "error", message: errorMessage(error) }, facts: null };
+      }
+      if (result.ok && entry.accept) {
+        let invalid: string | null;
+        try {
+          invalid = await entry.accept(result.output);
+        } catch (error) {
+          invalid = `the output could not be checked: ${errorMessage(error)}`;
+        }
+        if (invalid !== null) result = { ok: false, failure: { kind: "no-structured-output", message: `the output is invalid: ${invalid}` }, facts: result.facts };
       }
       if (entry.attempt?.controller !== controller) return; // discarded while the runner finished
       entry.attempt = null;

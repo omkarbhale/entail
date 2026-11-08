@@ -1,4 +1,6 @@
 import { visionPermalink, type RepoLocation } from "./citation.ts";
+import { describeCheck } from "./generic-criteria.ts";
+import type { GenericCriterion, MechanicalCheck } from "./repo-settings.ts";
 import { collapseWhitespace, VISION_PATH, type VisionLine } from "./vision.ts";
 
 /**
@@ -130,6 +132,66 @@ export function visionCheckSection(check: VisionCheck): string {
  */
 export function raisedNextText(boardLink: string): string {
   return `entail raised this issue to the owner, who decides it on [entail's board](${boardLink}). Nothing is taken forward until then, and no reply here counts as an answer.`;
+}
+
+/** The label a cleared or landing ticket's issue carries (ADR-0013). */
+export const CLEARED_LABEL = "entail:cleared";
+
+/** Model-written text as one line of a comment: whitespace collapsed, and no hidden marker of its own. */
+function inline(text: string): string {
+  return collapseWhitespace(text).replace(/<!--/gu, "&lt;!--");
+}
+
+/** Why a ticket was cleared, as its intake comment says it (spec §9, ADR-0011). */
+export type WhyCleared =
+  /** The vision settles it: each cited line with its permalink at the vision's commit. */
+  | { kind: "settled"; commit: string; cited: { lineNumber: number; permalink: string }[] }
+  /** Unopposed: no contradiction found, why nothing opposes the ticket, and the reading chosen where there was one. */
+  | { kind: "unopposed"; whyUnopposed: string; readingChosen: string | null };
+
+/** A criterion as its intake comment lists it. */
+export interface ListedCriterion {
+  id: string;
+  sentence: string;
+  checks: readonly MechanicalCheck[];
+}
+
+/** One criterion or generic criterion as a list item, with its mechanical checks under it. */
+function criterionItem(id: string, sentence: string, checks: readonly MechanicalCheck[]): string[] {
+  const lines = [`- **${id}** ${inline(sentence)}`];
+  if (checks.length === 0) lines.push("  - No mechanical check: it is graded from the PR's evidence.");
+  for (const check of checks) lines.push(`  - Mechanical check: ${describeCheck(check)}.`);
+  return lines;
+}
+
+/**
+ * What happens next for a ticket that goes ahead (spec §9, ADR-0007,
+ * ADR-0011): the criteria C1…Cn with their mechanical checks, the generic
+ * criteria in full, why the ticket was cleared (a citation permalink, or "no
+ * contradiction found"), then the label `entail:cleared`.
+ */
+export function clearedNextText(input: { criteria: readonly ListedCriterion[]; genericCriteria: readonly GenericCriterion[]; why: WhyCleared }): string {
+  const lines = [
+    "entail cleared this issue. A PR that closes it must meet every criterion below and every generic criterion of this repo.",
+    "",
+    "#### Criteria",
+    "",
+  ];
+  for (const criterion of input.criteria) lines.push(...criterionItem(criterion.id, criterion.sentence, criterion.checks));
+  lines.push("", "#### Generic criteria", "");
+  if (input.genericCriteria.length === 0) lines.push("This repo has no generic criteria.");
+  for (const criterion of input.genericCriteria) lines.push(...criterionItem(criterion.id, criterion.sentence, [criterion.check]));
+  lines.push("", "#### Why cleared", "");
+  if (input.why.kind === "settled") {
+    const at = `\`${shortSha(input.why.commit)}\``;
+    const links = input.why.cited.map((line) => `[${VISION_PATH} line ${line.lineNumber} at ${at}](${line.permalink})`);
+    lines.push(`The vision settles this issue. Citation: ${links.join(", ")}.`);
+  } else {
+    lines.push(`No contradiction found. ${inline(input.why.whyUnopposed)}`.trim());
+    if (input.why.readingChosen !== null) lines.push("", `Reading chosen: ${inline(input.why.readingChosen)}`);
+  }
+  lines.push("", `Label: \`${CLEARED_LABEL}\`. Any executor may pick this issue up.`);
+  return lines.join("\n");
 }
 
 /**
