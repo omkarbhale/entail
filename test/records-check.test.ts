@@ -3,7 +3,8 @@ import { test } from "node:test";
 import { hiddenMarker } from "../src/comment-rules.ts";
 import { ForgeLoggedOutError, type Change } from "../src/forge/forge.ts";
 import { whyNotTakenIn } from "../src/intake.ts";
-import { markedIssuesWithoutRecords, RecordsCheck } from "../src/records-check.ts";
+import { checkEveryRepo, markedIssuesWithoutRecords, RecordsCheck } from "../src/records-check.ts";
+import { setPaused, recordUnenrollment } from "../src/repo-switches.ts";
 import { actor, IntakeForge, issue, issueComment, OWNER_ID, passSetup } from "./pass-fixture.ts";
 
 /** A comment entail posted on an issue for a ticket, as the owner's account. */
@@ -131,4 +132,24 @@ test("confirming a fresh start records it with the marked issues the check found
   // The next start's check finds the same marked issues left alone.
   const next = new RecordsCheck({ store: setup.store, forgeFor: () => forge });
   assert.equal((await next.check(repo)).status, "clear");
+});
+
+test("the start-up check reads every enrolled repo but a paused or unenrolled one", async (t) => {
+  const setup = passSetup(t);
+  const active = setup.enroll({ projectId: 5001 });
+  const paused = setup.enroll({ projectId: 5002, path: "acme/paused" });
+  const unenrolled = setup.enroll({ projectId: 5003, path: "acme/gone" });
+  setPaused(setup.store, paused.id, true, "Ada");
+  recordUnenrollment(setup.store, unenrolled, "Ada");
+  const read: number[] = [];
+  const check = new RecordsCheck({
+    store: setup.store,
+    forgeFor: (repo) => {
+      read.push(repo.id);
+      return new IntakeForge();
+    },
+  });
+  await checkEveryRepo(setup.store, check);
+  assert.deepEqual(read, [active.id], "a paused repo is checked by its first pass after resume; an unenrolled one never");
+  assert.equal(check.standing(paused.id).status, "unchecked");
 });

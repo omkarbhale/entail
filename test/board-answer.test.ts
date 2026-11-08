@@ -34,7 +34,7 @@ interface Fixture {
   post(fields: Record<string, string>, options?: { token?: boolean }): Promise<{ status: number; body: string; location?: string }>;
 }
 
-async function serveBoard(t: TestContext, options: { hostHalted?: (host: string) => boolean } = {}): Promise<Fixture> {
+async function serveBoard(t: TestContext, options: { hostHalted?: (host: string) => boolean; catchingUp?: (repoId: number) => boolean } = {}): Promise<Fixture> {
   const dir = mkdtempSync(join(tmpdir(), "entail-answer-"));
   let now = new Date(2026, 10, 9, 9, 0, 0).getTime();
   const store = Store.openIn(dir, { now: () => new Date((now += 1000)) });
@@ -91,7 +91,7 @@ async function serveBoard(t: TestContext, options: { hostHalted?: (host: string)
   let answersRecorded = 0;
   const server = await startServer({
     port: 0,
-    pages: boardPages({ store, now: () => new Date(now), hostHalted: options.hostHalted, afterAnswer: () => answersRecorded++ }),
+    pages: boardPages({ store, now: () => new Date(now), hostHalted: options.hostHalted, catchingUp: options.catchingUp, afterAnswer: () => answersRecorded++ }),
   });
   t.after(async () => {
     await server.close();
@@ -333,6 +333,21 @@ test("an answer to an item whose repo is paused is refused", async (t) => {
   assert.equal(reply.status, 409);
   assert.match(parsePage(reply.body).text, /This item is locked, so nothing was recorded: this repo is paused\./);
   assert.equal(board.store.answerFor(item.id), null);
+});
+
+test("an answer to an item of a repo entail is still catching up with after a pause is refused, and taken once it has caught up", async (t) => {
+  const caughtUp = { now: false };
+  const board = await serveBoard(t, { catchingUp: () => !caughtUp.now });
+  const { item } = board.raise(board.github, 7, { kind: "contradiction" });
+  const refused = await board.post(fields(item, { answer: "option:R1", step: "record" }));
+  assert.equal(refused.status, 409);
+  assert.match(parsePage(refused.body).text, /This item is locked, so nothing was recorded: entail is catching up with this repo after its pause\./);
+  assert.equal(board.store.answerFor(item.id), null);
+
+  caughtUp.now = true;
+  const taken = await board.post(fields(item, { answer: "option:R1", step: "record" }));
+  assert.equal(taken.status, 303);
+  assert.ok(board.store.answerFor(item.id));
 });
 
 test("the vision-line warning appears exactly when going ahead goes against a line, with no link to edit the vision", async (t) => {

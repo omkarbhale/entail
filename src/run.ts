@@ -154,9 +154,20 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
       ...boardPages({
         store,
         hostHalted: (host) => passes?.hostHalted(host) ?? false,
+        catchingUp: (repoId) => passes?.catchingUp(repoId) ?? false,
         afterAnswer: () => void records.save("answer"),
       }),
-      ...reposPages({ store, enroller, dataDirectory: options.dataDirectory, recordsCheck }),
+      ...reposPages({
+        store,
+        enroller,
+        dataDirectory: options.dataDirectory,
+        recordsCheck,
+        // A paused repo shows as pausing while its running steps or their writes finish (ADR-0018).
+        activity: { pausing: (repo) => passes?.busy(repo.id) ?? false },
+        forgeFor,
+        inFlight,
+        log,
+      }),
       ...callsPages(store),
       ticketPage({ store, retryState: (ticketId) => modelRuns.retryState(String(ticketId)) }),
       globalSettingsPage(store, { dataDirectory: options.dataDirectory }),

@@ -1,7 +1,7 @@
 import { FINAL_STATES, INITIAL_STATE, TICKET_STATES, TICKET_TRANSITIONS } from "./ticket-states.ts";
 
 /** Bumped whenever the schema below changes; a store from a newer entail is refused. */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /**
  * Every table of the store except `ticket_states`. The store itself refuses
@@ -21,6 +21,7 @@ export const APPEND_ONLY_TABLES = [
   "vision_changes",
   "enrollments",
   "enrollment_model_runs",
+  "unenrollments",
   "forge_write_intents",
   "forge_write_confirmations",
   "fresh_starts",
@@ -66,6 +67,7 @@ const KEYS: Readonly<Record<(typeof APPEND_ONLY_TABLES)[number] | "ticket_states
   vision_changes: [["id"]],
   enrollments: [["id"]],
   enrollment_model_runs: [["id"]],
+  unenrollments: [["id"]],
   forge_write_intents: [["id"]],
   forge_write_confirmations: [["intent_id"]],
   fresh_starts: [["id"]],
@@ -153,6 +155,29 @@ CREATE TABLE fresh_starts (
   marked_issue_numbers TEXT NOT NULL ${jsonArray("marked_issue_numbers")}
 ) STRICT;
 CREATE INDEX fresh_starts_by_repo ON fresh_starts (repo_id, id);
+`;
+
+// An unenrolled repo: the enrollment the owner ended, or none for a repo
+// enrolled before enrollments were recorded. Its records stay, read-only;
+// enrolling it again records a new enrollment, which this row does not end
+// (ADR-0018).
+const UNENROLLMENTS_TABLE = `
+CREATE TABLE unenrollments (
+  id INTEGER PRIMARY KEY,
+  repo_id INTEGER NOT NULL REFERENCES repos(id),
+  enrollment_id INTEGER REFERENCES enrollments(id),
+  unenrolled_at TEXT NOT NULL,
+  unenrolled_by TEXT NOT NULL CHECK (unenrolled_by <> '')
+) STRICT;
+CREATE INDEX unenrollments_by_repo ON unenrollments (repo_id, id);
+`;
+
+const UNENROLLMENTS_OF_LATEST = `
+-- An unenrollment ends the repo's latest enrollment, once.
+CREATE TRIGGER unenrollments_of_latest BEFORE INSERT ON unenrollments
+WHEN NEW.enrollment_id IS NOT (SELECT max(id) FROM enrollments WHERE repo_id = NEW.repo_id)
+  OR EXISTS (SELECT 1 FROM unenrollments WHERE repo_id = NEW.repo_id AND enrollment_id IS NEW.enrollment_id)
+BEGIN SELECT RAISE(ABORT, 'an unenrollment ends the repo''s latest enrollment, once'); END;
 `;
 
 const ENROLLMENTS_SETTINGS_OF_REPO = `
@@ -325,6 +350,7 @@ CREATE TABLE vision_changes (
 ${ENROLLMENTS_TABLE}
 ${ENROLLMENT_MODEL_RUNS_TABLE}
 ${FRESH_STARTS_TABLE}
+${UNENROLLMENTS_TABLE}
 -- A forge write recorded before it is sent; confirmed by a row in
 -- forge_write_confirmations once sent or settled on start (ADR-0017).
 CREATE TABLE forge_write_intents (
@@ -358,6 +384,7 @@ BEGIN SELECT RAISE(ABORT, 'a settings version must follow the repo''s latest ver
 
 ${GLOBAL_SETTINGS_IN_ORDER}
 ${ENROLLMENTS_SETTINGS_OF_REPO}
+${UNENROLLMENTS_OF_LATEST}
 -- An issue has at most one ticket in flight; a ticket pulled in again links
 -- to the issue's latest ticket, and a first ticket links to none (ADR-0020).
 CREATE TRIGGER tickets_link_predecessor BEFORE INSERT ON tickets
@@ -491,4 +518,6 @@ export const MIGRATIONS: Readonly<Record<number, string>> = {
   4: "ALTER TABLE answers ADD COLUMN item_version INTEGER NOT NULL DEFAULT 1 CHECK (item_version > 0);",
   // 5 -> 6: fresh starts.
   5: [FRESH_STARTS_TABLE, appendOnly("fresh_starts"), noReplace(["fresh_starts", KEYS.fresh_starts])].join(""),
+  // 6 -> 7: unenrollments.
+  6: [UNENROLLMENTS_TABLE, appendOnly("unenrollments"), UNENROLLMENTS_OF_LATEST, noReplace(["unenrollments", KEYS.unenrollments])].join(""),
 };

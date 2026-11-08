@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test, type TestContext } from "node:test";
 import { APPEND_ONLY_TABLES, SCHEMA_VERSION } from "../src/store-schema.ts";
-import { STORE_FILE, Store, StoreOpenError, type NewEnrollmentModelRun, type NewModelRun, type RepoRecord, type TicketRecord } from "../src/store.ts";
+import { RepoAlreadyEnrolledError, STORE_FILE, Store, StoreOpenError, type NewEnrollmentModelRun, type NewModelRun, type RepoRecord, type TicketRecord } from "../src/store.ts";
 import { TICKET_STATES, TICKET_TRANSITIONS, TransitionError, type TicketState } from "../src/ticket-states.ts";
 
 function tempDirectory(t: TestContext): string {
@@ -72,6 +72,16 @@ function rawConnection(t: TestContext, store: Store): DatabaseSync {
   return db;
 }
 
+/** Drops a table with its triggers and indexes, taking a store back to before it was added. */
+function dropTable(db: DatabaseSync, table: string): void {
+  for (const { type, name } of db
+    .prepare("SELECT type, name FROM sqlite_schema WHERE tbl_name = ? AND type IN ('trigger', 'index')")
+    .all(table) as { type: string; name: string }[]) {
+    if (!name.startsWith("sqlite_")) db.exec(`DROP ${type} ${name}`);
+  }
+  db.exec(`DROP TABLE ${table}`);
+}
+
 /** A store with at least one row in every table. */
 function fullStore(t: TestContext): Store {
   const store = openStore(t);
@@ -119,6 +129,16 @@ function fullStore(t: TestContext): Store {
   const intent = store.recordForgeWriteIntent({ repoId: repo.id, ticketId: ticket.id, callId: toBoard.id, kind: "comment", target: "issue", number: 1, payload: { body: "x" } });
   store.confirmForgeWrite({ intentId: intent.id, comment: { id: "99", url: "https://github.com/owner/tally/issues/1#issuecomment-99" } });
   store.recordFreshStart({ repoId: repo.id, confirmedBy: "Owner", markedIssueNumbers: [4] });
+  const ended = store.enroll({
+    repo: { forge: "github", host: "github.com", projectId: 102, path: "owner/old", ownerAccountId: 4242, ownerLogin: "owner" },
+    settings: {},
+    savedBy: "Owner",
+    visionSha: "v1",
+    visionLines: ["Tally counts words."],
+    visionOrigin: "owner-stated",
+    openIssueNumbers: [],
+  }).repo;
+  store.recordUnenrollment({ repoId: ended.id, unenrolledBy: "Owner" });
   return store;
 }
 
@@ -161,7 +181,7 @@ test("a store from schema 1 is migrated to the current schema and keeps its reco
   first.close();
   // Take the store back to schema 1, which had no global settings, no enrollments, no enrollment model runs and no fresh starts.
   const db = new DatabaseSync(join(dir, STORE_FILE));
-  for (const table of ["global_settings_versions", "enrollment_model_runs", "enrollments", "fresh_starts"]) {
+  for (const table of ["global_settings_versions", "unenrollments", "enrollment_model_runs", "enrollments", "fresh_starts"]) {
     for (const { type, name } of db
       .prepare("SELECT type, name FROM sqlite_schema WHERE tbl_name = ? AND type IN ('trigger', 'index')")
       .all(table) as { type: string; name: string }[]) {
@@ -657,8 +677,9 @@ test("an answer records the item version it was given to, and one from before sc
   assert.throws(() => first.recordAnswer({ boardItemId: raiseItem(2).id, itemVersion: 0, answeredBy: "Owner", shape: "dont-go-ahead" }), /CHECK/);
   first.close();
 
-  // Take the store back to schema 4, whose answers had no item version, and which had no fresh starts.
+  // Take the store back to schema 4, whose answers had no item version, and which had no fresh starts and no unenrollments.
   const db = new DatabaseSync(join(dir, STORE_FILE));
+  dropTable(db, "unenrollments");
   db.exec("DROP TABLE fresh_starts");
   db.exec("ALTER TABLE answers DROP COLUMN item_version");
   db.exec("PRAGMA user_version = 4");
@@ -776,4 +797,45 @@ test("transactions roll back as a whole, nested ones included", (t) => {
   });
   assert.ok(store.latestTicketForIssue(repo.id, 2));
   assert.ok(store.latestTicketForIssue(repo.id, 3));
+});
+
+test("an unenrollment ends the repo's latest enrollment once; enrolling again keeps the repo and starts a new enrollment", (t) => {
+  const store = openStore(t);
+  const enrollment = (projectId: number, openIssueNumbers: number[]) =>
+    store.enroll({
+      repo: { forge: "github", host: "github.com", projectId, path: "owner/tally", ownerAccountId: 4242, ownerLogin: "owner" },
+      settings: {},
+      savedBy: "Owner",
+      visionSha: "v1",
+      visionLines: ["Tally counts words."],
+      visionOrigin: "owner-stated",
+      openIssueNumbers,
+    });
+  const first = enrollment(101, [1]);
+  const other = enrollment(102, []);
+  assert.throws(() => enrollment(101, []), RepoAlreadyEnrolledError, "an enrolled repo cannot be enrolled twice");
+  assert.equal(store.isEnrolled(first.repo.id), true);
+
+  const ended = store.recordUnenrollment({ repoId: first.repo.id, unenrolledBy: "Owner" });
+  assert.equal(ended.enrollmentId, first.enrollment.id);
+  assert.equal(store.isEnrolled(first.repo.id), false);
+  assert.deepEqual(store.listEnrolledRepos(), [other.repo]);
+  assert.deepEqual(store.listRepos(), [first.repo, other.repo], "its record stays");
+  assert.throws(() => store.recordUnenrollment({ repoId: first.repo.id, unenrolledBy: "Owner" }), /latest enrollment, once/);
+  assert.deepEqual(store.latestUnenrollment(first.repo.id), ended);
+
+  const again = enrollment(101, [1, 2]);
+  assert.equal(again.repo.id, first.repo.id);
+  assert.notEqual(again.enrollment.id, first.enrollment.id);
+  assert.equal(store.isEnrolled(first.repo.id), true);
+  assert.equal(store.wasOpenAtEnrollment(first.repo.id, 2), true, "the new enrollment's open issues are the ones left alone");
+  assert.equal(store.latestSettings(first.repo.id)!.version, 2, "enrolling again saves a new settings version");
+
+  const raw = rawConnection(t, store);
+  assert.throws(
+    () => raw.prepare("INSERT INTO unenrollments (repo_id, enrollment_id, unenrolled_at, unenrolled_by) VALUES (?, ?, 'x', 'Owner')").run(first.repo.id, first.enrollment.id),
+    /latest enrollment, once/,
+    "an earlier enrollment cannot be ended after a newer one started",
+  );
+  assert.throws(() => raw.exec("DELETE FROM unenrollments"), /append-only/);
 });

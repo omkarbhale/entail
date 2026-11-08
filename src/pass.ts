@@ -14,6 +14,7 @@ import type { OperationalLog } from "./operational-log.ts";
 import { pullInOnComment } from "./pull-in.ts";
 import type { RecordsCheck, RecordsStanding } from "./records-check.ts";
 import type { RepoSettings } from "./repo-settings.ts";
+import { latestResume } from "./repo-switches.ts";
 import type { RepoRecord, SettingsVersionRecord, Store, TicketRecord } from "./store.ts";
 
 /** A repo that failed to poll waits this long before its next poll, doubling with each failure in a row. */
@@ -132,6 +133,13 @@ export function repoForge(repo: RepoRecord, limiter: Limiter): Forge {
  * failure backs off that repo alone, doubling up to 15 minutes. Polls,
  * backoffs and failures go to the operational log, never the records.
  *
+ * A paused repo is not polled and no new step starts there; it is "pausing"
+ * while steps already running there, or their forge writes, finish. The first
+ * pass after it is resumed catches up from the saved cursors, and its board
+ * items stay locked until that pass has polled and the steps owed by the
+ * tickets on the board have finished (ADR-0018). An unenrolled repo is never
+ * passed over at all.
+ *
  * Everything kept in memory here (the deduplicator, backoffs, steps running)
  * is lost on a restart at no cost: a change's cursor is saved only once the
  * change was handled, and taking an issue in is one transaction, so a restart
@@ -160,6 +168,10 @@ export class Passes {
   readonly #haltedHosts = new Set<string>();
   /** The step each ticket has running, by ticket id. */
   readonly #running = new Map<number, Promise<void>>();
+  /** The repo of each ticket with a step running, by ticket id. */
+  readonly #runningIn = new Map<number, number>();
+  /** Per repo, the settings version id of the latest resume this process has caught up with. */
+  readonly #caughtUp = new Map<number, number>();
 
   #stopping = false;
   #timer: ReturnType<typeof setTimeout> | undefined;
@@ -201,6 +213,27 @@ export class Passes {
     return this.#running.size;
   }
 
+  /**
+   * Whether the repo still has steps running or forge writes in flight. A
+   * paused repo that is busy shows as "pausing" (ADR-0018).
+   */
+  busy(repoId: number): boolean {
+    if (this.#inFlight.countFor(repoId) > 0) return true;
+    for (const repo of this.#runningIn.values()) if (repo === repoId) return true;
+    return false;
+  }
+
+  /**
+   * Whether the repo was resumed and this process has not yet caught up with
+   * the changes made during its pause, so its board items stay locked
+   * (ADR-0018). A repo that is paused now is locked as paused, not as
+   * catching up.
+   */
+  catchingUp(repoId: number): boolean {
+    const resume = latestResume(this.#store, repoId);
+    return resume !== null && (this.#caughtUp.get(repoId) ?? 0) < resume.id;
+  }
+
   /** Runs one pass now, then one every poll interval, read from the global settings before each wait. */
   start(): void {
     if (this.#stopping || this.#timer !== undefined || this.#current !== undefined) return;
@@ -233,9 +266,9 @@ export class Passes {
     }, delayMs);
   }
 
-  /** One pass over every enrolled repo. */
+  /** One pass over every enrolled repo; an unenrolled one is neither read nor written. */
   async runPass(): Promise<RepoPassOutcome[]> {
-    return Promise.all(this.#store.listRepos().map((repo) => this.#passRepo(repo)));
+    return Promise.all(this.#store.listEnrolledRepos().map((repo) => this.#passRepo(repo)));
   }
 
   async #passRepo(repo: RepoRecord): Promise<RepoPassOutcome> {
@@ -244,6 +277,8 @@ export class Passes {
     const settings = this.#store.latestSettings(repoId);
     if (!settings) return { repoId, outcome: "failed", error: "the repo has no settings" };
     if ((settings.settings as Partial<RepoSettings>).paused === true) return { repoId, outcome: "paused" };
+    // Read before polling: a pass that started after the resume catches up with it.
+    const resume = this.catchingUp(repoId) ? latestResume(this.#store, repoId) : null;
 
     const now = Date.now();
     const resetAt = this.#rateLimited.get(hostKey(repo));
@@ -313,7 +348,25 @@ export class Passes {
     this.#log.info("poll", { repoId, head: head.commit, fetched: head.fetched, takenIn: takenIn.length });
 
     const started = this.#startOwedSteps(pass);
+    if (resume !== null) this.#catchUp(repoId, resume.id);
     return { repoId, outcome: "polled", takenIn, started };
+  }
+
+  /**
+   * Marks the repo caught up with the resume `resumeId` once the steps running
+   * for its tickets on the board have finished: those are what withdraw an
+   * item whose basis changed during the pause (ADR-0008, ADR-0018).
+   */
+  #catchUp(repoId: number, resumeId: number): void {
+    const owed = this.#store
+      .ticketsInFlight(repoId)
+      .filter((ticket) => ticket.state === "on-the-board")
+      .map((ticket) => this.#running.get(ticket.id))
+      .filter((running) => running !== undefined);
+    void Promise.all(owed).then(() => {
+      if ((this.#caughtUp.get(repoId) ?? 0) < resumeId) this.#caughtUp.set(repoId, resumeId);
+      this.#log.info("caught-up", { repoId, resumeSettingsVersionId: resumeId });
+    });
   }
 
   #failed(repo: RepoRecord, error: unknown): RepoPassOutcome {
@@ -353,7 +406,11 @@ export class Passes {
         },
       );
       this.#running.set(ticket.id, running);
-      void running.then(() => this.#running.delete(ticket.id));
+      this.#runningIn.set(ticket.id, ticket.repoId);
+      void running.then(() => {
+        this.#running.delete(ticket.id);
+        this.#runningIn.delete(ticket.id);
+      });
       this.#log.info("step-started", { ticketId: ticket.id, step: step.name });
       started.push(ticket.id);
     }

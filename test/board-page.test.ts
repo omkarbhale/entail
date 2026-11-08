@@ -339,6 +339,22 @@ test("a paused repo's items and a halted host's items render locked, and unlock 
   assert.equal(stateOf((await board.get(`${BOARD_LIVE_PATH}?item=${unreachable.item.id}`)).body).locked, "false");
 });
 
+test("a resumed repo's items stay locked while entail catches up with it, then unlock", async (t) => {
+  const catching = new Set<number>();
+  const board = await serveBoard(t, { catchingUp: (repoId) => catching.has(repoId) });
+  const raised = board.raise(board.github, 1, { kind: "contradiction" });
+  catching.add(board.github.id);
+  const page = await board.get(`/?item=${raised.item.id}`);
+  assert.deepEqual(stateOf(page.body), {
+    key: "catching-up",
+    locked: "true",
+    text: "This item is locked: entail is catching up with this repo after its pause.\nIts form unlocks once entail has handled what changed during the pause. If that changed this item's basis, it is withdrawn instead.",
+  });
+  assert.match(page.body, /<span class="tag status">locked<\/span>/);
+  catching.clear();
+  assert.equal(stateOf((await board.get(`${BOARD_LIVE_PATH}?item=${raised.item.id}`)).body).key, "open");
+});
+
 test("the board offers no reordering, postponing, later, pause or split", async (t) => {
   const board = await serveBoard(t);
   board.raise(board.github, 1, { kind: "contradiction" });

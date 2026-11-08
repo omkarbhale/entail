@@ -18,6 +18,9 @@ import { MECHANICAL_CHECK_KINDS } from "./model-schemas.ts";
 import { escapeHtml, renderPage, timeHtml } from "./page.ts";
 import { isMergeMethod, MERGE_METHOD_LABELS, PRESELECTED_VISION_ORIGIN, readRepoSettings } from "./repo-settings.ts";
 import { REPO_SETTINGS_PATH, repoSettingsPage } from "./repo-settings-page.ts";
+import { pauseForm, repoSwitchPages, unenrollLink, type RepoSwitchPagesOptions } from "./repo-switches-page.ts";
+import type { UnenrollCancelDetail } from "./repo-switches.ts";
+import { CALL_FILTERS, CALLS_PATH } from "./calls-page.ts";
 import { TOKEN_FIELD, type FormRequest, type Page, type PageRequest, type Reply } from "./server.ts";
 import { SETTINGS_PATH } from "./settings-page.ts";
 import type { RecordsCheck, RecordsStanding } from "./records-check.ts";
@@ -89,7 +92,7 @@ export interface RepoActivity {
   lastSuccessfulPoll?(repo: RepoRecord): string | null;
 }
 
-export interface ReposPageOptions {
+export interface ReposPageOptions extends Omit<RepoSwitchPagesOptions, "store"> {
   store: Store;
   enroller: Enroller;
   dataDirectory: string;
@@ -157,7 +160,11 @@ export function reposPages(options: ReposPageOptions): Page[] {
         const just = Number.isSafeInteger(enrolled) && enrolled > 0 ? store.getRepo(enrolled) : null;
         const freshStarted = Number(request.url.searchParams.get("fresh-start"));
         const fresh = Number.isSafeInteger(freshStarted) && freshStarted > 0 ? store.getRepo(freshStarted) : null;
-        return reposView(request, options, emptyStated(), [], just, 200, fresh);
+        const unenrolled = Number(request.url.searchParams.get("unenrolled"));
+        const ended = Number.isSafeInteger(unenrolled) && unenrolled > 0 && !store.isEnrolled(unenrolled) ? store.getRepo(unenrolled) : null;
+        const labelsLeft = Number(request.url.searchParams.get("labels_left"));
+        const notice = ended === null ? "" : unenrolledNotice(store, ended, Number.isSafeInteger(labelsLeft) && labelsLeft > 0 ? labelsLeft : 0);
+        return reposView(request, options, emptyStated(), [], just, 200, fresh, undefined, notice);
       },
     },
     {
@@ -247,6 +254,7 @@ export function reposPages(options: ReposPageOptions): Page[] {
       },
     },
     repoSettingsPage({ store, dataDirectory: options.dataDirectory, createForge: options.createForge }),
+    ...repoSwitchPages({ store, forgeFor: options.forgeFor, inFlight: options.inFlight, log: options.log }),
   ];
 }
 
@@ -290,9 +298,10 @@ async function reposView(
   status: number,
   freshStarted: RepoRecord | null = null,
   problem?: string,
+  notice = "",
 ): Promise<Reply> {
   const { store } = options;
-  const repos = store.listRepos();
+  const repos = store.listEnrolledRepos();
   const standing = (repo: RepoRecord): RecordsStanding => options.recordsCheck?.standing(repo.id) ?? { status: "clear", checkedAt: "" };
   const rows = await Promise.all(
     repos.map(async (repo) => {
@@ -309,7 +318,7 @@ async function reposView(
 <td>${forgeName(repo.forge)}</td>
 <td><span class="state" data-state="${escapeHtml(state)}">${escapeHtml(state)}</span></td>
 <td>${poll === null ? `<span class="muted">not yet polled</span>` : timeHtml(poll)}</td>
-<td><a href="${REPO_SETTINGS_PATH}?repo=${repo.id}">Settings</a></td>
+<td class="actions"><a href="${REPO_SETTINGS_PATH}?repo=${repo.id}">Settings</a> ${pauseForm(request, repo, paused, "repos")} ${unenrollLink(repo)}</td>
 </tr>`;
     }),
   );
@@ -376,9 +385,11 @@ ${(["github", "gitlab"] as const).map((f) => `<option value="${f}"${stated.forge
   const body = `<h1>Repos</h1>
 ${enrolledNotice}
 ${freshStartNotice}
+${notice}
 ${problemHtml}
 ${list}
 ${waiting}
+${unenrolledList(store)}
 <h2>Enroll a repo</h2>
 ${refused}
 ${form}
@@ -404,6 +415,44 @@ function waitingForRecordsHtml(request: PageRequest, repo: RepoRecord, missing: 
 <button type="submit">Confirm a fresh start for ${escapeHtml(repo.path)}</button>
 </form>
 </section>`;
+}
+
+/** What the Repos page says after a repo was unenrolled. */
+function unenrolledNotice(store: Store, repo: RepoRecord, labelsLeft: number): string {
+  const unenrollment = store.latestUnenrollment(repo.id);
+  const cancelled = store
+    .listCalls({ repoId: repo.id, kind: "unenroll-cancel" })
+    .filter((call) => (call.detail as Partial<UnenrollCancelDetail> | null)?.unenrollmentId === unenrollment?.id).length;
+  const left =
+    labelsLeft === 0
+      ? ""
+      : ` ${labelsLeft} label ${labelsLeft === 1 ? "removal has" : "removals have"} not gone through yet; entail sends ${labelsLeft === 1 ? "it" : "them"} again when it next starts.`;
+  return `<p class="notice" role="status" data-unenrolled="${repo.id}">Unenrolled ${escapeHtml(repo.path)} on ${escapeHtml(repo.host)}: ${cancelled} ${
+    cancelled === 1 ? "ticket was" : "tickets were"
+  } cancelled, with no comment posted and no issue closed. entail no longer reads or writes there.${left}</p>`;
+}
+
+/** The repos the owner unenrolled, whose records stay read-only. */
+function unenrolledList(store: Store): string {
+  const ended = store.listRepos().filter((repo) => !store.isEnrolled(repo.id));
+  if (ended.length === 0) return "";
+  const rows = ended.map((repo) => {
+    const unenrollment = store.latestUnenrollment(repo.id);
+    return `<tr>
+<td>${escapeHtml(repo.path)}<br><span class="muted">${escapeHtml(repo.host)}</span></td>
+<td>${forgeName(repo.forge)}</td>
+<td>${unenrollment === null ? "" : `${timeHtml(unenrollment.unenrolledAt)} by ${escapeHtml(unenrollment.unenrolledBy)}`}</td>
+<td><a href="${CALLS_PATH}?${CALL_FILTERS.repo}=${repo.id}">Calls</a> <a href="${REPO_SETTINGS_PATH}?repo=${repo.id}">Settings history</a></td>
+</tr>`;
+  });
+  return `<h2>Unenrolled</h2>
+<p class="hint">entail reads and writes nothing in these repos. Their records stay, read-only. Enrolling one again takes in only issues opened after that.</p>
+<table>
+<thead><tr><th>Repo</th><th>Forge</th><th>Unenrolled</th><th></th></tr></thead>
+<tbody>
+${rows.join("\n")}
+</tbody>
+</table>`;
 }
 
 interface ReviewState {

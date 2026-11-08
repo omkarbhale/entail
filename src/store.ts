@@ -134,6 +134,24 @@ export interface FreshStartRecord {
   markedIssueNumbers: number[];
 }
 
+/** A repo the owner unenrolled: the enrollment it ended, or null for a repo enrolled before enrollments were recorded (ADR-0018). */
+export interface UnenrollmentRecord {
+  id: number;
+  repoId: number;
+  enrollmentId: number | null;
+  unenrolledAt: string;
+  /** The owner's display name. */
+  unenrolledBy: string;
+}
+
+/** Enrolling a repo that is already enrolled. */
+export class RepoAlreadyEnrolledError extends Error {
+  constructor(key: RepoKey) {
+    super(`${key.forge} project ${key.projectId} on ${key.host} is already enrolled`);
+    this.name = "RepoAlreadyEnrolledError";
+  }
+}
+
 export interface SettingsVersionRecord {
   id: number;
   repoId: number;
@@ -503,7 +521,11 @@ export class Store {
    */
   enroll(enrollment: NewEnrollment): { repo: RepoRecord; settings: SettingsVersionRecord; enrollment: EnrollmentRecord } {
     return this.transaction(() => {
-      const repo = this.enrollRepo(enrollment.repo);
+      // A repo enrolled again keeps its record, keyed on its project id, and
+      // gets a new enrollment beside its old ones (ADR-0018).
+      const earlier = this.findRepo(enrollment.repo);
+      if (earlier !== null && this.isEnrolled(earlier.id)) throw new RepoAlreadyEnrolledError(enrollment.repo);
+      const repo = earlier ?? this.enrollRepo(enrollment.repo);
       const settings = this.saveSettings(repo.id, enrollment.settings, enrollment.savedBy);
       for (const line of new Set(enrollment.visionLines)) {
         this.recordVisionLineOrigin({
@@ -517,7 +539,7 @@ export class Store {
       const id = this.#insert(
         "INSERT INTO enrollments (repo_id, enrolled_at, vision_sha, settings_version_id, open_issue_numbers) VALUES (?, ?, ?, ?, ?)",
         repo.id,
-        repo.enrolledAt,
+        earlier === null ? repo.enrolledAt : this.#time(),
         enrollment.visionSha,
         settings.id,
         JSON.stringify([...new Set(enrollment.openIssueNumbers)].sort((a, b) => a - b)),
@@ -592,9 +614,52 @@ export class Store {
     return row !== undefined;
   }
 
-  /** Every enrolled repo, in the order they were enrolled. */
+  /** Every repo ever enrolled, unenrolled ones included, in the order they were first enrolled. */
   listRepos(): RepoRecord[] {
     return this.#all("SELECT * FROM repos ORDER BY id").map(toRepo);
+  }
+
+  /** Every repo enrolled now, in the order they were first enrolled: those entail reads and writes. */
+  listEnrolledRepos(): RepoRecord[] {
+    return this.#all(
+      `SELECT r.* FROM repos r
+       WHERE NOT EXISTS (
+         SELECT 1 FROM unenrollments u
+         WHERE u.repo_id = r.id AND u.enrollment_id IS (SELECT max(id) FROM enrollments WHERE repo_id = r.id)
+       )
+       ORDER BY r.id`,
+    ).map(toRepo);
+  }
+
+  /** Whether a repo is enrolled now: recorded, and its latest enrollment not ended by an unenrollment. */
+  isEnrolled(repoId: number): boolean {
+    if (this.getRepo(repoId) === null) return false;
+    return this.#get(
+      "SELECT 1 AS ended FROM unenrollments WHERE repo_id = ? AND enrollment_id IS (SELECT max(id) FROM enrollments WHERE repo_id = ?)",
+      repoId,
+      repoId,
+    ) === undefined;
+  }
+
+  /**
+   * Records that the owner unenrolled a repo, ending its latest enrollment.
+   * The store refuses a second unenrollment of the same enrollment. Its
+   * records stay, read-only (ADR-0018).
+   */
+  recordUnenrollment(input: { repoId: number; unenrolledBy: string }): UnenrollmentRecord {
+    const id = this.#insert(
+      "INSERT INTO unenrollments (repo_id, enrollment_id, unenrolled_at, unenrolled_by) VALUES (?, (SELECT max(id) FROM enrollments WHERE repo_id = ?), ?, ?)",
+      input.repoId,
+      input.repoId,
+      this.#time(),
+      input.unenrolledBy,
+    );
+    return mapOrNull(this.#get("SELECT * FROM unenrollments WHERE id = ?", id), toUnenrollment)!;
+  }
+
+  /** The repo's latest unenrollment, which may have been followed by enrolling it again. */
+  latestUnenrollment(repoId: number): UnenrollmentRecord | null {
+    return mapOrNull(this.#get("SELECT * FROM unenrollments WHERE repo_id = ? ORDER BY id DESC LIMIT 1", repoId), toUnenrollment);
   }
 
   getRepo(id: number): RepoRecord | null {
@@ -1201,6 +1266,16 @@ function toFreshStart(row: Row): FreshStartRecord {
     confirmedAt: str(row.confirmed_at),
     confirmedBy: str(row.confirmed_by),
     markedIssueNumbers: parse(row.marked_issue_numbers) as number[],
+  };
+}
+
+function toUnenrollment(row: Row): UnenrollmentRecord {
+  return {
+    id: num(row.id),
+    repoId: num(row.repo_id),
+    enrollmentId: numOrNull(row.enrollment_id),
+    unenrolledAt: str(row.unenrolled_at),
+    unenrolledBy: str(row.unenrolled_by),
   };
 }
 
