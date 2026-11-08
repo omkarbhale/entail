@@ -153,7 +153,7 @@ test("settling on start confirms a merge that was pending at the wait and has me
   await assert.rejects(writer.merge({ ticketId: ticket.id }, 4, HEAD), MergePendingError);
   forge.state.prs[4] = { state: "merged", headSha: HEAD, mergeCommitSha: "late-merge" };
   const settled = await settleUnconfirmedWrites(store, () => forge);
-  assert.deepEqual(settled.map((s) => s.settled), ["merged, by the PR's state"]);
+  assert.deepEqual(settled.map((s) => ("settled" in s ? s.settled : s.error.message)), ["merged, by the PR's state"]);
   assert.equal(forge.state.sends.merge, 1);
   assert.deepEqual(store.unconfirmedForgeWrites(), []);
 });
