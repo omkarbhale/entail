@@ -18,6 +18,7 @@ import { callsPages } from "./calls-page.ts";
 import { reposPages } from "./repos-page.ts";
 import { startServer, type BoardPortTakenError, type LocalServer } from "./server.ts";
 import { globalSettingsPage } from "./settings-page.ts";
+import { RecordsRepo } from "./records-repo.ts";
 import { Store, type StoreOpenError } from "./store.ts";
 import { ticketPage } from "./ticket-page.ts";
 
@@ -55,6 +56,8 @@ export interface RunningEntail {
   inFlight: InFlightWrites;
   /** Every model run, limited by the global "Model-run limit"; stopping interrupts them. */
   modelRuns: ModelRuns;
+  /** The records repo, committed after every answer, hourly and on stop, and pushed to the global settings' remote. */
+  records: RecordsRepo;
   /** Stops entail and releases the lock. Calling it again does nothing. */
   stop(reason: string): void;
   /** Settles once entail has stopped. */
@@ -68,8 +71,9 @@ export interface RunningEntail {
  * the global settings (the board page, spec §13, the Repos page with
  * enrollment and the global settings page, spec §15, and the read-only Calls
  * page and ticket pages, spec §14),
- * and then the passes. It stays up until
- * {@link RunningEntail.stop}.
+ * and then the passes and the hourly records repo commit. It stays up until
+ * {@link RunningEntail.stop}, which commits and pushes the records repo
+ * before releasing the lock.
  *
  * Throws {@link LockHeldError} when another copy holds the lock;
  * {@link StoreOpenError} when the store cannot be opened; and
@@ -122,16 +126,26 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     log,
     limit: () => readGlobalSettings(store).settings.modelRunLimit,
   });
+  const records = new RecordsRepo({
+    dataDirectory: options.dataDirectory,
+    storePath: store.path,
+    remote: () => readGlobalSettings(store).settings.recordsRemote,
+    log,
+  });
   let server: LocalServer;
   let passes: Passes | undefined;
   try {
     const enroller = new Enroller({ store, dataDirectory: options.dataDirectory, runner, log });
     const pages = [
-      ...boardPages({ store, hostHalted: (host) => passes?.hostHalted(host) ?? false }),
+      ...boardPages({
+        store,
+        hostHalted: (host) => passes?.hostHalted(host) ?? false,
+        afterAnswer: () => void records.save("answer"),
+      }),
       ...reposPages({ store, enroller, dataDirectory: options.dataDirectory }),
       ...callsPages(store),
       ticketPage({ store, retryState: (ticketId) => modelRuns.retryState(String(ticketId)) }),
-      globalSettingsPage(store),
+      globalSettingsPage(store, { dataDirectory: options.dataDirectory }),
     ];
     server = await startServer({ port, pages, log });
   } catch (error) {
@@ -173,6 +187,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
   });
   passes = running;
   running.start();
+  records.startHourly();
   const stopWaitMs = options.stopWaitMs ?? STOP_WAIT_MS;
 
   let resolveStopped!: () => void;
@@ -192,6 +207,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     passes: running,
     inFlight,
     modelRuns,
+    records,
     stop(reason: string) {
       if (stopping) return;
       stopping = true;
@@ -203,7 +219,10 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
         // the next start, and interrupted runs are run again.
         await waitAtMost(stopWaitMs, Promise.all([running.stop(), inFlight.settle(stopWaitMs)]));
         if (inFlight.count > 0) log.warn("writes-unconfirmed-at-stop", { count: inFlight.count });
+        // The server closes first, so no answer arrives after the last commit.
         await server.close();
+        records.stopHourly();
+        await records.save("stop");
         store.close();
         lock.release();
         log.info("stopped", { pid: lock.holder.pid });

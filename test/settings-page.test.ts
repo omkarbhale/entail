@@ -1,30 +1,47 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { DEFAULT_GLOBAL_SETTINGS, FIELDS, parseSettingsForm, readGlobalSettings, type GlobalSettings } from "../src/global-settings.ts";
 import { startServer, TOKEN_FIELD, type LocalServer } from "../src/server.ts";
 import { globalSettingsPage, SETTINGS_PATH } from "../src/settings-page.ts";
+import type { RemoteCheck } from "../src/records-remote.ts";
+import { RECORDS_PUSH_FILE, type RecordsPushState } from "../src/records-repo.ts";
 import { Store } from "../src/store.ts";
 import { postForm, send } from "./http-client.ts";
 
 interface Served {
+  dir: string;
   store: Store;
   server: LocalServer;
+  /** The remotes the page checked as they were set. */
+  checked: string[];
 }
 
-async function serveSettings(t: TestContext): Promise<Served> {
+/**
+ * Serves the page over a fresh data directory. Remotes are checked by a stub
+ * that cannot check any of them, unless the test says otherwise.
+ */
+async function serveSettings(
+  t: TestContext,
+  options: { check?: (remote: string) => RemoteCheck; showPushes?: boolean } = {},
+): Promise<Served> {
   const dir = mkdtempSync(join(tmpdir(), "entail-settings-"));
   let tick = 0;
   const store = Store.openIn(dir, { now: () => new Date(Date.UTC(2026, 10, 8, 12, tick++, 0)) });
-  const server = await startServer({ port: 0, pages: [globalSettingsPage(store)] });
+  const checked: string[] = [];
+  const checkRemote = async (remote: string) => {
+    checked.push(remote);
+    return options.check?.(remote) ?? { kind: "unchecked" as const };
+  };
+  const server = await startServer({ port: 0, pages: [globalSettingsPage(store, { checkRemote, dataDirectory: options.showPushes ? dir : undefined })] });
   t.after(async () => {
     await server.close();
     store.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  return { store, server };
+  return { dir, store, server, checked };
 }
 
 /** A complete form, as the page's own fields would submit it. */
@@ -188,4 +205,67 @@ test("a saved port is shown as taking effect on the next start", async (t) => {
   await postForm(port, SETTINGS_PATH, formOf({ ...DEFAULT_GLOBAL_SETTINGS, ownerDisplayName: "Ada", boardPort: 7500 }, token));
   const page = await send(port, { path: SETTINGS_PATH });
   assert.match(page.body, new RegExp(`listening on port ${port} until its next start, then on port 7500`));
+});
+
+const ADA: GlobalSettings = { ...DEFAULT_GLOBAL_SETTINGS, ownerDisplayName: "Ada" };
+
+test("setting a remote entail can verify is public is refused with the reason, and nothing is saved", async (t) => {
+  const reason = "github.com/ada/records is public, and your records hold your private notes and model outputs.";
+  const { store, server, checked } = await serveSettings(t, { check: () => ({ kind: "public", reason }) });
+  const remote = "https://github.com/ada/records.git";
+  const refused = await postForm(server.info.port, SETTINGS_PATH, formOf({ ...ADA, recordsRemote: remote }, server.info.token));
+  assert.equal(refused.status, 400);
+  assert.deepEqual(checked, [remote]);
+  assert.match(refused.body, /Nothing was saved/);
+  assert.match(refused.body, /github\.com\/ada\/records is public, and your records hold your private notes and model outputs\./);
+  assert.equal(inputValue(refused.body, FIELDS.recordsRemote), remote, "the typed remote stays in the field");
+  assert.equal(store.latestGlobalSettings(), null);
+});
+
+test("a remote entail cannot check, or verifies is not public, is accepted; only a changed remote is checked", async (t) => {
+  const { store, server, checked } = await serveSettings(t, {
+    check: (remote) => (remote.includes("github") ? { kind: "not-public" } : { kind: "unchecked" }),
+  });
+  const post = (settings: GlobalSettings) => postForm(server.info.port, SETTINGS_PATH, formOf(settings, server.info.token));
+  assert.equal((await post({ ...ADA, recordsRemote: "git@git.example.org:records.git" })).status, 303);
+  assert.equal(readGlobalSettings(store).settings.recordsRemote, "git@git.example.org:records.git");
+  assert.equal((await post({ ...ADA, recordsRemote: "git@git.example.org:records.git", modelRunLimit: 3 })).status, 303);
+  assert.deepEqual(checked, ["git@git.example.org:records.git"], "saving other settings does not check the remote again");
+  assert.equal((await post({ ...ADA, recordsRemote: "git@github.com:ada/records.git" })).status, 303);
+  assert.equal(readGlobalSettings(store).settings.recordsRemote, "git@github.com:ada/records.git");
+  assert.equal((await post(ADA)).status, 303, "clearing the remote");
+  assert.equal(checked.length, 2, "no remote, nothing to check");
+});
+
+test("a remote on this machine is saved with a note that it does not survive losing the machine", async (t) => {
+  const { server } = await serveSettings(t, { check: (remote) => ({ kind: "local", note: remote }) });
+  const saved = await postForm(server.info.port, SETTINGS_PATH, formOf({ ...ADA, recordsRemote: "/srv/backups/records.git" }, server.info.token));
+  assert.equal(saved.status, 303);
+  const page = await send(server.info.port, { path: SETTINGS_PATH });
+  assert.match(page.body, /Records repo: This remote is on this machine, so your records do not survive losing it\./);
+  assert.doesNotMatch(page.body, /no remote set\. Records/);
+});
+
+test("the page shows when the records repo last pushed, and the last failure since", async (t) => {
+  const { dir, server, store } = await serveSettings(t, { showPushes: true });
+  const shown = async () => (await send(server.info.port, { path: SETTINGS_PATH })).body;
+  assert.match(await shown(), /Records repo: no remote set\./);
+  assert.match(await shown(), /Records repo: commits stay on this machine\./);
+
+  store.saveGlobalSettings({ ...ADA, recordsRemote: "git@git.example.org:records.git" }, "Ada");
+  assert.match(await shown(), /Records repo: no push has succeeded yet\./);
+
+  const state: RecordsPushState = {
+    lastSuccess: { at: "2026-11-09T08:00:00.000Z", remote: "git@git.example.org:records.git", commit: "e".repeat(40) },
+    lastFailure: { at: "2026-11-09T09:00:00.000Z", remote: "git@git.example.org:records.git", error: "git push failed: Connection refused" },
+  };
+  writeFileSync(join(dir, RECORDS_PUSH_FILE), JSON.stringify(state));
+  const html = await shown();
+  assert.match(html, /Records repo: last pushed <time datetime="2026-11-09T08:00:00.000Z">2026-11-09 08:00 UTC<\/time> to <code>git@git\.example\.org:records\.git<\/code>\./);
+  assert.match(html, /The last push, <time[^>]*>2026-11-09 09:00 UTC<\/time> to <code>[^<]+<\/code>, failed: git push failed: Connection refused/);
+});
+
+test("without the data directory, the page shows no push line", async (t) => {
+  const { server } = await serveSettings(t);
+  assert.doesNotMatch((await send(server.info.port, { path: SETTINGS_PATH })).body, /id="records-push"/);
 });

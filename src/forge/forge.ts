@@ -324,6 +324,13 @@ export interface Forge {
   /** The repo's numeric project id and default branch. */
   project(): Promise<Project>;
 
+  /**
+   * Whether anyone may read the repo without signing in: a public GitHub repo
+   * or a public GitLab project. entail refuses to push its records repo to
+   * one (ADR-0009).
+   */
+  isPublic(): Promise<boolean>;
+
   /** The instance the repo lives on, read so enrollment can refuse one entail cannot serve. */
   instance(): Promise<ForgeInstance>;
 

@@ -182,6 +182,15 @@ export class GitHubForge implements Forge {
     };
   }
 
+  /** Public by the repo's `visibility`, or by `private` where GitHub reports no visibility. */
+  async isPublic(): Promise<boolean> {
+    const path = `repos/${this.setting.path}`;
+    const repo = await this.#getJson(path);
+    if (isObject(repo) && typeof repo.visibility === "string") return repo.visibility === "public";
+    if (isObject(repo) && typeof repo.private === "boolean") return !repo.private;
+    throw new ForgeRequestError(GITHUB_HOST, 200, "GET", path, "unexpected response: neither visibility nor private is set");
+  }
+
   /**
    * Read from the repo's `permissions` for the logged-in account. Labelling
    * needs triage access; commenting needs only read access, unless the repo

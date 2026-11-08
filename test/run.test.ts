@@ -13,6 +13,8 @@ import { BoardPortTakenError } from "../src/server.ts";
 import { CALLS_PATH } from "../src/calls-page.ts";
 import { SETTINGS_PATH } from "../src/settings-page.ts";
 import { Store } from "../src/store.ts";
+import { readRecordsPushState, RECORDS_BRANCH, RECORDS_DIRECTORY } from "../src/records-repo.ts";
+import { git, tempDirectory } from "./git-fixture.ts";
 import { enrollmentSettings } from "../src/repo-settings.ts";
 import { freePort, send } from "./http-client.ts";
 import { IntakeForge, issue, STILL_HEAD } from "./pass-fixture.ts";
@@ -191,4 +193,25 @@ test("stopping starts no new work, waits for in-flight forge writes up to the li
   assert.ok(!existsSync(join(dir, LOCK_FILE)), "the lock is released after the limit");
   const events = logEvents(dir);
   assert.ok(events.lastIndexOf("stopping") < events.lastIndexOf("stopped"));
+});
+
+test("stopping commits the records repo and pushes it to the remote before releasing the lock", async (t) => {
+  const dir = dataDirectory(t);
+  const remote = join(tempDirectory(t, "remote"), "records.git");
+  git(join(remote, ".."), "init", "--quiet", "--bare", `--initial-branch=${RECORDS_BRANCH}`, remote);
+  const port = await freePort();
+  saveSettings(dir, { boardPort: port, recordsRemote: remote });
+  const entail = await start(t, dir);
+  entail.store.enrollRepo({ forge: "github", host: "github.com", projectId: 1, path: "acme/tally", ownerAccountId: 1, ownerLogin: "ada" });
+  assert.equal(existsSync(join(dir, RECORDS_DIRECTORY)), false, "nothing is committed before an answer, the hour or the stop");
+
+  entail.stop("SIGTERM");
+  await entail.stopped;
+  const records = join(dir, RECORDS_DIRECTORY);
+  assert.equal(git(records, "log", "--format=%s"), "entail records: on stop");
+  assert.match(git(records, "show", "HEAD:tables/repos.jsonl"), /"path":"acme\/tally"/, "the commit holds the records as entail stopped");
+  assert.equal(git(remote, "rev-parse", RECORDS_BRANCH), git(records, "rev-parse", "HEAD"), "and was pushed");
+  assert.ok(readRecordsPushState(dir).lastSuccess !== null);
+  const events = logEvents(dir);
+  assert.ok(events.indexOf("records-pushed") < events.indexOf("stopped"), "before the lock was released");
 });

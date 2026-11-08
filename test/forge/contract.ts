@@ -48,7 +48,8 @@ export type Scenario =
   | "checks-not-reported"
   | "recent-checks"
   | "transferred-in"
-  | "issue";
+  | "issue"
+  | "visibility";
 
 export interface ForgeContractSubject {
   name: string;
@@ -109,6 +110,8 @@ export interface ForgeContractSubject {
  *   criteria name `test` and `e2e`, and `e2e` has not reported.
  * - At HEAD4B nothing has reported for the PR.
  * - On `main`, commit C2 (newest) passed `test`; C1 failed `test` and passed `lint`.
+ *
+ * Visibility: the repo is public, then internal.
  *
  * Transferred in: owner opened issue #3 here, and it was renamed since (on
  * GitLab, a system note says so). Issue #8 was opened in `acme/other` and
@@ -191,6 +194,12 @@ export function forgeContract(subject: ForgeContractSubject): void {
         defaultBranch: "main",
       });
       assert.equal(projectKey(project), `${setting.forge}:${setting.host}:5001`);
+    });
+
+    test("a public repo is told apart from a private or internal one", async (t) => {
+      const forge = forgeFor(t, "visibility");
+      assert.equal(await forge.isPublic(), true, "public");
+      assert.equal(await forge.isPublic(), false, "internal is readable only when signed in");
     });
 
     test("what changed since a cursor, deduplicated by kind, id and update time", async (t) => {

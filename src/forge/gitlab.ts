@@ -137,6 +137,12 @@ export class GitLabForge implements Forge {
     return this.#project(await this.#getJson(this.#projectRef));
   }
 
+  /** Public by the project's `visibility`; an internal project is readable only when signed in. */
+  async isPublic(): Promise<boolean> {
+    const path = this.#projectRef;
+    return this.#field(await this.#getJson(path), "visibility", "string", path) === "public";
+  }
+
   #project(project: unknown): Project {
     const path = this.#projectRef;
     return {

@@ -10,6 +10,8 @@ import {
   type SettingsErrors,
 } from "./global-settings.ts";
 import { escapeHtml, renderPage, timeHtml } from "./page.ts";
+import { checkRecordsRemote, LOCAL_REMOTE_NOTE, remoteLocation, type RemoteCheck } from "./records-remote.ts";
+import { readRecordsPushState, type RecordsPushState } from "./records-repo.ts";
 import { TOKEN_FIELD, type FormRequest, type Page, type PageRequest, type Reply } from "./server.ts";
 import type { GlobalSettingsVersionRecord, Store } from "./store.ts";
 
@@ -30,13 +32,32 @@ const ROWS: readonly { key: Key; label: string; default: string; takesEffect: st
   { key: "boardPort", label: "Board port", default: String(DEFAULT_GLOBAL_SETTINGS.boardPort), takesEffect: "from the next start" },
 ];
 
+export interface GlobalSettingsPageOptions {
+  /** The data directory, to show when the records repo last pushed; nothing is shown without it. */
+  dataDirectory?: string;
+  /**
+   * Checks a records repo remote as it is set (ADR-0009). By default it asks
+   * the forge of a host entail knows, through the owner's own CLI.
+   */
+  checkRemote?: (remote: string) => Promise<RemoteCheck>;
+}
+
 /**
  * The global settings page (spec §15, ADR-0018). It shows and saves every
  * entail-wide setting. Each save is a new version recorded with its time and
  * the owner's name; a save is not a call. Older versions stay readable at
  * `?version=<n>`.
+ *
+ * A records repo remote is checked when it is set: one entail can verify is
+ * public is refused with the reason, and nothing is saved (ADR-0009). The page
+ * also shows when the records repo last pushed.
  */
-export function globalSettingsPage(store: Store): Page {
+export function globalSettingsPage(store: Store, options: GlobalSettingsPageOptions = {}): Page {
+  const checkRemote =
+    options.checkRemote ??
+    ((remote: string) =>
+      checkRecordsRemote(remote, { forgeOfHost: (host) => store.listRepos().find((repo) => repo.host === host)?.forge ?? null }));
+  const pushState = () => (options.dataDirectory === undefined ? null : readRecordsPushState(options.dataDirectory));
   return {
     path: SETTINGS_PATH,
     nav: "Settings",
@@ -46,13 +67,17 @@ export function globalSettingsPage(store: Store): Page {
       const saved = Number(request.url.searchParams.get("saved"));
       const { settings, version } = readGlobalSettings(store);
       const notice = Number.isSafeInteger(saved) && saved > 0 && saved === version?.version ? savedNotice(version) : "";
-      return settingsView(store, request, valuesOf(settings), {}, notice, 200);
+      return settingsView(store, request, valuesOf(settings), {}, notice, pushState(), 200);
     },
-    post(request: FormRequest) {
+    async post(request: FormRequest) {
+      const typed = () => Object.fromEntries(ROWS.map(({ key }) => [key, request.form.get(FIELDS[key]) ?? ""])) as FormValues;
       const parsed = parseSettingsForm(request.form);
-      if (!parsed.ok) {
-        const typed = Object.fromEntries(ROWS.map(({ key }) => [key, request.form.get(FIELDS[key]) ?? ""])) as FormValues;
-        return settingsView(store, request, typed, parsed.errors, "", 400);
+      if (!parsed.ok) return settingsView(store, request, typed(), parsed.errors, "", pushState(), 400);
+      // Only a remote being set is checked, so saving other settings never waits on the forge.
+      const remote = parsed.settings.recordsRemote;
+      if (remote !== null && remote !== readGlobalSettings(store).settings.recordsRemote) {
+        const check = await checkRemote(remote);
+        if (check.kind === "public") return settingsView(store, request, typed(), { recordsRemote: check.reason }, "", pushState(), 400);
       }
       const saved = store.saveGlobalSettings(parsed.settings, parsed.settings.ownerDisplayName!);
       return { redirect: `${SETTINGS_PATH}?saved=${saved.version}` };
@@ -66,6 +91,7 @@ function settingsView(
   values: FormValues,
   errors: SettingsErrors,
   notice: string,
+  push: RecordsPushState | null,
   status: number,
 ): Reply {
   const { settings: current, version } = readGlobalSettings(store);
@@ -75,7 +101,10 @@ function settingsView(
   }
   if (current.recordsRemote === null) {
     standing.push(`<p class="notice">Records repo: no remote set. Records stay on this machine only.</p>`);
+  } else if (remoteLocation(current.recordsRemote).kind === "local") {
+    standing.push(`<p class="notice">Records repo: ${escapeHtml(LOCAL_REMOTE_NOTE)}</p>`);
   }
+  if (push !== null) standing.push(pushLine(push, current.recordsRemote));
   if (current.boardPort !== request.server.port) {
     standing.push(
       `<p class="notice">entail is listening on port ${request.server.port} until its next start, then on port ${current.boardPort}.</p>`,
@@ -179,6 +208,19 @@ ${ROWS.map(
 </dl>
 <p><a href="${SETTINGS_PATH}">Back to the global settings</a></p>`;
   return { status: 200, html: renderPage(request, { title: `Global settings, version ${version.version}`, body }) };
+}
+
+/** When the records repo last pushed, and the last failure since (spec §3). */
+function pushLine(push: RecordsPushState, remote: string | null): string {
+  const success =
+    push.lastSuccess === null
+      ? "Records repo: no push has succeeded yet."
+      : `Records repo: last pushed ${timeHtml(push.lastSuccess.at)} to <code>${escapeHtml(push.lastSuccess.remote)}</code>.`;
+  const failure =
+    push.lastFailure === null || remote === null
+      ? ""
+      : ` The last push, ${timeHtml(push.lastFailure.at)} to <code>${escapeHtml(push.lastFailure.remote)}</code>, failed: ${escapeHtml(push.lastFailure.error)}`;
+  return `<p class="muted" id="records-push">${remote === null && push.lastSuccess === null ? "Records repo: commits stay on this machine." : `${success}${failure}`}</p>`;
 }
 
 function savedNotice(version: GlobalSettingsVersionRecord): string {

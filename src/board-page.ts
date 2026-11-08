@@ -59,6 +59,8 @@ export interface BoardPageOptions {
   hostHalted?: (host: string) => boolean;
   /** The clock: how long ago items were raised, and when today began. */
   now?: () => Date;
+  /** Called once an answer is recorded, so the records repo commits after every answer (spec §3). */
+  afterAnswer?: () => void;
 }
 
 /** How an item on the board stands. */
@@ -572,6 +574,7 @@ function answerPost(options: BoardPageOptions, request: FormRequest): Reply {
 
   const result = recordBoardAnswer(store, { itemId, shownVersion: shown, answeredBy: owner, answer: chosen.answer, locked: lockText(entry.lock) });
   if ("refused" in result) return view({ kind: "form", draft, refusal: result.refused }, 409);
+  options.afterAnswer?.();
   // The receipt stays in place on the item; the page does not move on by itself.
   return { redirect: itemPath(itemId) };
 }
