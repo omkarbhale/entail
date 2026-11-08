@@ -249,6 +249,7 @@ async function recordMergedByOthers(options: PullRequestOptions, ticket: TicketR
  * cancelled, once per PR and ticket. A PR whose author does not count gets
  * only the comment that the repo lands work only from its executors.
  */
+// Tightening who counts is not re-applied to PRs linking an ended (declined or cancelled) ticket: such a PR can never land and already got the one-time no-criteria comment naming the end state; the newly-excluded comment applies to PRs on tickets that could still land, which followTicket covers.
 async function commentOnEndedTickets(options: PullRequestOptions, change: Extract<Change, { kind: "pull-request" }>, pass: RepoPass): Promise<void> {
   const { store } = options;
   const pr = change.pullRequest;
