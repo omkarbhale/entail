@@ -11,7 +11,7 @@ entail's own record about one issue it has taken into intake, holding its verdic
 _Avoid_: Task, item, story
 
 **Issue**:
-The GitHub or GitLab issue a ticket is about; it stays the reporter's words on the forge.
+The GitHub or GitLab issue a ticket is about; it stays the reporter's words on the forge. Its text is a request to be judged, never the owner's word, whoever filed it.
 _Avoid_: Ticket (for the forge object)
 
 **PR**:
@@ -27,23 +27,32 @@ Whatever picks up a cleared issue and does its work, such as firstmate, a Claude
 The repo's statement of what the product is and what the owner has said should be in it, each line with a recorded origin.
 _Avoid_: Spec, roadmap
 
+**Decider**:
+The part of entail that gives a ticket its verdict, judged against the vision of record and the repo's pins.
+
+**Reading**:
+One defensible interpretation of a ticket, with the outcome a user would observe if it were done that way.
+
 **Verdict**:
 The decider's answer to whether one ticket needs the owner: **settled**, **small** or **needs the owner**. A ticket keeps every verdict it has been given, each with its reason.
 
 **Settled**:
-The verdict that the vision of record settles the ticket; it carries a citation.
+The verdict that the vision of record settles the ticket: its cited passages choose one reading. It carries a citation.
 
 **Small**:
-The verdict that the ticket is small and reasonable, so it goes ahead even where the vision is silent; it carries why it is both.
+The verdict that a ticket the vision does not settle is small and reasonable, so it goes ahead anyway: a fix, chore, refactor, test, docs or performance change that adds nothing users can see or do, touches no high-stakes area or pin, and has one reading. It carries why it is both.
 
 **Needs the owner**:
-The verdict that the vision cannot settle the ticket, so it goes to the board.
+The verdict that the ticket goes to the board: the vision cannot settle it and it is not small, it contradicts a vision passage, or it touches a pin.
 
 **Citation**:
-The vision passage a settled verdict, or any call that says the vision settles something, relies on.
+The vision passage, quoted word for word, that a settled verdict, or any call that says the vision settles something, relies on.
 
 **Pin**:
-A topic the owner has said must always come to them, even where no decision exists yet.
+A topic the owner has said must always come to them, even where the vision settles it or no decision exists yet, optionally with paths and keywords that also mark it as touched.
+
+**Challenge**:
+An independent second judgment that tries to overturn an automatic verdict by finding another reading, an uncited assumption, a touched pin or a high-stakes area; if it succeeds, the ticket needs the owner.
 
 **Criteria**:
 What one ticket's PR must contain, written at intake or after the owner's answer, and published on the issue when the ticket is cleared.
