@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { forgeRemote, Mirror, mirrorPaths, pullRequestHeadRef, type ForgeName } from "../src/mirror.ts";
+import { checkoutCommit, forgeRemote, Mirror, mirrorPaths, pullRequestHeadRef, type ForgeName } from "../src/mirror.ts";
 import { OperationalLog } from "../src/operational-log.ts";
 import { readVision } from "../src/vision.ts";
 import { FixtureRepo, git, tempDirectory } from "./git-fixture.ts";
@@ -187,6 +187,28 @@ test("a read-only checkout at a recorded sha holds the repo as it was then", asy
   await mirror.removeCheckout(fork);
   assert.ok(!existsSync(checkout.directory));
   await assert.rejects(mirror.checkout("main"), RangeError, "a checkout is at a recorded sha, not a branch name");
+});
+
+test("a checkout records the commit it holds, outside its tree, and a checkout without that record is remade", async (t) => {
+  const { repo, fork } = repoWithPullRequest(t);
+  const mirror = await openMirror(t, repo);
+  await mirror.updateDefaultBranch();
+  const checkout = await mirror.checkout(fork);
+  assert.equal(await checkoutCommit(checkout.directory), fork);
+  assert.equal(await checkoutCommit(`${checkout.directory}/`), fork, "however the path is written");
+  assert.equal(await checkoutCommit(repo.work), null, "a directory the mirror did not make records no commit");
+  assert.equal(await checkoutCommit(join(checkout.directory, "src")), null);
+
+  // What a removal that crashed after taking the record away leaves behind.
+  rmSync(`${checkout.directory}.commit`);
+  assert.equal(await checkoutCommit(checkout.directory), null);
+  const remade = await mirror.checkout(fork);
+  assert.equal(await checkoutCommit(remade.directory), fork);
+  assert.equal(readFileSync(join(remade.directory, "VISION.md"), "utf8"), VISION);
+
+  await mirror.removeCheckout(fork);
+  assert.equal(await checkoutCommit(checkout.directory), null);
+  assert.ok(!existsSync(`${checkout.directory}.commit`), "removing a checkout removes its record");
 });
 
 test("a checkout leaves out symlinks pointing outside it, logs them, and keeps in-tree ones", async (t) => {

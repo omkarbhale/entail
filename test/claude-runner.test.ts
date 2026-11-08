@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { claudeArguments, ClaudeRunner, usageLimit } from "../src/claude-runner.ts";
 import { DEFAULT_MODEL, type ModelRunRequest } from "../src/model-runner.ts";
+import { Mirror } from "../src/mirror.ts";
 import { emitJsonSchema, object, string } from "../src/schema.ts";
+import { FixtureRepo, tempDirectory } from "./git-fixture.ts";
 
 const greetingSchema = object({ greeting: string() });
 
@@ -16,15 +17,21 @@ function temporary(t: TestContext, prefix: string): string {
   return dir;
 }
 
-/** A real git checkout with one commit, and that commit's sha. */
-function checkout(t: TestContext): { path: string; sha: string } {
-  const path = temporary(t, "entail-checkout-");
-  const git = (...args: string[]) => execFileSync("git", ["-C", path, "-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { encoding: "utf8" });
-  git("init", "--quiet");
-  writeFileSync(join(path, "VISION.md"), "# tally\n\ntally never reaches the network.\n");
-  git("add", "VISION.md");
-  git("commit", "--quiet", "-m", "vision");
-  return { path, sha: git("rev-parse", "HEAD").trim() };
+/**
+ * A read-only checkout the git mirror made of a repo with one commit, and
+ * that commit's sha: what every real run reads.
+ */
+async function checkout(t: TestContext): Promise<{ path: string; sha: string }> {
+  const repo = new FixtureRepo(t);
+  repo.write("VISION.md", "# tally\n\ntally never reaches the network.\n").commit("vision");
+  repo.push();
+  const mirror = await Mirror.open({
+    dataDirectory: tempDirectory(t, "data"),
+    key: { forge: "github", host: "forge.example", projectId: 42 },
+    remote: { url: repo.remote, credentialHelper: null },
+  });
+  const made = await mirror.checkout((await mirror.updateDefaultBranch()).commit);
+  return { path: made.directory, sha: made.commit };
 }
 
 type Behaviour =
@@ -129,7 +136,7 @@ test("a run passes exactly the structured output, model, tool and isolation flag
 });
 
 test("a run in the checkout returns the structured output with its facts", async (t) => {
-  const at = checkout(t);
+  const at = await checkout(t);
   const fake = fakeClaude(t, { print: { stdout: resultJson() } });
   const result = await new ClaudeRunner({ command: fake.command }).run(request(at));
 
@@ -151,19 +158,31 @@ test("a run in the checkout returns the structured output with its facts", async
 });
 
 test("the model reported for a run is the one that ran it", async (t) => {
-  const at = checkout(t);
+  const at = await checkout(t);
   const fake = fakeClaude(t, { print: { stdout: resultJson({ modelUsage: { "claude-opus-5-5-20261001": {} } }) } });
   const result = await new ClaudeRunner({ command: fake.command }).run(request(at));
   assert.equal(result.facts?.model, "claude-opus-5-5-20261001");
 });
 
 test("a checkout that is not at the recorded sha is an error, and claude is not run", async (t) => {
-  const at = checkout(t);
+  const at = await checkout(t);
   const fake = fakeClaude(t, { print: { stdout: resultJson() } });
   const result = await new ClaudeRunner({ command: fake.command }).run(request({ path: at.path, sha: "b".repeat(40) }));
   assert.equal(result.ok, false);
   assert.equal(!result.ok && result.failure.kind, "error");
   assert.match(!result.ok ? result.failure.message : "", /not the recorded sha/);
+  assert.throws(() => fake.invocation(), "claude never started");
+});
+
+test("a directory the git mirror did not make is an error, even a repository at the sha, and claude is not run", async (t) => {
+  const repo = new FixtureRepo(t);
+  const sha = repo.write("VISION.md", "# tally\n").commit("vision");
+  const fake = fakeClaude(t, { print: { stdout: resultJson() } });
+  for (const path of [repo.work, join(repo.work, "missing")]) {
+    const result = await new ClaudeRunner({ command: fake.command }).run(request({ path, sha }));
+    assert.equal(!result.ok && result.failure.kind, "error");
+    assert.match(!result.ok ? result.failure.message : "", /not a read-only checkout made by the git mirror/);
+  }
   assert.throws(() => fake.invocation(), "claude never started");
 });
 
@@ -202,7 +221,7 @@ const failures: { name: string; behaviour: Behaviour; kind: string; message?: Re
 
 for (const { name, behaviour, kind, message } of failures) {
   test(`${name} is the ${kind} machine failure`, async (t) => {
-    const at = checkout(t);
+    const at = await checkout(t);
     const fake = fakeClaude(t, behaviour);
     const result = await new ClaudeRunner({ command: fake.command }).run(request(at));
     assert.equal(result.ok, false);
@@ -213,7 +232,7 @@ for (const { name, behaviour, kind, message } of failures) {
 }
 
 test("a failure with a result keeps the run's facts, so its cost is still recorded", async (t) => {
-  const at = checkout(t);
+  const at = await checkout(t);
   const fake = fakeClaude(t, { print: { stdout: resultJson({ structured_output: undefined }) } });
   const result = await new ClaudeRunner({ command: fake.command }).run(request(at));
   assert.equal(result.facts?.estimatedCostUsd, 0.0132);
@@ -221,7 +240,7 @@ test("a failure with a result keeps the run's facts, so its cost is still record
 });
 
 test("a usage limit carries the reset time claude reported", async (t) => {
-  const at = checkout(t);
+  const at = await checkout(t);
   const fake = fakeClaude(t, { print: { stdout: "Claude AI usage limit reached|1794153600", code: 1 } });
   const result = await new ClaudeRunner({ command: fake.command }).run(request(at));
   assert.deepEqual(!result.ok && result.failure.resetAt, new Date(1794153600 * 1000));
@@ -235,14 +254,14 @@ test("the usage-limit reset time is read from epoch seconds or an ISO time, and 
 });
 
 test("a claude that cannot be started is an error", async (t) => {
-  const at = checkout(t);
+  const at = await checkout(t);
   const result = await new ClaudeRunner({ command: join(temporary(t, "entail-missing-"), "claude") }).run(request(at));
   assert.equal(!result.ok && result.failure.kind, "error");
   assert.match(!result.ok ? result.failure.message : "", /could not be started/);
 });
 
 test("a timed-out run is ended with SIGINT, then SIGTERM after the grace period", async (t) => {
-  const at = checkout(t);
+  const at = await checkout(t);
   const fake = fakeClaude(t, { hang: {} });
   const result = await new ClaudeRunner({ command: fake.command, timeoutMs: 1500, graceMs: 300 }).run(request(at));
   assert.equal(!result.ok && result.failure.kind, "timeout");
@@ -250,7 +269,7 @@ test("a timed-out run is ended with SIGINT, then SIGTERM after the grace period"
 });
 
 test("a run that ignores SIGTERM too is killed, so it never holds a slot forever", async (t) => {
-  const at = checkout(t);
+  const at = await checkout(t);
   const fake = fakeClaude(t, { hang: { stubborn: true } });
   const result = await new ClaudeRunner({ command: fake.command, timeoutMs: 1500, graceMs: 300 }).run(request(at));
   assert.equal(!result.ok && result.failure.kind, "timeout");
@@ -258,7 +277,7 @@ test("a run that ignores SIGTERM too is killed, so it never holds a slot forever
 });
 
 test("an interrupted run is ended the same way and rejects with the signal's reason", async (t) => {
-  const at = checkout(t);
+  const at = await checkout(t);
   const fake = fakeClaude(t, { hang: {} });
   const controller = new AbortController();
   const running = new ClaudeRunner({ command: fake.command, graceMs: 300 }).run(request(at), { signal: controller.signal });

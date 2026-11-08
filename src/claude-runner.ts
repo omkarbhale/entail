@@ -1,6 +1,6 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
-import { promisify } from "node:util";
+import { checkoutCommit } from "./mirror.ts";
 import {
   acceptOutput,
   type MachineFailure,
@@ -11,8 +11,6 @@ import {
   type RunOptions,
 } from "./model-runner.ts";
 import { emitJsonSchema } from "./schema.ts";
-
-const execFileAsync = promisify(execFile);
 
 /** A run is ended after 10 minutes (spec section 1, ADR-0017). */
 export const RUN_TIMEOUT_MS = 10 * 60 * 1000;
@@ -159,13 +157,9 @@ interface Exit {
 
 /** Why the checkout cannot be read at the recorded sha, or null if it can. */
 async function checkoutProblem(checkout: string, sha: string): Promise<string | null> {
-  try {
-    const { stdout } = await execFileAsync("git", ["-C", checkout, "rev-parse", "--verify", "HEAD"]);
-    const head = stdout.trim();
-    return head === sha ? null : `the checkout ${checkout} is at ${head}, not the recorded sha ${sha}`;
-  } catch (error) {
-    return `the checkout ${checkout} could not be read: ${error instanceof Error ? error.message.trim() : String(error)}`;
-  }
+  const commit = await checkoutCommit(checkout);
+  if (commit === null) return `${checkout} is not a read-only checkout made by the git mirror`;
+  return commit === sha ? null : `the checkout ${checkout} is at ${commit}, not the recorded sha ${sha}`;
 }
 
 /** The fields of `claude -p --output-format json`'s result entail reads. */

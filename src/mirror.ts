@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, lstat, mkdir, readdir, readlink, realpath, rename, rm, stat } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, readlink, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Git, GitError } from "./git.ts";
 import type { OperationalLog } from "./operational-log.ts";
@@ -250,7 +250,9 @@ export class Mirror {
     if (!FULL_SHA.test(commit)) throw new RangeError(`a checkout needs a full commit sha, not ${commit}`);
     const sha = await this.resolve(commit);
     const directory = join(this.checkoutsDirectory, sha);
-    if (await exists(directory)) return { directory, commit: sha, dropped: [] };
+    if ((await checkoutCommit(directory)) === sha) return { directory, commit: sha, dropped: [] };
+    // A directory without its marker is what a crashed removal leaves behind.
+    await removeTree(directory);
 
     await mkdir(this.checkoutsDirectory, { recursive: true, mode: 0o700 });
     const staging = `${directory}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
@@ -263,12 +265,17 @@ export class Mirror {
       await this.git.run([`--work-tree=${staging}`, "checkout-index", "--all", "--force"], { env });
       dropped = await dropEscapingLinks(staging);
       await makeReadOnly(staging);
+      // The marker goes in place before the checkout does, so a checkout
+      // never appears without it.
+      await writeFile(`${staging}.commit`, `${sha}\n`);
+      await rename(`${staging}.commit`, commitMarker(directory));
       await rename(staging, directory);
     } catch (error) {
       await removeTree(staging);
       if (!(await exists(directory))) throw error;
     } finally {
       await rm(index, { force: true });
+      await rm(`${staging}.commit`, { force: true });
     }
     if (dropped.length > 0) {
       this.#log?.warn("checkout.symlinks_dropped", { commit: sha, dropped });
@@ -279,7 +286,33 @@ export class Mirror {
   /** Removes the read-only checkout at a commit, if there is one. */
   async removeCheckout(commit: string): Promise<void> {
     if (!FULL_SHA.test(commit)) throw new RangeError(`a checkout is named by a full commit sha, not ${commit}`);
-    await removeTree(join(this.checkoutsDirectory, commit));
+    const directory = join(this.checkoutsDirectory, commit);
+    // The marker goes first, so a partly removed checkout is never taken for a whole one.
+    await rm(commitMarker(directory), { force: true });
+    await removeTree(directory);
+  }
+}
+
+/**
+ * The marker the mirror keeps beside a read-only checkout, outside the tree
+ * the model reads, recording the commit the checkout holds. A checkout is a
+ * plain tree with no `.git`, so this is how it is known to be at a commit.
+ */
+function commitMarker(directory: string): string {
+  return `${resolve(directory)}.commit`;
+}
+
+/**
+ * The commit a whole read-only checkout made by {@link Mirror.checkout}
+ * holds, or null if the directory is not one.
+ */
+export async function checkoutCommit(directory: string): Promise<string | null> {
+  try {
+    if (!(await stat(directory)).isDirectory()) return null;
+    const commit = (await readFile(commitMarker(directory), "utf8")).trim();
+    return FULL_SHA.test(commit) ? commit : null;
+  } catch {
+    return null;
   }
 }
 
