@@ -32,6 +32,9 @@ export const CALL_KIND_LABELS: Readonly<Record<(typeof CALL_KINDS)[number], stri
   merge: "merge",
   "cancel-on-outside-close": "cancelled on an outside close",
   "unenroll-cancel": "cancelled on unenroll",
+  "pr-opened": "PR opened",
+  "pr-closed": "PR closed unmerged",
+  "merged-by-others": "merged by others",
 };
 
 /** The query parameters the Calls page filters by. */

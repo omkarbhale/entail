@@ -12,6 +12,7 @@ import type { ModelRunner } from "./model-runner.ts";
 import { ModelRuns } from "./model-runs.ts";
 import { InFlightWrites, settleUnconfirmedWrites } from "./forge-writer.ts";
 import { Passes, repoForge, type PassesOptions } from "./pass.ts";
+import { pullRequestFollowing } from "./pull-requests.ts";
 import { boardPages } from "./board-page.ts";
 import { callsPages } from "./calls-page.ts";
 import { reposPages } from "./repos-page.ts";
@@ -27,7 +28,7 @@ export interface RunOptions {
   dataDirectory: string;
   log?: OperationalLogOptions;
   /** Replaces what the passes reach the forge and git through; the owner's own CLIs by default. */
-  passes?: Pick<PassesOptions, "forgeFor" | "defaultBranchFor" | "planners" | "limiter">;
+  passes?: Pick<PassesOptions, "forgeFor" | "defaultBranchFor" | "planners" | "changeHandlers" | "limiter">;
   /** Makes every model run; `claude -p` on the owner's subscription by default. */
   modelRunner?: ModelRunner;
   /** How long stopping waits for in-flight forge writes; {@link STOP_WAIT_MS} by default. */
@@ -152,6 +153,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     log,
   });
 
+  const pullRequests = pullRequestFollowing({ store, log });
   const running = new Passes({
     store,
     log,
@@ -163,7 +165,9 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
       deciderPlanner({ store, log, dataDirectory: options.dataDirectory }),
       criteriaPlanner({ store, log, dataDirectory: options.dataDirectory }),
       boardPlanner({ store, log, dataDirectory: options.dataDirectory, notifier, boardOrigin: server.info.origin }),
+      pullRequests.planner,
     ],
+    changeHandlers: options.passes?.changeHandlers ?? [pullRequests.onChange],
     inFlight,
     modelRuns,
   });

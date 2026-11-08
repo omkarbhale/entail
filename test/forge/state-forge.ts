@@ -18,6 +18,7 @@ import {
   type MergeMethod,
   type Project,
   type RepoAccess,
+  type PullRequest,
   type PullRequestState,
 } from "../../src/forge/forge.ts";
 
@@ -179,10 +180,10 @@ export class StateForge implements Forge {
   async pullRequestComments(): Promise<never> {
     throw new Error("not supported");
   }
-  async linkedPullRequests(): Promise<never> {
+  async linkedPullRequests(_issueNumber: number): Promise<PullRequest[]> {
     throw new Error("not supported");
   }
-  async linkedIssues(): Promise<never> {
+  async linkedIssues(_pullRequestNumber: number): Promise<number[]> {
     throw new Error("not supported");
   }
   async checks(): Promise<never> {
