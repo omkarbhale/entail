@@ -65,6 +65,7 @@ function settled(fields: Partial<VerdictOutput> = {}): VerdictOutput {
     reading_chosen: null,
     why_raised: null,
     open_readings: [],
+    close_evidence: [],
     reason: "The vision defines a word, which chooses R1.",
     ...fields,
   };

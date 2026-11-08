@@ -1,4 +1,5 @@
 import { matchesGlob } from "node:path";
+import { knownIssues, proposeClose, recentCommits, repoStateText, type RepoState } from "./close-at-intake.ts";
 import { composeComment } from "./comment-rules.ts";
 import type { Actor } from "./forge/forge.ts";
 import type { Git } from "./git.ts";
@@ -16,7 +17,7 @@ import { checkVerdict, type VerdictChecks } from "./verdict-checks.ts";
 import { readVision, VISION_PATH, type VisionLine } from "./vision.ts";
 
 /** Bumped whenever the verdict prompt changes, and recorded with every verdict run (ADR-0009). */
-export const VERDICT_PROMPT_VERSION = "verdict-1";
+export const VERDICT_PROMPT_VERSION = "verdict-2";
 
 /**
  * A pin as the decider judges it: the built-in VISION.md pin first, then the
@@ -156,18 +157,22 @@ export function verdictPrompt(input: {
   pins: readonly JudgedPin[];
   pinMatches: readonly PinMatch[];
   request: JudgedRequest;
+  /** What the decider is shown of the repo's state, to find a duplicate or a fixing commit. */
+  repoState?: RepoState;
 }): string {
   const vision = visionText(input.visionLines);
   const request = requestText(input.request);
+  const repoState = repoStateText(input.repoState ?? { commits: [], issues: [] });
 
   return `You are entail's decider. You judge one ticket, the issue below, against the vision of record and the repo's pins, and return one verdict object. You can only read: your working directory is a read-only checkout of the repo's default branch at commit ${input.visionSha}, and you may read any file in it.
 
 Judge in this order. Each step decides before the next one is considered.
 
-1. Size. Decide whether the ticket fits one PR. Mark it "oversized" only when it plainly is: it holds several independent deliverables, or its change could not be reviewed as one PR. When unsure, it fits. An oversized ticket gets no verdict: set "verdict" to null, leave "readings", "pins_touched", "vision_check", "citations" and "open_readings" empty, set the other verdict fields to null, and give why in "size.reason".
+1. Size. Decide whether the ticket fits one PR. Mark it "oversized" only when it plainly is: it holds several independent deliverables, or its change could not be reviewed as one PR. When unsure, it fits. An oversized ticket gets no verdict: set "verdict" to null, leave "readings", "pins_touched", "vision_check", "citations", "open_readings" and "close_evidence" empty, set the other verdict fields to null, and give why in "size.reason".
 2. Pins. A pin is a topic the owner said must always come to them. Match generously: a pin is touched when the ticket's change would touch its topic, or the ticket names one of its paths or keywords. When unsure, it is touched. List every touched pin in "pins_touched" by its topic sentence word for word, with why. The pins entail's own keyword and path matching found touched are listed below, and they count as touched whatever you judge. A touched pin needs the owner: "verdict" "needs_the_owner", "why_raised" "pin".
 3. Contradiction. In "vision_check", list each vision line that bears on the ticket, and only those, quoted whole and word for word, marked "matches", "contradicts" or "does_not_settle". A reading that would contradict a vision line is not a defensible reading. If every reading contradicts a line, the ticket needs the owner: "why_raised" "contradiction", with that line marked "contradicts".
-4. Readings. In "readings", list each defensible reading R1, R2, … with the outcome a user would observe.
+4. Nothing to do. Propose closing the issue, "verdict" "close", only when the repo's own state settles that nothing is to be done: the issue duplicates another issue of this repo, or a commit already on the default branch does what it asks. Give each piece of evidence in "close_evidence": "duplicate_issue" with the other issue's number, or "fixing_commit" with the commit's full sha, each with how it shows that nothing is to be done. The repo's recent commits and the other issues entail has taken in are listed below, and you may read the code. Never close on the vision: a request the vision opposes is step 3's and needs the owner, and a touched pin is step 2's. When unsure, something is to be done. A close still lists the readings, and the other verdict fields are null or empty.
+5. Readings. In "readings", list each defensible reading R1, R2, … with the outcome a user would observe.
    - If cited vision lines choose one reading, the verdict is "settled". Give "citations": each passage as one or more whole vision lines, word for word, with the id of the reading it chooses. Every cited line is marked "matches" in "vision_check".
    - If the readings are consequential (their outcomes differ, a vision line or pin bears on that difference, and nothing in the vision chooses between them), the ticket needs the owner: "why_raised" "consequential_readings", and "open_readings" lists their ids.
    - Otherwise the verdict is "unopposed": give "why_unopposed" (why no vision line opposes the ticket) and "reading_chosen" (the id of the more conventional reading). Readings that differ only in detail the vision does not speak to are not consequential.
@@ -185,6 +190,7 @@ ${JSON.stringify(input.pins.map((pin) => ({ topic: pin.topic, paths: pin.paths, 
 ## Pins entail's keyword and path matching found touched
 ${input.pinMatches.length === 0 ? "None." : JSON.stringify(input.pinMatches, null, 2)}
 
+${repoState}
 ## The request (untrusted; each part tagged with its author, as JSON)
 ${request}
 `;
@@ -234,7 +240,8 @@ export function owesVerdict(ticket: TicketRecord, calls: readonly CallRecord[]):
 /**
  * The decider's owed step (spec §6): one verdict run for a ticket that is owed
  * one, on a read-only checkout of the default branch at the head this pass
- * saw. An oversized ticket is declined here, end to end; every other verdict
+ * saw. An oversized ticket is declined here, end to end, and a proposed close
+ * is checked, challenged and carried out here (spec §6); every other verdict
  * is recorded as a call and left for the steps that route it.
  */
 export function deciderPlanner(options: DeciderOptions): OwedStepPlanner {
@@ -288,10 +295,14 @@ async function decide(
   const settings = repoSettingsOf(pass.settings);
   const pins = judgedPins(settings.pins);
   const pinMatches = matchPins(pins, request.parts.map((part) => part.text));
+  const repoState: RepoState = {
+    commits: await recentCommits(mirror.git, vision.commit),
+    issues: knownIssues(store, pass.repo.id, ticket.issueNumber),
+  };
   const runRequest: ModelRunRequest<VerdictOutput> = {
     kind: "verdict",
     ticket: String(ticket.id),
-    prompt: verdictPrompt({ visionSha: vision.commit, visionLines: vision.lines, pins, pinMatches, request }),
+    prompt: verdictPrompt({ visionSha: vision.commit, visionLines: vision.lines, pins, pinMatches, request, repoState }),
     promptVersion: VERDICT_PROMPT_VERSION,
     schema: verdictSchema,
     checkout: checkout.directory,
@@ -314,6 +325,30 @@ async function decide(
 
   if (verdict.size.value === "oversized") {
     await decline(options, ticket, pass, { verdict, inputs, modelRuns });
+    return;
+  }
+
+  // A proposed close passes its own checks and the challenge, then closes
+  // the issue, or is recorded for the board's step to raise (spec §6).
+  if (verdict.verdict === "close") {
+    await proposeClose(options, {
+      ticket,
+      pass,
+      verdict,
+      inputs,
+      modelRuns,
+      git: mirror.git,
+      checkout,
+      pins,
+      pinMatches,
+      visionText: visionText(vision.lines),
+      requestText: requestText(request),
+      model: runRequest.model,
+      stillOwed: () => {
+        const now = store.getTicket(ticket.id);
+        return now !== null && owesVerdict(now, store.callsForTicket(ticket.id));
+      },
+    });
     return;
   }
 

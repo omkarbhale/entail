@@ -16,6 +16,13 @@ import { arrayOf, nullable, object, oneOf, string, type Infer } from "./schema.t
 const visionLine = string("A whole line of VISION.md, quoted word for word.");
 
 /**
+ * What a close at intake may rest on: the repo's own state, never the vision
+ * (spec §6, ADR-0006). A duplicate is another issue in the repo; an already
+ * fixed report is a commit on the default branch.
+ */
+export const CLOSE_EVIDENCE_KINDS = ["duplicate_issue", "fixing_commit"] as const;
+
+/**
  * The decider's output for one ticket (spec section 6, ADR-0011, ADR-0007).
  * entail adds the model, session id, vision sha, duration, cost and usage.
  */
@@ -39,7 +46,10 @@ export const verdictSchema = object({
     }),
     "Every vision line that bears on the issue, and only those.",
   ),
-  verdict: nullable(oneOf(["settled", "unopposed", "needs_the_owner"]), "null only when the ticket is oversized, which gets no verdict."),
+  verdict: nullable(
+    oneOf(["settled", "unopposed", "needs_the_owner", "close"]),
+    "null only when the ticket is oversized, which gets no verdict. close proposes closing the issue at intake because the repo's state settles that nothing is to be done.",
+  ),
   citations: arrayOf(
     object({
       lines: arrayOf(visionLine, "One or more whole lines, quoted word for word."),
@@ -51,6 +61,14 @@ export const verdictSchema = object({
   reading_chosen: nullable(string(), "For unopposed: the id of the more conventional reading. null otherwise."),
   why_raised: nullable(oneOf(["contradiction", "consequential_readings", "pin"]), "For needs the owner: why it is raised. null otherwise."),
   open_readings: arrayOf(string(), "For needs the owner: the ids of the readings left open. Empty otherwise."),
+  close_evidence: arrayOf(
+    object({
+      kind: oneOf(CLOSE_EVIDENCE_KINDS),
+      ref: string("For duplicate_issue: the other issue's number. For fixing_commit: the commit's full sha."),
+      why: string("How this shows that nothing is to be done, in one plain sentence."),
+    }),
+    "For close: the evidence from the repo's state that nothing is to be done. Empty otherwise.",
+  ),
   reason: string("The reason for the audit log."),
 });
 

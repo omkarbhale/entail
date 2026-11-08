@@ -11,6 +11,7 @@ import {
   type ForgeSetting,
   type ForgeTarget,
   type ForgeWording,
+  type Issue,
   MergePendingError,
   type MergeOutcome,
   type PostedComment,
@@ -167,6 +168,9 @@ export class StateForge implements Forge {
     throw new Error("not supported");
   }
   async transferredIn(_issueNumber: number): Promise<boolean> {
+    throw new Error("not supported");
+  }
+  async issue(_issueNumber: number): Promise<Issue | null> {
     throw new Error("not supported");
   }
   async pullRequest(): Promise<never> {

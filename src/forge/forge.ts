@@ -358,6 +358,14 @@ export interface Forge {
    */
   transferredIn(issueNumber: number): Promise<boolean>;
 
+  /**
+   * One issue of this repo, read live, or null when the repo has no issue by
+   * that number: none was ever opened, it was deleted, or the number is a PR's.
+   * Closing an issue at intake reads the issue it duplicates through this, to
+   * check that the evidence exists (spec §6).
+   */
+  issue(issueNumber: number): Promise<Issue | null>;
+
   // The four writes (ADR-0015). They go out only through entail's forge
   // writer, which records each as an intent first and enforces the comment
   // rules; nothing else calls them.
