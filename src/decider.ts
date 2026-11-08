@@ -1,5 +1,4 @@
 import { matchesGlob } from "node:path";
-import { challengePrompt, challengeSchema, CHALLENGE_PROMPT_VERSION, recordedChallenge, type ChallengeOutput, type RecordedChallenge } from "./challenge.ts";
 import { composeComment } from "./comment-rules.ts";
 import type { Actor } from "./forge/forge.ts";
 import type { Git } from "./git.ts";
@@ -120,7 +119,7 @@ function authorTag(author: Actor): string {
 }
 
 /** The vision lines under their headings, as a model run is shown the vision of record. */
-function visionText(visionLines: readonly VisionLine[]): string {
+export function visionText(visionLines: readonly VisionLine[]): string {
   const vision: string[] = [];
   let heading: string | null | undefined;
   for (const line of visionLines) {
@@ -134,7 +133,7 @@ function visionText(visionLines: readonly VisionLine[]): string {
 }
 
 /** The request's parts, each tagged with its author, encoded as JSON so nothing in them can pass for a prompt's own words. */
-function requestText(request: JudgedRequest): string {
+export function requestText(request: JudgedRequest): string {
   const parts = request.parts.map((part) => ({
     part: part.part,
     author: authorTag(part.author),
@@ -318,52 +317,19 @@ async function decide(
     return;
   }
 
-  // A settled or unopposed verdict passes the mechanical checks, then the
-  // challenge, before anything can clear the ticket (spec §6, ADR-0002). Both
-  // are recorded on the verdict call, where routing reads them.
-  let checks: VerdictChecks | null = null;
-  let challenge: RecordedChallenge | null = null;
-  if (verdict.verdict === "settled" || verdict.verdict === "unopposed") {
-    checks = checkVerdict(verdict, vision);
-    if (checks.passed) {
-      const challengeRequest: ModelRunRequest<ChallengeOutput> = {
-        kind: "challenge",
-        ticket: String(ticket.id),
-        prompt: challengePrompt({
-          visionSha: vision.commit,
-          vision: visionText(vision.lines),
-          pins,
-          pinMatches,
-          request: requestText(request),
-          verdict,
-        }),
-        promptVersion: CHALLENGE_PROMPT_VERSION,
-        schema: challengeSchema,
-        checkout: checkout.directory,
-        sha: checkout.commit,
-        model: runRequest.model,
-      };
-      // A fresh run of its own; machine failures are retried inside, so the
-      // ticket stays deciding until the challenge returns, and is never raised for one.
-      const challengeRun = await pass.modelRuns.run(challengeRequest, { priority: "intake", since: ticket.takenInAt });
-      const later = store.getTicket(ticket.id);
-      if (later === null || !owesVerdict(later, store.callsForTicket(ticket.id))) {
-        log.info("verdict-discarded", { ticketId: ticket.id, state: later?.state ?? null });
-        return;
-      }
-      challenge = recordedChallenge(challengeRun);
-      modelRuns.push(modelRunRecord(challengeRequest, challengeRun));
-    }
-  }
+  // A settled or unopposed verdict passes the mechanical checks before
+  // anything can clear the ticket (spec §6, ADR-0002). They are recorded on
+  // the verdict call, where routing reads them. The challenge runs later,
+  // once over the verdict and its criteria together (spec §7, ADR-0005).
+  const checks: VerdictChecks | null = verdict.verdict === "settled" || verdict.verdict === "unopposed" ? checkVerdict(verdict, vision) : null;
 
-  const call = store.recordCall({ ticketId: ticket.id, kind: "verdict", reason: verdict.reason, inputs, detail: verdict, checks, challenge, modelRuns });
+  const call = store.recordCall({ ticketId: ticket.id, kind: "verdict", reason: verdict.reason, inputs, detail: verdict, checks, modelRuns });
   log.info("verdict-recorded", {
     ticketId: ticket.id,
     callId: call.id,
     verdict: verdict.verdict,
     pinMatches: pinMatches.length,
     ...(checks === null ? {} : { checksPassed: checks.passed }),
-    ...(challenge === null ? {} : { challengeOverturned: challenge.overturned }),
   });
 }
 

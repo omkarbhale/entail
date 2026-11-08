@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import { setImmediate as immediate } from "node:timers/promises";
 import { boardPlanner, owedRaise, type BoardItemSnapshot } from "../src/board-item.ts";
-import { CHALLENGE_PROMPT_VERSION, type ChallengeOutput, type RecordedChallenge } from "../src/challenge.ts";
 import { deciderPlanner, type RecordedVerdict } from "../src/decider.ts";
 import { Mirror } from "../src/mirror.ts";
 import type { VerdictOutput } from "../src/model-schemas.ts";
@@ -65,8 +64,6 @@ function unopposed(fields: Partial<VerdictOutput> = {}): VerdictOutput {
     ...fields,
   });
 }
-
-const UPHELD: ChallengeOutput = { outcome: "upheld", objections: [], reason: "Nothing overturns the verdict." };
 
 async function until(done: () => boolean, what: string): Promise<void> {
   const deadline = performance.now() + 10_000;
@@ -132,11 +129,10 @@ async function harness(t: TestContext, pins: Pin[] = []): Promise<Harness> {
   };
 }
 
-/** Takes issue 1 in with the given verdict (and challenge, if scripted), records it, and routes it. */
-async function judged(h: Harness, output: VerdictOutput, challenge?: ChallengeOutput, fields: Partial<Parameters<typeof issue>[1]> = {}): Promise<TicketRecord> {
+/** Takes issue 1 in with the given verdict, records it, and routes it. */
+async function judged(h: Harness, output: VerdictOutput, fields: Partial<Parameters<typeof issue>[1]> = {}): Promise<TicketRecord> {
   h.forge.issues = [issue(1, { title: "Count hyphenated words", body: "Is `a-b` one word or two?", ...fields })];
   h.scripted.script("verdict", "1", { output, facts: { sessionId: "decider-session" } });
-  if (challenge) h.scripted.script("challenge", "1", { output: challenge, facts: { sessionId: "challenger-session" } });
   await h.pass();
   await h.pass();
   return h.ticket(1);
@@ -278,7 +274,7 @@ for (const [check, output, fields, pins] of [
 ] as const) {
   test(`a verdict failing "${check}" goes to the board with that failure as why_raised, unchallenged`, async (t) => {
     const h = await harness(t, [...pins]);
-    const ticket = await judged(h, output, undefined, fields);
+    const ticket = await judged(h, output, fields);
 
     const call = verdictCall(h, ticket);
     const checks = call.checks as VerdictChecks;
@@ -339,42 +335,21 @@ for (const [name, output] of [
   ["settled", settled()],
   ["unopposed", unopposed()],
 ] as const) {
-  test(`a ${name} verdict that passes its checks is challenged in a fresh session, and both results are recorded on the verdict call`, async (t) => {
+  test(`a ${name} verdict that passes its checks is recorded with them, unchallenged, and left for its criteria`, async (t) => {
     const h = await harness(t, [FORMAT_PIN]);
-    const ticket = await judged(h, output, UPHELD);
+    const ticket = await judged(h, output);
 
-    assert.equal(ticket.state, "deciding", "an upheld verdict is left for criteria");
+    assert.equal(ticket.state, "deciding", "a verdict that passes its checks is left for criteria");
     assert.equal(h.setup.store.boardItemsForTicket(ticket.id).length, 0);
     assert.equal(owedRaise(ticket, h.setup.store.callsForTicket(ticket.id)), null);
-
-    const [verdictRun, challengeRun, ...rest] = h.scripted.requests;
-    assert.equal(rest.length, 0, "one verdict run and one challenge run");
-    assert.equal(verdictRun!.kind, "verdict");
-    assert.equal(challengeRun!.kind, "challenge");
-    assert.equal(challengeRun!.promptVersion, CHALLENGE_PROMPT_VERSION);
-    assert.equal(challengeRun!.sha, h.visionSha, "the challenger reads the same default branch at the recorded sha");
-    assert.notEqual(challengeRun!.prompt, verdictRun!.prompt);
-    assert.match(challengeRun!.prompt, /You are entail's challenger/);
-    assert.match(challengeRun!.prompt, /tally never reaches the network\./, "it is given the vision");
-    assert.match(challengeRun!.prompt, /"topic": "the output format"/, "it is given the pins");
-    assert.match(challengeRun!.prompt, /"text": "Is `a-b` one word or two\?"/, "it is given the ticket");
-    const proposedAt = challengeRun!.prompt.indexOf("## The proposed verdict");
-    const proposed = JSON.parse(challengeRun!.prompt.slice(challengeRun!.prompt.indexOf("\n", proposedAt) + 1, challengeRun!.prompt.indexOf("\n## The request"))) as Record<string, unknown>;
-    assert.equal(proposed.verdict, output.verdict, "it is given the proposed verdict");
-    assert.deepEqual(proposed.citations, output.citations);
-    assert.ok(!("session_id" in proposed), "nothing of the decider's session is passed on");
+    assert.deepEqual(h.scripted.requests.map((r) => r.kind), ["verdict"], "the challenge runs once over the verdict and its criteria together");
 
     const call = verdictCall(h, ticket);
     const checks = call.checks as VerdictChecks;
     assert.equal(checks.passed, true);
     assert.equal(checks.results.length, Object.keys(VERDICT_CHECKS).length);
-    const challenge = call.challenge as RecordedChallenge;
-    assert.equal(challenge.outcome, "upheld");
-    assert.equal(challenge.overturned, false);
-    assert.equal(challenge.session_id, "challenger-session");
-    assert.notEqual(challenge.session_id, (call.detail as RecordedVerdict).session_id, "a fresh session");
-    assert.deepEqual(call.modelRuns.map((r) => [r.purpose, r.sessionId]), [["verdict", "decider-session"], ["challenge", "challenger-session"]]);
-    assert.equal(call.modelRuns[1]!.input, challengeRun!.prompt);
+    assert.equal(call.challenge, null);
+    assert.deepEqual(call.modelRuns.map((r) => [r.purpose, r.sessionId]), [["verdict", "decider-session"]]);
   });
 }
 
@@ -389,79 +364,4 @@ test("a needs-the-owner verdict gets no checks and no challenge", async (t) => {
   assert.equal(call.checks, null);
   assert.equal(call.challenge, null);
   assert.equal(h.setup.store.openBoardItem(ticket.id)!.whyRaised, "consequential_readings");
-});
-
-test("a successful challenge sends the ticket to the board with its objection as why_raised", async (t) => {
-  const h = await harness(t);
-  const objection: ChallengeOutput = {
-    outcome: "overturned",
-    objections: [
-      {
-        kind: "missed_reading",
-        objection: "Counting hyphenated words as two changes every existing count",
-        lines: ["Output is plain text, one count per line."],
-        pin: null,
-        reading: { reading: "Count hyphenated words as two, but only with a flag.", observed_outcome: "`tally --split a-b` prints 2; `tally a-b` prints 1." },
-      },
-    ],
-    reason: "A consequential reading was missed.",
-  };
-  const ticket = await judged(h, unopposed(), objection);
-
-  const call = verdictCall(h, ticket);
-  assert.equal((call.checks as VerdictChecks).passed, true);
-  assert.equal((call.challenge as RecordedChallenge).overturned, true);
-
-  assert.equal(ticket.state, "on-the-board");
-  const item = h.setup.store.openBoardItem(ticket.id)!;
-  assert.equal(item.whyRaised, "challenge");
-  const snapshot = item.snapshot as BoardItemSnapshot;
-  assert.equal(
-    snapshot.why.objection,
-    "Counting hyphenated words as two changes every existing count. It rests on “Output is plain text, one count per line.”.",
-  );
-  assert.match(snapshot.why.text, /^The challenge overturned the automatic verdict: Counting hyphenated words/);
-  assert.deepEqual(
-    snapshot.form.options.map((o) => o.id),
-    ["R1", "R2"],
-    "the reading the decider missed is offered beside its own",
-  );
-  assert.equal(snapshot.form.options[1]!.reading, "Count hyphenated words as two, but only with a flag.");
-});
-
-test("a challenge that finds a touched pin names it, and any objection overturns whatever the outcome says", async (t) => {
-  const h = await harness(t, [FORMAT_PIN]);
-  const ticket = await judged(h, unopposed(), {
-    outcome: "upheld",
-    objections: [{ kind: "touched_pin", objection: "Changing the splitter changes the printed counts.", lines: [], pin: "the output format", reading: null }],
-    reason: "Mostly fine.",
-  });
-  assert.equal((verdictCall(h, ticket).challenge as RecordedChallenge).overturned, true);
-  const snapshot = h.setup.store.openBoardItem(ticket.id)!.snapshot as BoardItemSnapshot;
-  assert.equal(snapshot.why.kind, "challenge");
-  assert.deepEqual(snapshot.why.pins, [{ pin: "the output format", why: "Changing the splitter changes the printed counts" }]);
-});
-
-test("a machine failure of the challenge leaves the ticket deciding and is retried, never raised", async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  const h = await harness(t);
-  h.forge.issues = [issue(1)];
-  h.scripted.script("verdict", "1", { output: unopposed() });
-  h.scripted.script("challenge", "1", { failure: { kind: "refusal", message: "the model declined" } }, { output: UPHELD });
-  await h.engine.runPass();
-  await until(() => h.setup.logLines().some((line) => line.event === "model-run-retry" && line.kind === "challenge"), "the failed challenge waits for its retry");
-
-  const ticket = h.ticket(1);
-  assert.equal(ticket.state, "deciding");
-  assert.deepEqual(h.setup.store.callsForTicket(ticket.id).map((c) => c.kind), ["intake"], "nothing is recorded while the challenge fails");
-  assert.equal(h.setup.store.boardItemsForTicket(ticket.id).length, 0);
-
-  t.mock.timers.tick(60_000);
-  await until(() => h.engine.stepsRunning === 0, "the retried challenge has finished");
-  await h.engine.runPass();
-  await until(() => h.engine.stepsRunning === 0, "the next pass has finished");
-  assert.deepEqual(h.setup.store.callsForTicket(ticket.id).map((c) => c.kind), ["intake", "verdict"]);
-  assert.equal(h.ticket(1).state, "deciding");
-  assert.equal(h.setup.store.boardItemsForTicket(ticket.id).length, 0, "a machine failure never reaches the board");
-  assert.deepEqual(h.scripted.requests.map((r) => r.kind), ["verdict", "challenge", "challenge"], "only the challenge is retried");
 });

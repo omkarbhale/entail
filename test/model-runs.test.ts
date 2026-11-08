@@ -225,6 +225,45 @@ test("machine failures are retried after 1, 2, 4… minutes, capped at 30, with 
   assert.equal(retryDelay(1000), RETRY_MAX_MS);
 });
 
+test("an output the step refuses, or cannot check, is the no-structured-output machine failure, retried until one is accepted", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: NOW });
+  const { log, lines } = logFor(t);
+  const scripted = new ScriptedRunner().script(
+    "criteria",
+    "t1",
+    { output: { greeting: "invalid" }, facts: { estimatedCostUsd: 0.25 } },
+    { output: { greeting: "unchecked" } },
+    { output: { greeting: "valid" } },
+  );
+  const runs = new ModelRuns({ runner: scripted, log });
+  const seen: string[] = [];
+  const result = runs.run(request("criteria", "t1"), {
+    ...schedule(),
+    accept: async (output) => {
+      const { greeting } = output as Greeting;
+      seen.push(greeting);
+      if (greeting === "unchecked") throw new Error("the forge did not answer");
+      return greeting === "valid" ? null : "one to five criteria: the output writes no criterion.";
+    },
+  });
+  await flush();
+  assert.equal(runs.retryState("t1")?.lastFailure.kind, "no-structured-output");
+  t.mock.timers.tick(MINUTE);
+  await flush();
+  t.mock.timers.tick(2 * MINUTE);
+  const run = await result;
+
+  assert.equal(run.output.greeting, "valid");
+  assert.deepEqual(seen, ["invalid", "unchecked", "valid"]);
+  assert.deepEqual(
+    lines("machine-failure").map((line) => [line.failure, line.error, line.estimatedCostUsd]),
+    [
+      ["no-structured-output", "the output is invalid: one to five criteria: the output writes no criterion.", 0.25],
+      ["no-structured-output", "the output is invalid: the output could not be checked: the forge did not answer", 0],
+    ],
+  );
+});
+
 test("a usage limit pauses all model work until the reported reset, and the run that hit it waits in line again", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: NOW });
   const { log, lines } = logFor(t);

@@ -430,13 +430,12 @@ test("a ticket never has two open board items", async (t) => {
   );
 });
 
-test("settled and unopposed verdicts that pass their checks and challenge owe no raise", async (t) => {
+test("settled and unopposed verdicts that pass their checks owe no raise", async (t) => {
   const h = await harness(t);
   h.forge.issues = [issue(1)];
   h.scripted.script("verdict", "1", {
     output: needsTheOwner({ verdict: "unopposed", why_raised: null, open_readings: [], vision_check: [], why_unopposed: "Nothing opposes it.", reading_chosen: "R1" }),
   });
-  h.scripted.script("challenge", "1", { output: { outcome: "upheld", objections: [], reason: "Nothing overturns it." } });
   await h.pass();
   await h.pass();
   const ticket = h.ticket(1);

@@ -6,6 +6,7 @@ import { Enroller } from "./enrollment.ts";
 import { Limiter } from "./forge-limit.ts";
 import { ClaudeRunner } from "./claude-runner.ts";
 import { boardPlanner } from "./board-item.ts";
+import { criteriaPlanner } from "./criteria.ts";
 import { deciderPlanner } from "./decider.ts";
 import type { ModelRunner } from "./model-runner.ts";
 import { ModelRuns } from "./model-runs.ts";
@@ -160,6 +161,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     defaultBranchFor: options.passes?.defaultBranchFor,
     planners: options.passes?.planners ?? [
       deciderPlanner({ store, log, dataDirectory: options.dataDirectory }),
+      criteriaPlanner({ store, log, dataDirectory: options.dataDirectory }),
       boardPlanner({ store, log, dataDirectory: options.dataDirectory, notifier, boardOrigin: server.info.origin }),
     ],
     inFlight,
