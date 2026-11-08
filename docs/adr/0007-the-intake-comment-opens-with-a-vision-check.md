@@ -31,3 +31,9 @@ The vision check makes every judgment readable on the issue itself, including th
 - A declined ticket gets no vision check, because size is checked before any verdict. Its comment gives the reason. A close at intake rests on the repo's state, and its comment gives its evidence.
 - Quoted vision lines sit in a quote block, so no line of the comment starts with `/`.
 - The shape is part of the contract with executors, decided on [What is the contract between entail and any executor?](https://github.com/omkarbhale/entail/issues/30) (ADR-0013). Section 2 ends with one fixed line telling any executor how to report evidence or findings.
+
+## Amendment: a declined ticket's issue stays open
+
+entail does not close a declined ticket's issue. Declining says the ticket is too large for one PR, not that nothing is to be done, so closing stays reserved for the cases where nothing is: a close at intake, closing on findings (ADR-0006), and "don't go ahead" (ADR-0008). The declined comment gives the reason and says the owner can split the work into smaller issues, or narrow this one and pull it in again with `/entail`, which needs the issue open (ADR-0020). The ticket never carried an `entail:` label, so none is removed.
+
+Settled after the MVP-1 spec was assembled, as an engineering call the owner delegated (open point 6 of `docs/spec/mvp-1.md`). Closing the issue as not planned was passed over: it would read as a refusal of the request when MVP-1 only lacks splitting, a recorded shortfall against VISION.md.

@@ -102,7 +102,7 @@ A topic the owner has said must always come to them, even where the vision settl
 An independent second judgment that tries to overturn an automatic verdict by finding a vision line the ticket contradicts, a touched pin, a consequential reading or an uncited assumption; if it succeeds, the ticket needs the owner.
 
 **Criteria**:
-What one ticket's PR must contain, written by entail because an issue carries no implementation idea: a few numbered outcomes, namely what is true once the issue is resolved and any vision constraint the change must respect. Each outcome is traced to its source (the issue, a vision line or the owner's answer) and may carry mechanical checks. They are published on the issue when the ticket is cleared and are frozen from then on; only a new version written by a new call changes them.
+What one ticket's PR must contain, written by entail because an issue carries no implementation idea: a few numbered outcomes, namely what is true once the issue is resolved and any vision constraint the change must respect. Each outcome is traced to its source (the issue, an entry of its findings, a vision line or the owner's answer) and may carry mechanical checks. They are published on the issue when the ticket is cleared and are frozen from then on; only a new version written by a new call changes them.
 _Avoid_: Acceptance criteria, requirements
 
 **Evidence**:
@@ -151,7 +151,7 @@ Whether the issue describes a real problem, or what causes it, is unknown, so en
 _Avoid_: Triage, needs info
 
 **Declined**:
-Final: the ticket is too large for one PR, so entail will not take it forward. Size is checked before any verdict, so a declined ticket has none.
+Final: the ticket is too large for one PR, so entail will not take it forward. Size is checked before any verdict, so a declined ticket has none. Its issue is left open, so the owner can narrow it and pull it in again.
 Declining is a deliberate, owner-approved shortfall in MVP-1: VISION.md says entail breaks a ticket too large for one PR into smaller tickets, and splitting is the next effort.
 
 **On the board**:

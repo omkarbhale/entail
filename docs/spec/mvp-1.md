@@ -1,6 +1,6 @@
 # MVP-1 spec
 
-This spec puts together, for implementation, the decisions recorded on the [MVP-1 wayfinder map][#12]. It adds no new decisions. Every requirement links to the ticket or ADR it comes from: `[ADR-nnnn]` points to `docs/adr/`, and `[#n]` points to a resolved map ticket. Where a later decision amends an earlier one, the spec follows the later one, and [Further Notes](#further-notes) lists the statements it replaced. Anything missing or contradictory is listed under [Open points](#open-points) and is not decided here.
+This spec puts together, for implementation, the decisions recorded on the [MVP-1 wayfinder map][#12]. Every requirement links to the ticket or ADR it comes from: `[ADR-nnnn]` points to `docs/adr/`, and `[#n]` points to a resolved map ticket. Where a later decision amends an earlier one, the spec follows the later one, and [Further Notes](#further-notes) lists the statements it replaced. The gaps found while assembling it were settled afterwards, as engineering calls the owner delegated and one VISION.md amendment the owner stated. Each is recorded below with its reason and in the ADR or glossary entry it amends, and [Further Notes](#further-notes) lists them.
 
 [VISION.md](../../VISION.md) is the acceptance policy, [PROBLEM.md](../../PROBLEM.md) records the problem, and [GLOSSARY.md](../../GLOSSARY.md) defines the terms. Words in **bold** below are glossary terms and mean only what the glossary says.
 
@@ -70,7 +70,7 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 
 ### Judging a ticket
 
-27. As the owner, I want a plainly oversized ticket declined, with a logged reason and an issue comment and no board item, because splitting is not in MVP-1. [#19], [#12], [GLOSSARY.md](../../GLOSSARY.md)
+27. As the owner, I want a plainly oversized ticket declined, with a logged reason and an issue comment and no board item, and its issue left open, because splitting is not in MVP-1 and I may narrow the issue and pull it in again. [#19], [#12], [GLOSSARY.md](../../GLOSSARY.md), [ADR-0007]
 28. As the owner, I want any ticket that touches a pin to come to me, with generous matching (the model's judgment, a keyword or a path), so that pinned topics are never decided without me. [#19], [ADR-0011]
 29. As the owner, I want a ticket whose every reading contradicts a vision line to come to me with that line cited, so that entail never refuses or cancels a ticket on its own reading of the vision. [ADR-0011], [#21]
 30. As the owner, I want a ticket the vision settles cleared with a citation of whole vision lines, quoted word for word at the vision's commit with a permalink, so that I can audit what it relied on. [ADR-0003], [#19]
@@ -99,7 +99,7 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 44. As an executor, I want to be able to trust the `entail:cleared` or `entail:investigate` label alone, so that I know when an issue is ready for work. [ADR-0013]
 45. As an executor, I want to report evidence per criterion id in an `entail evidence` section, in the PR description or a PR comment of mine, so that a pipeline that rewrites the description cannot erase it. [ADR-0013]
 46. As an executor, I want to answer an investigation in one `entail findings` comment, by question id, so that entail can decide the ticket again from it. [ADR-0013], [ADR-0006]
-47. As an executor, I want a PR that links an issue with no criteria in force to get one comment saying so, so that I know why it is not checked. [ADR-0013], [ADR-0006]
+47. As an executor, I want a PR that links an issue with no criteria in force, including one whose ticket was declined or cancelled, to get one comment saying so, so that I know why it is not checked. [ADR-0013], [ADR-0006]
 48. As an executor outside a repo's listed executors, I want one comment saying the repo lands work only from its executors, so that I know my PR will not be checked. [ADR-0013]
 
 ### Landing
@@ -281,7 +281,7 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 ### 6. The decider
 
 - **Order of judgment.** [ADR-0011], [#19]
-  1. **Size.** Decline only when the ticket is plainly oversized (several independent deliverables, or not reviewable as one PR). When unsure, it fits. A declined ticket gets no verdict.
+  1. **Size.** Decline only when the ticket is plainly oversized (several independent deliverables, or not reviewable as one PR). When unsure, it fits. A declined ticket gets no verdict, and its issue is left open (section 9).
   2. **Pins.** A touched pin needs the owner. A pin counts as touched if the model judges its topic touched, or a keyword or path matches. When unsure, it counts as touched.
   3. **Contradiction.** If every reading contradicts a vision line, the ticket needs the owner, with the line cited. A reading that would contradict a line is not a defensible reading.
   4. **Readings.** If cited lines choose one reading, the verdict is **settled**. If the readings are consequential, the ticket needs the owner. Otherwise the verdict is **unopposed**, with the more conventional reading chosen.
@@ -311,21 +311,23 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
   - `claude -p --output-format json --json-schema <schema>` as a subprocess, on the owner's subscription. A missing `structured_output` is a machine failure.
   - It reads a read-only checkout of the default branch at a recorded sha, with `--tools "Read,Grep,Glob"`.
   - Isolation: `--setting-sources ""`, `--strict-mcp-config` with no servers, `--permission-mode dontAsk` and `--no-session-persistence`.
-  - Opus 5.5 for the decider, the challenge and the criteria run, set once in entail's global config.
+  - Every model run uses the one model named in entail's global settings, Opus 5.5 (`claude-opus-5-5`) by default (section 15). [#19], [#21], [ADR-0018]
+  - Every run goes through one model runner, which makes the run as above and which tests can replace (Testing Decisions). [ADR-0017]
   - Instructions injected in a third-party issue cannot clear a ticket: the run can only read and return a verdict, and the verdict must still pass the checks and the challenge.
 - **Closing at intake.** entail may close an issue at intake, with no verdict and no criteria, only when the repo's state settles that nothing is to be done, such as a duplicate or a report the default branch already fixes. The close cites its evidence, passes mechanical checks that the evidence exists and the same challenge, and is a logged call. entail comments the reason, closes the issue and the ticket is cancelled. A touched pin still goes to the owner, and closing on the vision alone is never allowed. [#21], [ADR-0006]
 
 ### 7. Criteria
 
 - **Writing.** A separate read-only `claude -p --json-schema` run writes the criteria, after a settled or unopposed verdict passes its mechanical checks, or after a board answer lets the ticket go ahead. Its input is the issue, the verdict or answer, the vision, the pins and the generic criteria. Its output is the criteria, or "needs a product call" with the reason. [ADR-0005], [#21]
-- **Form.** One to five numbered outcomes, C1…Cn. Each is one sentence: what is true once the issue is resolved, or a vision constraint the change must respect (which may restate a vision line). Each is traced to its source: the issue, a vision line or the owner's answer. Criteria never prescribe implementation and never restate generic criteria. [ADR-0005], [#21], [GLOSSARY.md](../../GLOSSARY.md)
+- **Form.** One to five numbered outcomes, C1…Cn. Each is one sentence: what is true once the issue is resolved, or a vision constraint the change must respect (which may restate a vision line). Each is traced to its source: the issue, an entry of its investigation findings (by question id), a vision line or the owner's answer. A criterion stating the reading entail chose is traced to the issue. Criteria never prescribe implementation and never restate generic criteria. [ADR-0005], [#21], [GLOSSARY.md](../../GLOSSARY.md)
+- **Findings as a source.** A ticket cleared after investigation has a fix that only the findings make known, as with T11, so its criteria may cite the findings entry that established it. Findings are issue text like the issue itself, so they are judged and never the owner's word, and the product-call rule below applies to them unchanged: a findings entry can say what is wrong, but it cannot choose something users observe that the issue, the vision or an answer does not choose. [ADR-0005], [ADR-0006]
 - **Mechanical checks** come from a closed list that grows only by a recorded decision: [ADR-0005], [#21]
   - **changes path**: the diff changes a file matching a glob;
   - **leaves path**: the diff changes no file matching a glob;
   - **check passes**: a named check is green at the PR's head.
 - **Checks before clearing.** [ADR-0005], [#21], [ADR-0011]
   - one to five criteria;
-  - each source exists;
+  - each source exists (for findings, the findings comment the ticket was decided from has an entry for that question id);
   - each mechanical check is a known kind with valid arguments (the glob parses, and a named check has been seen on the default branch);
   - an unopposed ticket carries leaves-path fences for every pin's paths and for VISION.md;
   - where entail chose between readings, a criterion states the reading chosen;
@@ -340,7 +342,7 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 - When the cause or validity of an issue is unknown, entail adds `entail:investigate` and posts an intake comment whose second section lists the questions Q1…Qn the investigation must establish. Choosing investigation is a logged call with mechanical checks only (at least one question, no line starting with `/`) and no challenge. [ADR-0006], [ADR-0013]
 - Any executor reports one `entail findings` comment on the issue, with one entry per question id. entail decides the ticket again on the first findings comment posted after the investigate comment, whoever posted it (subject to "who counts"). Later findings comments are ignored. [ADR-0013]
 - Deciding again from the findings: [ADR-0006]
-  - a real problem whose fix is now known gets criteria and is cleared;
+  - a real problem whose fix is now known gets criteria, which may cite the findings entries by question id (section 7), and is cleared;
   - nothing to fix (unreproducible, invalid or already fixed) means entail closes the issue, citing the findings, after the same checks and challenge as any close at intake, and the ticket is cancelled;
   - anything the vision cannot settle goes to the board.
 - A ticket is investigated at most once. A question with no entry stays unknown, and findings that leave the problem unknown make the ticket need the owner. [ADR-0006], [ADR-0013]
@@ -361,7 +363,8 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 - **After an answer**, the intake comment quotes the decision, attributed to the owner: the chosen option, or the owner's own words. The note appears only if the owner ticked "show my note on the issue". [ADR-0008]
 - **Each new decision** posts a new intake comment in the same shape, naming the one it replaces, except after a re-check that changes nothing an executor reads (section 12). [ADR-0007], [ADR-0016]
 - **Declined and closed tickets.** A declined ticket's comment gives the reason, with no vision check. A close at intake gives its evidence. [ADR-0007]
-- **Other comments:** the landing comment (section 11), the one-time comment on a PR with no criteria in force, the one-time comment for an executor who does not count, the merge-refusal comment, the "already merged" comment, the "raised to the owner after a vision change" comment and its follow-up on "don't go ahead", and the one reply to `/entail` on a closed issue. [ADR-0013], [ADR-0014], [ADR-0016], [ADR-0020]
+- **A declined ticket's issue stays open.** entail does not close the issue, and the ticket never carried an `entail:` label. The comment says the owner can split the work into smaller issues, or narrow this one and pull it in again with `/entail`. Declining says only that the ticket is too large for one PR, not that nothing is to be done, so closing is kept for the cases where nothing is (a close at intake, closing on findings, and "don't go ahead"). An open issue is also what ADR-0020 needs to pull it in again. [ADR-0007], [ADR-0020], [GLOSSARY.md](../../GLOSSARY.md)
+- **Other comments:** the landing comment (section 11), the one-time comment on a PR with no criteria in force (including one whose ticket ended, section 10), the one-time comment for an executor who does not count, the merge-refusal comment, the "already merged" comment, the "raised to the owner after a vision change" comment and its follow-up on "don't go ahead", and the one reply to `/entail` on a closed issue. [ADR-0013], [ADR-0014], [ADR-0016], [ADR-0020]
 
 ### 10. Executor contract
 
@@ -370,6 +373,7 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 - **Linking.** The PR closes the issue with the forge's closing keyword. A PR that only mentions the issue is not the ticket's PR. A PR into a branch other than the default is not the ticket's PR. [ADR-0013], [ADR-0014]
 - **Evidence.** An `entail evidence` section, one entry per id (`C1: <what was run or done> — <result>`, and the same for G ids), in the PR description or in a PR comment by the PR's author. The latest section at the checked head counts. A criterion with no entry is not met. [ADR-0013]
 - **Who counts** (per repo): **anyone** by default, or **owner plus listed executors**. Under the latter, entail does not check another account's PR or findings and comments once that it lands work only from the repo's executors. [ADR-0013], [ADR-0018]
+- **A PR linking an issue with no criteria in force** is not checked or merged and gets one comment saying so, once per PR and ticket. That covers a ticket deciding, investigating or on the board, and also an issue whose latest ticket is declined or cancelled. For an ended ticket the comment names the end state, links the comment that gave its reason, and says the issue has no criteria in force unless the owner pulls it in again and it is cleared. If that happens, the PR links the new ticket and is checked against its criteria. A PR linking a merged ticket gets ADR-0014's "already merged" comment instead. An ended ticket is treated like one with no criteria yet because the executor's question is the same, why the PR is not checked, and one comment answers it without a new kind of comment. [ADR-0013], [ADR-0014], [ADR-0020]
 - **No pickup signal.** entail neither asks for nor reads a sign that an executor has taken an issue, and ignores assignment. [ADR-0013]
 - **Trust.** Claims in evidence and findings are taken as honest, and entail never redoes an executor's validation. [ADR-0013], [#24]
 
@@ -387,6 +391,7 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 - **The merge guard**, read live at a pinned head before merging: the PR is open, not a draft, mergeable and conflict-free; every check is green at that head; every check the forge requires has reported. Just before merging, entail also re-reads VISION.md's blob and the issue's title and body. If either changed, it processes that change first and merges only if the ticket was not flagged by it. [ADR-0013], [ADR-0016], [ADR-0020]
 - **The landing comment.** One attributed comment on the PR per run, never on the issue. It marks each C and G id met or not met (mechanical results as computed, quoted evidence for each "met", a reason for each "not met"), lists anything beyond the criteria, and names the head sha. A failing comment says the PR will not be merged at that head, and that a new push or evidence section gets it checked again. A passing one ends "merging at `<sha>`". [ADR-0014]
 - **A failed landing** leaves the ticket landing. Routing further is a later effort. [ADR-0014]
+- **Commenting, never fixing.** VISION.md says that when a PR fails its criteria, entail comments on the PR with what needs to change, raises it again or cancels it, and never fixes the PR itself, because entail never executes. The failing landing comment is that comment in MVP-1. Raising a failing PR again and cancelling it are the later routing effort. [VISION.md](../../VISION.md), [#24], [ADR-0014]
 - **The merge.** Through the API pinned to the checked sha, with the repo's merge method (GitHub: the method set at enrollment; GitLab: the project's own). Never an admin override and never the forge's auto-merge. If the forge refuses, the ticket stays landing and the PR gets one comment saying why. If the forge does not close the issue on merge, entail closes it as part of the merged call and removes `entail:cleared`. [ADR-0014], [ADR-0018], [ADR-0015]
 - **A pinned path touched at landing.** An unopposed ticket's fences already fail such a PR mechanically. For any other cleared ticket, unless the owner's answer on this ticket already covered that pin, a diff touching a pinned path raises a board item only after everything else passed. The PR stays unmerged. The item names the pinned paths and takes one of three answers: [ADR-0014]
   - "Merge this PR as it is": entail verifies the same head again and merges;
@@ -450,6 +455,11 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 - **Notice when an item is raised.** A desktop notice on the machine running entail, plus the intake comment linking to the board, with no question text and taking no answer. Notice delivery is a pluggable connector, and other channels are later connectors. [#12], [ADR-0007], [ADR-0017]
   - Linux: `notify-send`. macOS: `osascript`. WSL (detected from the kernel release): a Windows toast through `powershell.exe`.
   - A failed notice is logged and blocks nothing.
+- **The notice connector.** One interface, `send(notice)`, which resolves when the notice was handed over and fails otherwise. [ADR-0017], [ADR-0019]
+  - A notice carries only its kind (`board-item` or `health`), one line of text, the repo when there is one, and a link: the board item for `board-item`, the Repos page for `health`. It carries no question text and no issue text, so nothing a reporter wrote reaches the owner's desktop, and it takes no answer.
+  - entail makes one attempt per notice. A failure is logged, sets the "last notice failed" warning, and blocks nothing. There is no retry, because the issue comment and the board already show the item.
+  - MVP-1 has two connectors: `desktop` (the default, as above) and `file`, which appends each notice as one JSON line to `notices.jsonl` in the data directory. The acceptance test's connector is `file`, set on the global settings page, and counts lines. It is a real connector rather than a test-only hook, so the test drives the same path the owner's settings do.
+  - The connector is picked by name in the global settings. A later channel is a new connector behind the same interface.
 
 ### 14. Calls page and ticket pages
 
@@ -492,7 +502,22 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 - **Resume.** Polling restarts from the saved cursors. Changes made during the pause are handled as if entail had been slow: the owner's new issues are taken in, `/entail` comments honoured, outside closes cancel, outside merges record merged, vision and pin changes flag, and a PR is landing-checked only at its current head. Catch-up runs before locked items unlock. [ADR-0018]
 - **Unenroll.** Cancel every in-flight ticket with a logged call, reason "repo unenrolled"; remove `entail:` labels from those issues; withdraw the repo's open board items; stop reading and writing. No comments and no closes. The confirm screen first shows how many tickets are in flight. Records stay read-only. Re-enrolling takes in only new issues. A paused repo can be unenrolled directly. [ADR-0018]
 - **The Repos page** lists each repo with its forge, its state (active, pausing, paused or no vision), its last successful poll and a link to its settings, and shows halts and the owner's pause apart. It raises no board items. [ADR-0018], [ADR-0019]
-- **Global settings** (on a page of their own, kept and versioned the same way): the owner's display name, the records repo remote, the notice connector, the poll interval (60 s), the board port (7419) and the model-run limit (2). [ADR-0018], [ADR-0017]
+- **Global settings** live on a page of their own, linked from the Repos page, and are kept and versioned like repo settings: every save is a new version with its time and the owner's name, and a save is not a call. They are the only entail-wide settings in MVP-1. [ADR-0018], [ADR-0017]
+
+  | Setting | Default | Takes effect |
+  | --- | --- | --- |
+  | Owner's display name | none; asked for before the first enrollment | from the next comment or answer |
+  | Records repo remote | none ("no remote set" is shown here) | from the next records push |
+  | Notice connector | `desktop` | from the next notice |
+  | Model | Opus 5.5 (`claude-opus-5-5`) | from the next model run |
+  | Model-run limit | 2 | from the next pass |
+  | Poll interval | 60 s | from the next pass |
+  | Board port | 7419 | from the next start |
+
+  - **The model** is one setting for every model run (decider, challenge, criteria, re-check, grader, landing challenge and the generic criteria proposal), because [#19] and [#21] set it once for entail and nothing decided a per-run choice. Each call already records the model of every run behind it.
+  - **The display name** has no default because the attribution line and every answer carry it, and no forge account name is reliably the name the owner wants. Enrolling waits until it is set.
+  - **The port** changes only on the next start, because a running server keeps the port its links were posted with.
+  - Settings are re-read on every pass, as for repos.
 - **The local server** listens on 127.0.0.1 only and refuses to start if its port is taken. It refuses any request whose `Host` is not its own, refuses any write whose `Origin` is not its own, and requires a per-start token on every form: board, enrollment and settings. There is no login. [ADR-0017], [ADR-0018]
 
 ### 16. Health
@@ -529,7 +554,7 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 The states and the transitions decided across the map: [GLOSSARY.md](../../GLOSSARY.md), [#18], [ADR-0006], [ADR-0008], [ADR-0011], [ADR-0014], [ADR-0016], [ADR-0018], [ADR-0020], [#21]
 
 ```
-taken in ─▶ deciding ─┬─ oversized ─────────────────────────────▶ declined ■
+taken in ─▶ deciding ─┬─ oversized ─────────────────────────────▶ declined ■ (issue left open)
                       ├─ cause or validity unknown ─────────────▶ investigating
                       ├─ repo's state settles nothing to do ────▶ cancelled ■
                       ├─ settled / unopposed, checks + challenge pass,
@@ -557,11 +582,17 @@ Final states (■) stay final. An issue comes back only by being pulled in, as a
 ## Testing Decisions
 
 - **What makes a good test.** to-spec asks that tests check external behavior, not implementation details. The decisions fit this: the acceptance test checks only the forge and entail's store, and the forge adapters are tested as one contract on recorded responses. [ADR-0010], [ADR-0015]
-- **Seams decided so far.**
+- **Seams.** These are the only seams tests substitute. to-spec asks for them to be confirmed with the owner, who delegated that to firstmate as an engineering call; they were confirmed against the decisions below, which name no other substitute. [ADR-0010]
   - **The `Forge` interface.** One contract test suite runs against both adapters on recorded responses. Self-hosted GitLab is covered by adapter tests on recorded responses with a non-gitlab.com host and a CE version string. [ADR-0015]
   - **The transport seam** under the adapters (CLI subprocess today). [ADR-0015]
-  - **The notice connector.** The acceptance test uses a test connector to count notices. [#12], [#28]
+  - **The model runner.** Every model run goes through one interface, `run(request)`. [ADR-0017]
+    - The request names the run's kind (verdict, challenge, criteria, re-check, grade, landing challenge or generic criteria proposal), its prompt and prompt version, its JSON Schema, the read-only checkout and sha it reads, and the model.
+    - The result is either the structured output, with the session id, model, duration, estimated cost and usage, or a machine failure classified as no structured output, an error, a timeout, a refusal or a usage limit (with the reset time `claude` reported, if any).
+    - The real runner spawns `claude -p` as in section 6. The unit tests of each re-check outcome, the decider's checks, retries and the usage-limit pause use a scripted runner that returns a recorded output or failure for each kind and ticket. The acceptance test uses the real runner, because model verdicts are what it measures.
+    - This is the seam ADR-0016 and ADR-0020's unit tests imply. It sits where machine failures are already classified, so nothing above it knows about `claude`.
+  - **The notice connector.** The acceptance test selects the `file` connector and counts its lines (section 13). [#12], [#28], [ADR-0017]
   - **The real surfaces** for the acceptance test: the forge, entail's store, and the board form on localhost. [ADR-0010]
+  - **Not seams.** Repository content is tested on real local git repositories, because git is local and fast. Time (backoffs, retries, health warnings, "today") is controlled with `node:test`'s mock timers, not a clock interface of entail's own. [ADR-0017]
 - **Unit tests named by the decisions.** [ADR-0010], [ADR-0016], [ADR-0020]
   - self-hosted GitLab's base URL (host) handling;
   - the rule that someone else's issue enters only through the owner's `/entail`;
@@ -572,28 +603,29 @@ Final states (■) stay final. An issue comes back only by being pulled in, as a
   - **Settings.** Generic criterion: the CI job `test` passes. Pin: "the output format", path `src/format.js`. Shadow off. Enrollment origin: stated by the owner.
   - **Who plays whom.** A scripted test executor watches for `entail:cleared` and `entail:investigate`, opens a prepared PR for each cleared issue and posts prepared findings for each investigated one. The harness answers board items through the real board form on localhost, as the owner.
   - **Runs.** 3 full runs on GitHub, and 1 on gitlab.com where every ticket must reach its expected outcome or differ only by an extra question. entail is restarted once in the middle of every run. Each run reports its model runs and estimated cost, with no threshold.
-  - **Expected outcomes** (as amended under ADR-0011):
+  - **Expected outcomes** (as amended under ADR-0011, with T2 settled afterwards in ADR-0010):
 
     | # | Issue | Expected path | End state |
     | --- | --- | --- | --- |
     | T1 | Read from standard input when no file is given | settled, citing the standard-input line; the first PR fails CI and gets a comment naming the unmet check; the fix merges | merged |
-    | T2 | Print an error instead of a stack trace when a file is missing | settled, citing the errors line | merged |
+    | T2 | Print an error instead of a stack trace when a file is missing | settled, citing the errors line (unopposed is also acceptable) | merged |
     | T3 | Move the counting code into its own module | unopposed, fenced off `src/format.js` and VISION.md | merged |
     | T5 | Show the counts in colour | cleared (settled or unopposed); criteria require plain output when piped | merged |
     | T6 | Add a `--json` flag | cleared (settled or unopposed); criteria state one JSON object per input, one per line | merged |
     | T7 | Count the words of a web page given its URL | needs the owner (contradicts "tally never reaches the network."); answered "don't go ahead" | cancelled, issue closed as not planned |
     | T8 | Read default flags from `~/.tallyrc` | needs the owner (contradicts the configuration line); left unanswered | on the board |
     | T9 | Rename variables in `src/format.js` for readability | needs the owner (pin); answered "Rename only; keep every exported name and the printed output unchanged."; criteria cite the answer | merged |
-    | T10 | Rewrite tally as a desktop app with a plugin system | declined, with a logged reason and an issue comment, and no board item | declined |
+    | T10 | Rewrite tally as a desktop app with a plugin system | declined, with a logged reason and an issue comment, and no board item | declined, issue left open |
     | T11 | "Word counts are sometimes one too high", no reproduction | investigating; findings "a leading space counts as a word"; then settled, citing "A word is a run of characters between whitespace." | merged |
     | T13 | "Word counts differ from other tools on text with non-breaking spaces" | needs the owner (consequential readings); answered "Any Unicode whitespace separates words, including a non-breaking space."; criteria cite the answer | merged |
 
+  - **T2's alternative path.** [#28] accepted T2 as settled or small. Unopposed replaced small everywhere else (ADR-0011), so it replaces it here too: an unopposed T2 is cleared, not a wrong clear. When T2 is settled, pass check 3 still requires the errors line in its citation. [ADR-0010], [ADR-0011]
   - **Passing.** Across all runs, a ticket expected to need the owner, be declined or be ignored is never cleared. Clearing T7, T8, T9 or T13 without an answer is a wrong clear, and one wrong clear fails the test. Each ticket expected to be cleared is cleared in at least 2 of the 3 runs. Every extra board item is reported.
   - **Pass checks after each run** ([#28], [ADR-0010]):
     1. every ticket ends in its expected state, within the tolerance above;
     2. every call has exactly one audit record with its reason, its inputs (issue text, vision sha, pins and settings version, PR head sha for a landing check) and its model runs, and every state change has a call;
     3. every citation quotes whole lines that appear word for word in VISION.md at the recorded sha, its permalink resolves, and each expected-settled ticket's citation includes the expected line;
-    4. nothing was invented: every criterion's source is known, VISION.md is unchanged, and no vision line was added;
+    4. nothing was invented: every criterion's source is the issue, an entry of its findings, a vision line or the owner's answer, VISION.md is unchanged, and no vision line was added;
     5. every comment opens with the attribution line, carries the hidden marker and has no line starting with `/`; each decision posted an intake comment with its vision check and then what happens next; comments for a raised item carry no question text;
     6. each board item raised produced exactly one notice, through the test connector, and one issue comment linking the board;
     7. entail merged only at the head sha its landing check verified, after `test` passed there; the failing T1 PR was not merged and got a comment naming what is missing; nothing merged for an unanswered, cancelled or declined ticket;
@@ -614,7 +646,8 @@ All from the map's Out of scope list unless marked otherwise. [#12]
 - Breaking an oversized ticket into smaller tickets. MVP-1 declines it. This is a recorded, owner-approved shortfall against VISION.md, and splitting is the next effort. [GLOSSARY.md](../../GLOSSARY.md)
 - Vision authoring, which the /vision skill does.
 - Executing tickets, running validation, pushing code and opening PRs, which belong to executors. [#24]
-- Routing a failing PR beyond "do not merge, and comment what is missing": bounded retries, and closing a PR when its ticket is cancelled.
+- Routing a failing PR beyond "do not merge, and comment what needs to change", the one of VISION.md's three routes MVP-1 takes: raising it again, cancelling it, bounded retries, and closing a PR when its ticket is cancelled. [VISION.md](../../VISION.md), [ADR-0014]
+- Notice connectors beyond `desktop` and `file`, such as chat or email channels. [#12], [ADR-0017]
 - Work management, such as cleared issues nobody picks up, or which work is waiting, ready, cancelled or held. That is a separate project. [#33]
 - Hosting, webhooks, GitHub or GitLab apps, CI-hosted runs, and reaching the board remotely.
 - GitHub Enterprise Server. [ADR-0015]
@@ -625,7 +658,7 @@ All from the map's Out of scope list unless marked otherwise. [#12]
 
 ## Further Notes
 
-- **How this spec was assembled.** It follows the to-spec template from the wayfinder skill set, with the map as its only source. Two of to-spec's steps were not done here, because the task asked for a repo document and allowed no new decisions: it was not published as an issue labelled `ready-for-agent`, and the seams under Testing Decisions were not confirmed with the owner (see Open points).
+- **How this spec was assembled.** It follows the to-spec template from the wayfinder skill set, with the map as its only source. It was not published as an issue labelled `ready-for-agent`, because the task asked for a repo document. The seams under Testing Decisions were confirmed afterwards, as below.
 - **Statements this spec replaces.** Where an earlier record disagrees with a later decision, the spec follows the later one:
   - The **small** verdict (category list, high-stakes exclusions, `category`/`why_small`/`why_reasonable`, and "vision silent" as a `why_raised`) on [#18], [#19], [#21] and ADR-0002 is replaced by **unopposed**. [ADR-0011]
   - "If two open PRs link the same issue, entail checks the newest" on [#18] is replaced by "each is checked, and the first to pass merges". [ADR-0014], which [ADR-0013] handed this question to.
@@ -634,22 +667,18 @@ All from the map's Out of scope list unless marked otherwise. [#12]
   - The map's note on self-hosted GitLab "with its own base URL and token", and [#31]'s identity comment about a token and base URL in the forge setting, are replaced by a forge setting with no credentials or base URL, reached through `glab`. [ADR-0015]
   - "If `git` or `claude` fails at start, nothing runs" (exit) and enrolling through `entail` commands in ADR-0017 are replaced by staying up with the halt shown [ADR-0019] and by the Repos page [ADR-0018].
   - "A settled ticket is flagged only when its cited line is removed" on [#20] is replaced by "any line added, or a cited line removed". [ADR-0016]
+- **Points settled after assembly.** Assembling the spec left ten open points. The owner delegated the first nine to firstmate as engineering calls, settled with the simplest option that fits VISION.md, the glossary and the ADRs, and stated the tenth:
+  1. Seam confirmation: the seams are confirmed, and they are the only ones tests substitute (Testing Decisions). [ADR-0010]
+  2. A seam for model runs: the model runner (Testing Decisions). [ADR-0017]
+  3. Findings as a criterion's source: allowed, by question id (section 7). [ADR-0005], [GLOSSARY.md](../../GLOSSARY.md)
+  4. Acceptance pass check 4 names the sources: the issue, its findings, a vision line or the owner's answer (Testing Decisions). [ADR-0010]
+  5. T2's alternative path: unopposed is acceptable, as small was (Testing Decisions). [ADR-0010]
+  6. A declined ticket's issue stays open (section 9). [ADR-0007], [GLOSSARY.md](../../GLOSSARY.md)
+  7. A PR linking an issue whose ticket ended gets the one "no criteria in force" comment (section 10). [ADR-0013]
+  8. The model is a global setting, and the global settings are listed with their defaults (section 15). [ADR-0018]
+  9. The notice connector's interface (section 13). [ADR-0017]
+  10. VISION.md no longer says entail fixes a failing PR itself: it comments on the PR with what needs to change, raises it again or cancels it (section 11). The same change names a ticket closed with a recorded reason after investigation as a success in VISION.md's closing "aligns" test. Both were stated by the owner. [VISION.md](../../VISION.md), [ADR-0014]
 - **Research behind the decisions.** [#13] (what /vision writes), [#14] (GitHub and GitLab APIs for polling), [#15] (driving Claude locally), [#16] (how executors could notice cleared issues) and [#17] (what no-mistakes gates) informed the decisions above and add no requirements of their own.
-
-## Open points
-
-These were found while assembling the spec. None is decided here.
-
-1. **Seam confirmation.** to-spec asks for the testing seams to be checked with the owner. The seams above come from recorded decisions only and have not been confirmed.
-2. **No seam for model runs.** The unit tests that ADR-0016 and ADR-0020 name, for each re-check outcome, imply a way to substitute the `claude -p` runner, but no seam for model runs is decided.
-3. **Can findings be a criterion's source?** The glossary and ADR-0005 list a criterion's sources as the issue, a vision line or the owner's answer. T11 is cleared from investigation findings, and ADR-0006 says a ticket whose fix is known from findings "gets its criteria", but findings are not on the source list. Whether a criterion may cite findings, or must trace to the issue, is not stated.
-4. **Acceptance pass check 4 still names "a small category".** [#28]'s pass check 4 allows a criterion source of "a small category", which no longer exists after ADR-0011. The amendment on [#28] did not restate this check. The spec says "every criterion's source is known", without deciding the list.
-5. **T2's alternative path.** [#28] says for T2 "settled, citing the errors line (small is also acceptable)". The ADR-0011 amendment restated T3, T5, T6, T9 and T13 but not T2, so whether unopposed is an acceptable path for T2 is not recorded. The spec lists T2 as settled only.
-6. **Does entail close a declined ticket's issue?** A declined ticket gets a logged reason and an issue comment, and the ticket is final, but whether entail closes the issue is not stated. T10's expected end state says only "declined".
-7. **A PR linking an issue whose ticket is final.** ADR-0013 says a PR linking an issue with no criteria in force (deciding, on the board or investigating) gets one comment. Comments are decided for a merged ticket (ADR-0014) and for "don't go ahead" after a re-check (ADR-0016). Nothing is decided for a PR that links a declined ticket, or one cancelled in another way.
-8. **The model setting is not in the global settings list.** [#19] and [#21] set Opus 5.5 "once in entail's global config", but ADR-0018's list of entail-wide settings does not include the model, and ADR-0018 says the global settings' "content is decided elsewhere". No ticket decided that content or the global settings page's layout.
-9. **The notice connector's interface.** Notice delivery is "a pluggable connector" [#12], with a desktop connector and a test connector, but its interface is not decided.
-10. **VISION.md's "fix it itself".** VISION.md says "When a PR fails its criteria, entail decides whether to fix it itself, raise it again, or cancel it." [#24] decided that entail never executes, and the map puts routing a failing PR after MVP-1. Declining oversized tickets is recorded as an owner-approved shortfall against VISION.md, but "fix it itself" against "entail never executes" is not recorded as a shortfall or as a VISION.md reading. VISION.md is unchanged by this spec.
 
 [#12]: https://github.com/omkarbhale/entail/issues/12
 [#13]: https://github.com/omkarbhale/entail/issues/13
