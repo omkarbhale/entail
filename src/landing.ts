@@ -43,6 +43,9 @@ export const LANDING_CHECKS = {
   everyIdGraded: "the grade has one result for every id",
   quotesWordForWord: "every quoted piece of evidence appears word for word in the PR at the head",
   metHasEntry: "every id marked met has an entry in the evidence section",
+  guardOpen: "the PR is open, not a draft, and still at the checked head",
+  guardMergeable: "the forge would merge the PR, with no conflicts",
+  guardChecks: "every check at the head is green and every required check has reported",
 } as const;
 
 export type LandingCheckName = (typeof LANDING_CHECKS)[keyof typeof LANDING_CHECKS];
@@ -54,7 +57,7 @@ export interface LandingCheckResult {
   failure: string | null;
 }
 
-/** The landing check's results, as recorded on the landing call: stage one's, then the checks on the grade once it was graded. */
+/** The landing check's results, as recorded on the landing call: stage one's, then the checks on the grade once it was graded, then the merge guard's. */
 export interface LandingChecks {
   passed: boolean;
   results: LandingCheckResult[];
@@ -109,8 +112,8 @@ export interface LandingDetail {
   criteriaVersion: number;
   /** The settings version the generic criteria were frozen from with that criteria version (ADR-0014). */
   genericCriteriaVersion: number;
-  /** The stage the run ended at: a passing run ends at the challenge. */
-  stage: "mechanical" | "grade" | "challenge";
+  /** The stage the run ended at: a passing run ends at the challenge, and one the live merge guard stopped at the merge guard. */
+  stage: "mechanical" | "grade" | "challenge" | "merge-guard";
   outcome: "not-met" | "met";
   ids: IdResult[] | GradedId[];
   /** What users can observe that the change does beyond its criteria, by the grader or the challenge; absent before grading. */
@@ -133,10 +136,10 @@ export function namedChecks(criteria: Pick<CriteriaDetail, "criteria" | "generic
   return [...new Set(checks.filter((check) => check.kind === "check_passes").map((check) => check.argument))].sort();
 }
 
-/** The keys of the landing runs already recorded on a ticket's calls. */
+/** The keys of the landing runs already recorded on a ticket's calls, a shadow "would merge" call included. */
 export function landingRuns(calls: readonly CallRecord[]): LandingRunKey[] {
   return calls.flatMap((call) => {
-    if (call.kind !== "landing") return [];
+    if (call.kind !== "landing" && call.kind !== "would-merge") return [];
     const detail = call.detail as Partial<LandingDetail> | null;
     if (typeof detail?.pullRequest !== "number" || typeof detail.headSha !== "string" || typeof detail.criteriaVersion !== "number") return [];
     return [{ pullRequest: detail.pullRequest, headSha: detail.headSha, evidence: detail.evidence?.key ?? null, criteriaVersion: detail.criteriaVersion }];
@@ -530,12 +533,13 @@ export function landingDetail(
 }
 
 /**
- * Records a landing run that does not pass, and posts its landing comment on
- * the PR, never on the issue (spec §11, ADR-0014). In one transaction it
- * records the landing call, which leaves the ticket landing, with the
- * comment's intent; then it posts the comment, which a restart settles by its
- * hidden marker. Nothing is recorded when the ticket moved since the step
- * began, or the run was already recorded.
+ * Records a landing run and posts its landing comment on the PR, never on the
+ * issue (spec §11, ADR-0014). In one transaction it records the landing call,
+ * which leaves the ticket landing, with the comment's intent; then it posts
+ * the comment, which a restart settles by its hidden marker. Nothing is
+ * recorded when the ticket moved since the step began, or the run was already
+ * recorded. A passing run in a repo in shadow is recorded as a "would merge"
+ * call.
  *
  * @returns the call recorded, or null when nothing was.
  */
@@ -552,6 +556,8 @@ export async function recordLanding(
     modelRuns?: NewModelRun[];
     /** The landing comment's text, without the attribution line or hidden marker. */
     text: string;
+    /** The call's kind: a landing call, or a shadow "would merge" call. */
+    kind?: "landing" | "would-merge";
   },
 ): Promise<CallRecord | null> {
   const { store, log } = options;
@@ -566,7 +572,7 @@ export async function recordLanding(
     if (landingRuns(store.callsForTicket(ticket.id)).some((done) => sameRun(done, key))) return null;
     const call = store.recordCall({
       ticketId: ticket.id,
-      kind: "landing",
+      kind: run.kind ?? "landing",
       reason: run.reason,
       inputs: { prHeadSha: pr.headSha, settingsVersionId: pass.settings.id },
       checks: run.checks,
@@ -579,7 +585,7 @@ export async function recordLanding(
   });
   if (recorded === null) return null;
   const notMet = detail.ids.filter((id) => id.met === false).map((id) => id.id);
-  log.info("landing-failed", { ticketId: ticket.id, callId: recorded.id, pullRequest: pr.number, headSha: pr.headSha, stage: detail.stage, notMet });
+  log.info(detail.outcome === "met" ? "landing-passed-recorded" : "landing-failed", { ticketId: ticket.id, callId: recorded.id, pullRequest: pr.number, headSha: pr.headSha, stage: detail.stage, notMet });
 
   // Resumes the intent recorded above; the comment is found by its hidden marker if it was already posted.
   await pass.writer().comment({ ticketId: ticket.id, callId: recorded.id }, "pr", pr.number, body);

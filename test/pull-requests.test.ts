@@ -287,7 +287,7 @@ for (const state of ["deciding", "investigating", "on-the-board"] as const) {
   });
 }
 
-test("a PR linking an issue whose latest ticket was declined or cancelled gets one comment naming the end state and linking the reason", async (t) => {
+test("a PR linking an issue whose latest ticket was declined, cancelled or merged gets one comment naming the end state", async (t) => {
   const h = harness(t);
   const declined = h.ticket(1, "declined");
   // The decline's comment, as entail posted it.
@@ -296,7 +296,7 @@ test("a PR linking an issue whose latest ticket was declined or cancelled gets o
   const reasonUrl = "https://github.com/acme/tally/issues/1#issuecomment-555";
   h.setup.store.confirmForgeWrite({ intentId: intent.id, comment: { id: "555", url: reasonUrl } });
   const cancelled = h.ticket(2, "cancelled");
-  h.ticket(3, "merged");
+  const merged = h.ticket(3, "merged");
 
   h.forge.open(12, [1]);
   h.forge.open(13, [2]);
@@ -315,13 +315,17 @@ test("a PR linking an issue whose latest ticket was declined or cancelled gets o
   assertCommentRules(onCancelled, "Ada", cancelled.id);
   assert.match(onCancelled, /This pull request links #2, whose ticket was cancelled\./, "no comment gave the reason for an outside close");
 
-  assert.deepEqual(h.forge.prComments(14), [], "a merged ticket's PRs get the \"already merged\" comment instead");
+  const [onMerged, ...moreMerged] = h.forge.prComments(14);
+  assert.deepEqual(moreMerged, []);
+  assertCommentRules(onMerged!, "Ada", merged.id);
+  assert.match(onMerged!, /#3 is already merged\.\n\nentail no longer checks this pull request, and does not close it\./, "a merged ticket's PRs get the \"already merged\" comment instead");
 
   h.forge.update(12, { body: "Pushed again." });
   h.restart();
   await h.pass(2);
   assert.equal(h.forge.prComments(12).length, 1, "once per PR and ticket, across restarts");
   assert.equal(h.forge.prComments(13).length, 1);
+  assert.equal(h.forge.prComments(14).length, 1);
 
   // Pulled in again and cleared, the PR links the new ticket and is followed for it.
   const again = h.ticket(1, "cleared", declined.id);

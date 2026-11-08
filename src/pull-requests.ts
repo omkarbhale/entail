@@ -25,7 +25,8 @@ import { countsAsExecutor } from "./who-counts.ts";
  *   the forge already did.
  * - A PR linking an issue with no criteria in force (its ticket deciding,
  *   investigating or on the board, or its latest ticket declined or
- *   cancelled) is not checked and gets one comment saying so. Under "owner
+ *   cancelled) is not checked and gets one comment saying so. One linking an
+ *   issue whose latest ticket is merged gets one "already merged" comment. Under "owner
  *   plus listed executors", a PR from any other account is not checked and
  *   gets one comment that the repo lands work only from its executors
  *   instead. Each is posted once per PR and ticket, whatever restarts.
@@ -40,6 +41,8 @@ export const ONE_TIME_COMMENTS = {
   noCriteria: "pr-no-criteria",
   /** The PR's author does not count as an executor in the repo. */
   notCounted: "pr-not-counted",
+  /** The PR links a ticket that is already merged, through another PR. */
+  alreadyMerged: "pr-already-merged",
 } as const;
 
 export type OneTimeComment = (typeof ONE_TIME_COMMENTS)[keyof typeof ONE_TIME_COMMENTS];
@@ -260,9 +263,11 @@ async function recordMergedByOthers(options: PullRequestOptions, ticket: TicketR
 }
 
 /**
- * Comments on a PR that links an issue whose latest ticket ended, declined or
- * cancelled, once per PR and ticket. A PR whose author does not count gets
- * only the comment that the repo lands work only from its executors.
+ * Comments on a PR that links an issue whose latest ticket ended, once per PR
+ * and ticket: declined or cancelled, that the issue has no criteria in force;
+ * merged, that the ticket is already merged (ADR-0014). A PR whose author does
+ * not count gets only the comment that the repo lands work only from its
+ * executors.
  */
 // Tightening who counts is not re-applied to PRs linking an ended (declined or cancelled) ticket: such a PR can never land and already got the one-time no-criteria comment naming the end state; the newly-excluded comment applies to PRs on tickets that could still land, which followTicket covers.
 async function commentOnEndedTickets(options: PullRequestOptions, change: Extract<Change, { kind: "pull-request" }>, pass: RepoPass): Promise<void> {
@@ -272,13 +277,14 @@ async function commentOnEndedTickets(options: PullRequestOptions, change: Extrac
   const ended: TicketRecord[] = [];
   for (const issueNumber of await pass.forge.linkedIssues(pr.number)) {
     const ticket = store.latestTicketForIssue(pass.repo.id, issueNumber);
-    if (ticket && ENDED.has(ticket.state)) ended.push(ticket);
+    if (ticket && (ENDED.has(ticket.state) || ticket.state === "merged")) ended.push(ticket);
   }
   if (ended.length === 0) return;
   const counts = countsAsExecutor(pass.repo, repoSettingsOf(pass.settings), pr.author);
   for (const ticket of ended) {
-    if (counts) await commentOnce(options, pass, ticket, pr, ONE_TIME_COMMENTS.noCriteria, endedText(store, pass, ticket));
-    else await commentOnce(options, pass, ticket, pr, ONE_TIME_COMMENTS.notCounted, notCountedText(pass, ticket.issueNumber));
+    if (!counts) await commentOnce(options, pass, ticket, pr, ONE_TIME_COMMENTS.notCounted, notCountedText(pass, ticket.issueNumber));
+    else if (ticket.state === "merged") await commentOnce(options, pass, ticket, pr, ONE_TIME_COMMENTS.alreadyMerged, alreadyMergedText(store, pass, ticket));
+    else await commentOnce(options, pass, ticket, pr, ONE_TIME_COMMENTS.noCriteria, endedText(store, pass, ticket));
   }
 }
 
@@ -288,11 +294,11 @@ async function commentOnEndedTickets(options: PullRequestOptions, change: Extrac
  * confirmed is resumed with the text it was recorded with, so it is found by
  * its hidden marker rather than posted twice.
  */
-async function commentOnce(
+export async function commentOnce(
   options: PullRequestOptions,
   pass: RepoPass,
   ticket: TicketRecord,
-  pr: PullRequest,
+  pr: Pick<PullRequest, "number">,
   purpose: OneTimeComment,
   text: string,
 ): Promise<void> {
@@ -345,6 +351,23 @@ export function endedText(store: Store, pass: Pick<RepoPass, "forge">, ticket: T
   return [
     `This ${pr} links #${ticket.issueNumber}, whose ticket was ${ticket.state}${why}.`,
     `The issue has no criteria in force, so entail does not check or merge this ${pr}, unless the owner pulls the issue in again and it is cleared. If that happens, this ${pr} is checked against the new criteria.`,
+  ].join("\n\n");
+}
+
+/**
+ * The one-time "already merged" comment on a PR linking a merged ticket
+ * (ADR-0014): it names the PR that merged where the records name one, and
+ * says entail no longer checks this PR and does not close it.
+ */
+export function alreadyMergedText(store: Store, pass: Pick<RepoPass, "forge">, ticket: TicketRecord): string {
+  const pr = pass.forge.wording.pullRequest;
+  const ending = ticket.stateCallId === null ? null : store.getCall(ticket.stateCallId);
+  const detail = ending?.detail as Partial<MergedByOthersDetail> | null | undefined;
+  const merged = detail?.pullRequests?.[0];
+  const through = merged === undefined ? "" : typeof detail?.url === "string" ? ` through [#${merged}](${detail.url})` : ` through #${merged}`;
+  return [
+    `#${ticket.issueNumber} is already merged${through}.`,
+    `entail no longer checks this ${pr}, and does not close it.`,
   ].join("\n\n");
 }
 

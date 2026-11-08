@@ -339,16 +339,20 @@ export function gradedLandingText(input: {
   ids: readonly GradedId[];
   beyondCriteria: readonly string[];
   otherObjections?: readonly string[];
+  /** Why the live merge guard stops a merge at the head, in plain words; none when it does not. */
+  forgeFailures?: readonly string[];
   closing: string;
 }): string {
   const pr = input.wording.pullRequest;
   const notMet = input.ids.filter((id) => !id.met).map((id) => id.id);
   const others = input.otherObjections ?? [];
-  const passes = notMet.length === 0 && input.beyondCriteria.length === 0 && others.length === 0;
+  const forge = input.forgeFailures ?? [];
+  const passes = notMet.length === 0 && input.beyondCriteria.length === 0 && others.length === 0 && forge.length === 0;
   const why = [
     ...(notMet.length > 0 ? [`${notMet.join(", ")} ${notMet.length === 1 ? "is" : "are"} not met`] : []),
     ...(input.beyondCriteria.length > 0 ? ["the change does something users can observe beyond its criteria"] : []),
     ...(others.length > 0 ? ["the challenge overturned its grade"] : []),
+    ...(forge.length > 0 ? ["the forge's state at this head does not allow a merge"] : []),
   ];
   const idLine = (id: GradedId): string => {
     const lines = [`- **${id.id}** ${oneLine(id.sentence)}`];
@@ -371,6 +375,7 @@ export function gradedLandingText(input: {
       : `**Beyond the criteria**\n\nThis change does what no criterion asked for:\n\n${input.beyondCriteria.map((b) => `- ${said(b)}`).join("\n")}`,
   );
   if (others.length > 0) sections.push(`**The challenge**\n\n${others.map((o) => `- ${said(o)}`).join("\n")}`);
+  if (forge.length > 0) sections.push(`**The forge's state at this head**\n\n${forge.map((f) => `- Not met: ${f}`).join("\n")}`);
   sections.push(input.closing);
   return sections.join("\n\n");
 }

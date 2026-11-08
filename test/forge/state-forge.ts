@@ -179,7 +179,7 @@ export class StateForge implements Forge {
   async issue(_issueNumber: number): Promise<Issue | null> {
     throw new Error("not supported");
   }
-  async pullRequest(): Promise<never> {
+  async pullRequest(_number: number): Promise<PullRequest> {
     throw new Error("not supported");
   }
   async pullRequestComments(_number: number): Promise<PullRequestComment[]> {
