@@ -12,6 +12,8 @@ entail run
 
 `entail run` stays in the foreground until SIGINT or SIGTERM. Only one copy runs per machine: a second `entail run` exits, naming the running pid. entail keeps its data, including the lock and the operational log (`operational-log.jsonl`), in `$XDG_DATA_HOME/entail` (by default `~/.local/share/entail`) on Linux and WSL, or `~/Library/Application Support/entail` on macOS.
 
+While it runs, entail serves its pages on `http://127.0.0.1:7419/` (the board port, a global setting) and exits if that port is taken. Set your display name and the other entail-wide settings on the global settings page, `http://127.0.0.1:7419/settings`; a changed board port takes effect on the next start.
+
 ## Development
 
 ```sh

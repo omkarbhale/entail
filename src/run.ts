@@ -1,5 +1,8 @@
+import { readGlobalSettings, type GlobalSettings } from "./global-settings.ts";
 import { acquireLock, type HeldLock } from "./lock.ts";
 import { OperationalLog, type OperationalLogOptions } from "./operational-log.ts";
+import { startServer, type BoardPortTakenError, type LocalServer } from "./server.ts";
+import { globalSettingsPage } from "./settings-page.ts";
 import { Store, type StoreOpenError } from "./store.ts";
 
 export interface RunOptions {
@@ -11,6 +14,14 @@ export interface RunningEntail {
   lock: HeldLock;
   log: OperationalLog;
   store: Store;
+  /** The local server every page is served from. */
+  server: LocalServer;
+  /**
+   * The global settings in force, read from the store on every call so a
+   * saved change takes effect within one pass. The board port is the
+   * exception: the server keeps the port it started on until the next start.
+   */
+  globalSettings(): GlobalSettings;
   /** Stops entail and releases the lock. Calling it again does nothing. */
   stop(reason: string): void;
   /** Settles once entail has stopped. */
@@ -21,12 +32,16 @@ export interface RunningEntail {
  * Starts `entail run`: takes the single-copy lock, opens the operational log
  * and the store, and stays up until {@link RunningEntail.stop} (ADR-0017).
  *
- * Throws {@link LockHeldError} when another copy holds the lock, and
- * {@link StoreOpenError}, after releasing the lock, when the store cannot be
- * opened. Later tickets add the start-up checks, the board server and the
- * passes.
+ * Then it starts the local server on the board port from the global settings
+ * (spec §15).
+ *
+ * Throws {@link LockHeldError} when another copy holds the lock;
+ * {@link StoreOpenError} when the store cannot be opened; and
+ * {@link BoardPortTakenError} when the board port is taken. After the lock is
+ * taken, a failure releases it before throwing. Later tickets add the
+ * start-up checks and the passes.
  */
-export function startRun(options: RunOptions): RunningEntail {
+export async function startRun(options: RunOptions): Promise<RunningEntail> {
   const lock = acquireLock(options.dataDirectory);
   const log = new OperationalLog(options.dataDirectory, options.log);
 
@@ -47,10 +62,25 @@ export function startRun(options: RunOptions): RunningEntail {
     lock.release();
     throw error;
   }
-  log.info("started", { pid: lock.holder.pid, dataDirectory: options.dataDirectory, store: store.path });
 
-  // Nothing else keeps the event loop alive until the passes exist.
-  const keepAlive = setInterval(() => {}, 2 ** 31 - 1);
+  // The port is read once: a running server keeps the port its links were posted with.
+  const port = readGlobalSettings(store).settings.boardPort;
+  let server: LocalServer;
+  try {
+    server = await startServer({ port, pages: [globalSettingsPage(store)], log });
+  } catch (error) {
+    log.error("board-server-failed", { port, error: error instanceof Error ? error.message : String(error) });
+    store.close();
+    lock.release();
+    throw error;
+  }
+  log.info("started", {
+    pid: lock.holder.pid,
+    dataDirectory: options.dataDirectory,
+    store: store.path,
+    board: `${server.info.origin}/`,
+  });
+
   let resolveStopped!: () => void;
   const stopped = new Promise<void>((resolve) => {
     resolveStopped = resolve;
@@ -61,16 +91,19 @@ export function startRun(options: RunOptions): RunningEntail {
     lock,
     log,
     store,
+    server,
     stopped,
+    globalSettings: () => readGlobalSettings(store).settings,
     stop(reason: string) {
       if (stopping) return;
       stopping = true;
       log.info("stopping", { reason });
-      clearInterval(keepAlive);
-      store.close();
-      lock.release();
-      log.info("stopped", { pid: lock.holder.pid });
-      resolveStopped();
+      void server.close().then(() => {
+        store.close();
+        lock.release();
+        log.info("stopped", { pid: lock.holder.pid });
+        resolveStopped();
+      });
     },
   };
 }
