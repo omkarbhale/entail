@@ -66,8 +66,11 @@ A topic the owner has said must always come to them, even where the vision settl
 An independent second judgment that tries to overturn an automatic verdict by finding another reading, an uncited assumption, a touched pin or a high-stakes area; if it succeeds, the ticket needs the owner.
 
 **Criteria**:
-What one ticket's PR must contain, written at intake or after the owner's answer, and published on the issue when the ticket is cleared.
+What one ticket's PR must contain, written by entail because an issue carries no implementation idea: a few numbered outcomes, namely what is true once the issue is resolved and any vision constraint the change must respect. When the cause of a reported problem is unknown, they also include that the PR identifies and explains it. Each outcome is traced to its source (the issue, a vision line, a small category or the owner's answer) and may carry mechanical checks. They are published on the issue when the ticket is cleared and are frozen from then on; only a new version written by a new call changes them.
 _Avoid_: Acceptance criteria, requirements
+
+**Mechanical check**:
+A part of a criterion that entail computes from what the forge reports alone, with no model: the PR changes a path, leaves a path alone, or a named check passes.
 
 **Generic criteria**:
 The checks every PR in a repo must pass, fixed once per repo.
@@ -75,7 +78,7 @@ The checks every PR in a repo must pass, fixed once per repo.
 ### Ticket states
 
 **Deciding**:
-The ticket has been taken in and has no verdict yet.
+The ticket has been taken in, and is not yet cleared, declined or on the board: entail is giving it a verdict or writing its criteria.
 
 **Declined**:
 Final: the ticket is too large for one PR, so entail will not take it forward. Size is checked before any verdict, so a declined ticket has none.
@@ -95,7 +98,7 @@ A PR linking the issue is open and is being checked against the criteria and gen
 Final: the ticket's PR has merged, whether entail merged it or someone else did.
 
 **Cancelled**:
-Final: the owner's answer said not to go ahead, or someone other than entail closed the issue before its PR merged.
+Final: the owner's answer said not to go ahead; someone other than entail closed the issue before its PR merged; or entail closed it at intake because the vision or the repo's state settles that nothing is to be done, such as a duplicate or an already-fixed report.
 
 ### Decisions and records
 
