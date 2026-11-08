@@ -8,6 +8,8 @@ import {
   ENROLL_ACTIONS,
   ENROLL_FIELDS,
   ENROLL_PATH,
+  FRESH_START_PATH,
+  FRESH_START_REPO_FIELD,
   REPO_SETTINGS_PATH,
   REPOS_PATH,
   repoState,
@@ -19,8 +21,12 @@ import { startServer, TOKEN_FIELD, type LocalServer } from "../src/server.ts";
 import { globalSettingsPage } from "../src/settings-page.ts";
 import { enrollmentSetup, type EnrollmentSetup } from "./enrollment-fixture.ts";
 import { postForm, send } from "./http-client.ts";
+import { hiddenMarker } from "../src/comment-rules.ts";
+import { RecordsCheck } from "../src/records-check.ts";
+import { actor, IntakeForge, issueComment } from "./pass-fixture.ts";
 
 interface Served extends EnrollmentSetup {
+  recordsCheck?: RecordsCheck;
   server: LocalServer;
   /** Moves the page's clock on. */
   advance(ms: number): void;
@@ -28,9 +34,11 @@ interface Served extends EnrollmentSetup {
 
 async function serveRepos(
   t: TestContext,
-  options: Parameters<typeof enrollmentSetup>[1] & { activity?: RepoActivity } = {},
+  options: Parameters<typeof enrollmentSetup>[1] & { activity?: RepoActivity; recordsForge?: IntakeForge } = {},
 ): Promise<Served> {
   const setup = enrollmentSetup(t, options);
+  const recordsForge = options.recordsForge;
+  const recordsCheck = recordsForge ? new RecordsCheck({ store: setup.store, forgeFor: () => recordsForge }) : undefined;
   let offset = 0;
   const pages = [
     ...reposPages({
@@ -39,12 +47,13 @@ async function serveRepos(
       dataDirectory: setup.dataDirectory,
       activity: options.activity,
       now: () => new Date(Date.now() + offset),
+      recordsCheck,
     }),
     globalSettingsPage(setup.store),
   ];
   const server = await startServer({ port: 0, pages });
   t.after(() => server.close());
-  return { ...setup, server, advance: (ms) => (offset += ms) };
+  return { ...setup, server, recordsCheck, advance: (ms) => (offset += ms) };
 }
 
 function check(served: Served, stated: Record<string, string>) {
@@ -481,4 +490,87 @@ test("a machine failure of the proposal is explained, leaves an empty list and d
   assert.match(review.body, /<legend>New row<\/legend>/);
   assert.equal((await postReview(served, formOf(review.body))).status, 303);
   assert.deepEqual(genericCriteriaOf(served), []);
+});
+
+/** Enrolls acme/tally through the page, as the owner would. */
+async function enrollThroughPage(served: Served) {
+  const { port, token } = served.server.info;
+  const html = (await check(served, GITHUB)).body;
+  return postForm(port, ENROLL_PATH, {
+    [TOKEN_FIELD]: token,
+    [ENROLL_FIELDS.review]: inputValue(html, ENROLL_FIELDS.review)!,
+    [ENROLL_FIELDS.visionOrigin]: "owner-stated",
+    [ENROLL_FIELDS.mergeMethod]: "squash",
+  });
+}
+
+function markedComment(id: number, issueNumber: number, ticketId: number) {
+  return issueComment(id, issueNumber, actor(1001), `Speaking from Ada's entail:\n\nTaken in.\n\n${hiddenMarker(ticketId)}`);
+}
+
+test("a repo enrolled with marked issues and no records waits for them, says why, and offers a fresh start", async (t) => {
+  const recordsForge = new IntakeForge();
+  recordsForge.commentChanges = [markedComment(8001, 3, 12), markedComment(8002, 7, 19)];
+  const served = await serveRepos(t, { recordsForge });
+  const { port, token } = served.server.info;
+
+  const enrolled = await enrollThroughPage(served);
+  assert.equal(enrolled.status, 303);
+  const [repo] = served.store.listRepos();
+  assert.ok(repo);
+  assert.equal(recordsForge.reads.changes, 1, "the check runs at enrollment");
+  assert.equal(served.recordsCheck!.standing(repo.id).status, "missing");
+
+  const page = (await send(port, { path: enrolled.headers.location as string })).body;
+  assert.match(page, /data-state="waiting for records">waiting for records</);
+  assert.match(page, /its issues carry entail's hidden marker with no records behind it/);
+  assert.match(page, /acme\/tally is waiting for its records/);
+  assert.match(page, /2 issues carry entail's hidden marker, but entail has no records for them: #3, #7/);
+  assert.match(page, /<code>entail restore &lt;records remote&gt; --replace<\/code>/, "how to restore");
+  assert.match(page, new RegExp(`<form method="post" action="${FRESH_START_PATH}">`));
+  assert.equal(inputValue(page, FRESH_START_REPO_FIELD), String(repo.id));
+
+  // The form needs the per-start token.
+  const forged = await postForm(port, FRESH_START_PATH, { [FRESH_START_REPO_FIELD]: String(repo.id) });
+  assert.equal(forged.status, 403);
+  assert.deepEqual(served.store.freshStarts(repo.id), []);
+
+  const confirmed = await postForm(port, FRESH_START_PATH, { [TOKEN_FIELD]: token, [FRESH_START_REPO_FIELD]: String(repo.id) });
+  assert.equal(confirmed.status, 303);
+  assert.equal(confirmed.headers.location, `${REPOS_PATH}?fresh-start=${repo.id}`);
+  const [freshStart] = served.store.freshStarts(repo.id);
+  assert.deepEqual(freshStart?.markedIssueNumbers, [3, 7]);
+  assert.equal(freshStart?.confirmedBy, "Ada");
+  assert.equal(served.recordsCheck!.mayAct(repo.id), true);
+
+  const after = (await send(port, { path: confirmed.headers.location as string })).body;
+  assert.match(after, /Confirmed a fresh start for acme\/tally on github\.com/);
+  assert.match(after, /data-state="active">active</);
+  assert.doesNotMatch(after, /is waiting for its records/);
+
+  const again = await postForm(port, FRESH_START_PATH, { [TOKEN_FIELD]: token, [FRESH_START_REPO_FIELD]: String(repo.id) });
+  assert.equal(again.status, 409);
+  assert.match(again.body, /is not waiting for records/);
+  assert.equal(served.store.freshStarts(repo.id).length, 1, "nothing more is recorded");
+});
+
+test("a repo enrolled with no marked issues is active, and one whose check could not run waits for it", async (t) => {
+  const recordsForge = new IntakeForge();
+  recordsForge.failChanges = new Error("host unreachable");
+  const served = await serveRepos(t, { recordsForge });
+  const enrolled = await enrollThroughPage(served);
+  assert.equal(enrolled.status, 303, "a check that could not run does not undo the enrollment");
+  const page = (await send(served.server.info.port, { path: enrolled.headers.location as string })).body;
+  assert.match(page, /data-state="checking records">checking records</);
+
+  const [repo] = served.store.listRepos();
+  await served.recordsCheck!.check(repo!);
+  assert.match((await send(served.server.info.port, { path: REPOS_PATH })).body, /data-state="active">active</);
+});
+
+test("the state rule puts the owner's pause first, then missing or unchecked records, then a vanished vision", () => {
+  assert.equal(repoState(false, false, false, "missing"), "waiting for records");
+  assert.equal(repoState(false, false, true, "unchecked"), "checking records");
+  assert.equal(repoState(false, false, false, "clear"), "no vision");
+  assert.equal(repoState(true, false, true, "missing"), "paused");
 });

@@ -1,6 +1,6 @@
 // A store with enrolled repos and a forge stand-in for tests of the pass.
 import type { TestContext } from "node:test";
-import type { Actor, ChangeBatch, ForgeComment, ForgeSetting, Issue } from "../src/forge/forge.ts";
+import type { Actor, Change, ChangeBatch, ForgeComment, ForgeSetting, Issue, IssueComment } from "../src/forge/forge.ts";
 import { OperationalLog } from "../src/operational-log.ts";
 import type { DefaultBranchSource } from "../src/pass.ts";
 import { enrollmentSettings } from "../src/repo-settings.ts";
@@ -45,6 +45,8 @@ export class IntakeForge extends StateForge {
   override readonly setting: ForgeSetting;
   issues: Issue[] = [];
   readonly issueComments = new Map<number, ForgeComment[]>();
+  /** Issue comments reported as changes, after the issues, as the full read of a repo reports them. */
+  commentChanges: IssueComment[] = [];
   readonly transferred = new Set<number>();
   /** Thrown by the next read of changes, then cleared. */
   failChanges: Error | null = null;
@@ -65,7 +67,10 @@ export class IntakeForge extends StateForge {
       throw failure;
     }
     return {
-      changes: this.issues.map((i) => ({ kind: "issue", id: i.id, updatedAt: i.updatedAt, issue: i })),
+      changes: [
+        ...this.issues.map((i): Change => ({ kind: "issue", id: i.id, updatedAt: i.updatedAt, issue: i })),
+        ...this.commentChanges.map((c): Change => ({ kind: "issue-comment", id: c.id, updatedAt: c.updatedAt, comment: c })),
+      ],
       cursor: `read ${this.reads.changes}`,
     };
   }
@@ -81,6 +86,11 @@ export class IntakeForge extends StateForge {
     if (failure) throw failure;
     return this.issueComments.get(number) ?? [];
   }
+}
+
+/** An issue comment as the forge reports it among the changes. */
+export function issueComment(id: number, issueNumber: number, author: Actor, body: string): IssueComment {
+  return { ...comment(id, issueNumber, author, body), issueNumber, updatedAt: "2026-11-08T12:31:00.000Z" };
 }
 
 /** A default branch whose head never moves. */

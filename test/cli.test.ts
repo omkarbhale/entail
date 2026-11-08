@@ -12,6 +12,7 @@ import { DEFAULT_GLOBAL_SETTINGS } from "../src/global-settings.ts";
 import { LOCK_FILE } from "../src/lock.ts";
 import { OPERATIONAL_LOG_FILE } from "../src/operational-log.ts";
 import { STORE_FILE, Store } from "../src/store.ts";
+import { RecordsRepo } from "../src/records-repo.ts";
 import { freePort, send } from "./http-client.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
@@ -216,4 +217,37 @@ test("entail --help prints usage", (t) => {
   const result = spawnSync(process.execPath, [CLI, "--help"], { env: m.env, encoding: "utf8" });
   assert.equal(result.status, 0);
   assert.match(result.stdout, /run\s+Run entail in the foreground/);
+});
+
+test("entail restore clones the records repo into a fresh store, and refuses to replace one without --replace", async (t) => {
+  // A machine whose records were pushed to a remote.
+  const old = machine(t);
+  mkdirSync(old.dataDirectory, { recursive: true });
+  const store = Store.openIn(old.dataDirectory);
+  store.saveGlobalSettings({ ...DEFAULT_GLOBAL_SETTINGS, ownerDisplayName: "Ada" }, "Ada");
+  store.close();
+  const remote = join(old.dataDirectory, "..", "records.git");
+  spawnSync("git", ["init", "--quiet", "--bare", "--initial-branch=main", remote]);
+  const records = new RecordsRepo({ dataDirectory: old.dataDirectory, storePath: join(old.dataDirectory, STORE_FILE), remote: () => remote });
+  const saved = await records.save("stop");
+  assert.ok(!("error" in saved) && saved.push === "pushed");
+
+  // A new machine restores them.
+  const m = machine(t);
+  const restored = spawnSync(process.execPath, [CLI, "restore", remote], { env: m.env, encoding: "utf8" });
+  assert.equal(restored.status, 0, restored.stderr);
+  assert.match(restored.stdout, /Restored entail's records from .* 0 repos, 0 tickets, 0 calls and 0 answers/);
+  const fresh = Store.openIn(m.dataDirectory);
+  assert.equal(fresh.latestGlobalSettings()?.savedBy, "Ada");
+  fresh.close();
+
+  const again = spawnSync(process.execPath, [CLI, "restore", remote], { env: m.env, encoding: "utf8" });
+  assert.equal(again.status, 1);
+  assert.match(again.stderr, /already holds a store or records repo\. Restore with --replace/);
+  const replaced = spawnSync(process.execPath, [CLI, "restore", remote, "--replace"], { env: m.env, encoding: "utf8" });
+  assert.equal(replaced.status, 0, replaced.stderr);
+  assert.match(replaced.stdout, /set aside in .*before-restore-/);
+
+  const usage = spawnSync(process.execPath, [CLI, "restore"], { env: m.env, encoding: "utf8" });
+  assert.equal(usage.status, 2, "a remote is required");
 });

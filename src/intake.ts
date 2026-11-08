@@ -18,7 +18,12 @@ export type NotTakenIn =
   /** entail already took it in: a new issue enters once, and a finished ticket comes back only by being pulled in. */
   | "has-a-ticket"
   /** It came from another repo, so it is not a new issue here. */
-  | "transferred-in";
+  | "transferred-in"
+  /**
+   * It carried entail's hidden marker with no records behind it when the
+   * owner confirmed a fresh start, so entail leaves it alone (ADR-0009).
+   */
+  | "left-alone-at-fresh-start";
 
 /** The owner of an enrolled repo: the account its CLI was logged in as at enrollment (ADR-0018). */
 export function repoOwner(repo: RepoRecord): Actor {
@@ -39,8 +44,10 @@ export function whyNotTakenIn(
   repo: RepoRecord,
   enrollment: Pick<EnrollmentRecord, "enrolledAt" | "openIssueNumbers"> | null,
   hasTicket: boolean,
+  leftAloneAtFreshStart = false,
 ): NotTakenIn | null {
   if (hasTicket) return "has-a-ticket";
+  if (leftAloneAtFreshStart) return "left-alone-at-fresh-start";
   if (!sameActor(issue.author, repoOwner(repo))) return "not-the-owners";
   if (issue.state !== "open") return "closed";
   if (enrollment?.openIssueNumbers.includes(issue.number)) return "open-at-enrollment";
@@ -126,7 +133,13 @@ export async function takeInIfNew(
   settingsVersionId: number | null,
 ): Promise<IntakeOutcome> {
   const hasTicket = () => store.latestTicketForIssue(repo.id, issue.number) !== null;
-  const why = whyNotTakenIn(issue, repo, store.latestEnrollment(repo.id), hasTicket());
+  const why = whyNotTakenIn(
+    issue,
+    repo,
+    store.latestEnrollment(repo.id),
+    hasTicket(),
+    store.leftAloneAtFreshStart(repo.id, issue.number),
+  );
   if (why !== null) return { notTakenIn: why };
   if (await forge.transferredIn(issue.number)) return { notTakenIn: "transferred-in" };
   const comments = await forge.comments("issue", issue.number);

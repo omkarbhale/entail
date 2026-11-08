@@ -118,6 +118,7 @@ function fullStore(t: TestContext): Store {
   store.recordVisionChange({ repoId: repo.id, commitSha: "c2", blobSha: "b2", previousBlobSha: "b1", removed: [], added: ["New."] });
   const intent = store.recordForgeWriteIntent({ repoId: repo.id, ticketId: ticket.id, callId: toBoard.id, kind: "comment", target: "issue", number: 1, payload: { body: "x" } });
   store.confirmForgeWrite({ intentId: intent.id, comment: { id: "99", url: "https://github.com/owner/tally/issues/1#issuecomment-99" } });
+  store.recordFreshStart({ repoId: repo.id, confirmedBy: "Owner", markedIssueNumbers: [4] });
   return store;
 }
 
@@ -158,9 +159,9 @@ test("a store from schema 1 is migrated to the current schema and keeps its reco
   const first = Store.openIn(dir);
   const repo = enroll(first);
   first.close();
-  // Take the store back to schema 1, which had no global settings, no enrollments and no enrollment model runs.
+  // Take the store back to schema 1, which had no global settings, no enrollments, no enrollment model runs and no fresh starts.
   const db = new DatabaseSync(join(dir, STORE_FILE));
-  for (const table of ["global_settings_versions", "enrollment_model_runs", "enrollments"]) {
+  for (const table of ["global_settings_versions", "enrollment_model_runs", "enrollments", "fresh_starts"]) {
     for (const { type, name } of db
       .prepare("SELECT type, name FROM sqlite_schema WHERE tbl_name = ? AND type IN ('trigger', 'index')")
       .all(table) as { type: string; name: string }[]) {
@@ -191,6 +192,12 @@ test("a store from schema 1 is migrated to the current schema and keeps its reco
     runTriggers.map((row) => row.name).sort(),
     ["enrollment_model_runs_no_delete", "enrollment_model_runs_no_replace", "enrollment_model_runs_no_update"],
   );
+  const freshStartTriggers = raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = 'fresh_starts'").all();
+  assert.deepEqual(
+    freshStartTriggers.map((row) => row.name).sort(),
+    ["fresh_starts_no_delete", "fresh_starts_no_replace", "fresh_starts_no_update"],
+  );
+  assert.deepEqual(store.freshStarts(repo.id), []);
 });
 
 test("an enrollment keeps its model runs whole, an output or a failure, and nothing else", (t) => {
@@ -650,8 +657,9 @@ test("an answer records the item version it was given to, and one from before sc
   assert.throws(() => first.recordAnswer({ boardItemId: raiseItem(2).id, itemVersion: 0, answeredBy: "Owner", shape: "dont-go-ahead" }), /CHECK/);
   first.close();
 
-  // Take the store back to schema 4, whose answers had no item version.
+  // Take the store back to schema 4, whose answers had no item version, and which had no fresh starts.
   const db = new DatabaseSync(join(dir, STORE_FILE));
+  db.exec("DROP TABLE fresh_starts");
   db.exec("ALTER TABLE answers DROP COLUMN item_version");
   db.exec("PRAGMA user_version = 4");
   db.close();
