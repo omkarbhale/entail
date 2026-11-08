@@ -33,5 +33,5 @@ entail and an executor share no API. They meet on the issue and the PR, in the s
 - The intake comment gains the fixed reporting line, and the investigate comment numbers its questions Q1…Qn.
 - The same contract applies to any executor, including a person.
 - The "who counts" setting and its executor list are set where the other per-repo settings are, decided on [How is a repo enrolled, and what per-repo settings exist?](https://github.com/omkarbhale/entail/issues/25).
-- Several PRs for one ticket, generic criteria ids, and routing a failing PR belong to [How does entail verify a landed PR's evidence, and how is a failing PR routed?](https://github.com/omkarbhale/entail/issues/22).
+- Several PRs for one ticket and generic criteria ids are decided in ADR-0014, on [How does entail verify a landed PR's evidence, and how is a failing PR routed?](https://github.com/omkarbhale/entail/issues/22). Routing a failing PR beyond a comment is a later effort.
 - Decided on [What is the contract between entail and any executor?](https://github.com/omkarbhale/entail/issues/30).
