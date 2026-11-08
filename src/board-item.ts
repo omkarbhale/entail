@@ -1,3 +1,4 @@
+import { challengePins, objectionText, type RecordedChallenge } from "./challenge.ts";
 import { composeComment } from "./comment-rules.ts";
 import type { RecordedVerdict } from "./decider.ts";
 import type { Actor } from "./forge/forge.ts";
@@ -10,6 +11,7 @@ import { makeNotice, type Notifier } from "./notice.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import type { OwedStep, OwedStepPlanner, RepoPass } from "./pass.ts";
 import type { BoardItemRecord, CallKind, CallRecord, JudgedInputs, RepoRecord, Store, TicketRecord } from "./store.ts";
+import type { VerdictChecks } from "./verdict-checks.ts";
 import { readVision, VISION_PATH, visionLinesOf } from "./vision.ts";
 
 /**
@@ -188,6 +190,17 @@ export interface BoardOptions {
 const INTAKE_COMMENT_KINDS: ReadonlySet<CallKind> = new Set<CallKind>(["raise", "investigation", "criteria", "recheck"]);
 
 /**
+ * Whether a verdict call leaves the ticket needing the owner: its verdict
+ * needs the owner, or an automatic verdict failed a mechanical check or its
+ * challenge overturned it (spec §6).
+ */
+export function verdictNeedsTheOwner(call: Pick<CallRecord, "detail" | "checks" | "challenge">): boolean {
+  if ((call.detail as Partial<RecordedVerdict> | null)?.verdict === "needs_the_owner") return true;
+  if ((call.checks as Partial<VerdictChecks> | null)?.passed === false) return true;
+  return (call.challenge as Partial<RecordedChallenge> | null)?.overturned === true;
+}
+
+/**
  * The verdict call a ticket is owed a raise for: the ticket is deciding, and
  * the latest verdict since it last changed state needs the owner, with no
  * raise recorded after it. Null when it owes none.
@@ -196,27 +209,53 @@ export function owedRaise(ticket: TicketRecord, calls: readonly CallRecord[]): C
   if (ticket.state !== "deciding") return null;
   const since = ticket.stateCallId ?? 0;
   const latest = calls.findLast((call) => call.id > since && call.kind === "verdict");
-  if (latest === undefined || (latest.detail as Partial<RecordedVerdict> | null)?.verdict !== "needs_the_owner") return null;
+  if (latest === undefined || !verdictNeedsTheOwner(latest)) return null;
   if (calls.some((call) => call.id > latest.id && call.kind === "raise")) return null;
   return latest;
 }
 
-/** The raise a needs-the-owner verdict asks for. */
+/**
+ * The raise a verdict call asks for: a needs-the-owner verdict with its own
+ * reason; an automatic verdict that failed a mechanical check, with the
+ * failure; or one its challenge overturned, with the objection.
+ */
 export function raiseFromVerdict(ticket: TicketRecord, call: CallRecord): RaiseRequest {
   const verdict = call.detail as RecordedVerdict;
+  const checks = call.checks as VerdictChecks | null;
+  const challenge = call.challenge as RecordedChallenge | null;
   const pins = touchedPins(verdict);
-  const contradicts = verdict.vision_check.some((line) => line.mark === "contradicts");
-  const kind = verdict.why_raised ?? (pins.length > 0 ? "pin" : contradicts ? "contradiction" : "consequential_readings");
-  return {
+  const raise = {
     ticket,
-    why: { kind, pins },
     visionCommit: verdict.vision_sha,
     marked: verdict.vision_check,
-    readings: verdict.readings,
-    openReadings: verdict.open_readings,
     inputs: call.inputs,
     basedOnCallId: call.id,
   };
+  if (verdict.verdict !== "needs_the_owner" && checks?.passed === false) {
+    const failed = checks.results.filter((result) => !result.passed);
+    const failure = failed.map((result) => result.failure ?? "").join(" ").trim();
+    return {
+      ...raise,
+      why: { kind: "failed_check", check: failed[0]?.check ?? "a mechanical check", failure, pins },
+      readings: verdict.readings,
+      openReadings: checks.open_readings ?? [],
+    };
+  }
+  if (verdict.verdict !== "needs_the_owner" && challenge?.overturned === true) {
+    // A reading the decider missed is offered beside its own.
+    const missed = challenge.objections.flatMap((objection) => (objection.reading === null ? [] : [objection.reading]));
+    const readings = [...verdict.readings, ...missed.map((reading, i) => ({ id: `R${verdict.readings.length + i + 1}`, ...reading }))];
+    const challenged = challengePins(challenge).filter((pin) => !pins.some((p) => p.pin === pin.pin));
+    return {
+      ...raise,
+      why: { kind: "challenge", objection: objectionText(challenge), pins: [...pins, ...challenged] },
+      readings,
+      openReadings: [],
+    };
+  }
+  const contradicts = verdict.vision_check.some((line) => line.mark === "contradicts");
+  const kind = verdict.why_raised ?? (pins.length > 0 ? "pin" : contradicts ? "contradiction" : "consequential_readings");
+  return { ...raise, why: { kind, pins }, readings: verdict.readings, openReadings: verdict.open_readings };
 }
 
 /**

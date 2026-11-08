@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import { setImmediate as immediate } from "node:timers/promises";
+import type { ChallengeOutput } from "../src/challenge.ts";
 import { assertCommentRules } from "../src/comment-rules.ts";
 import {
   declineCommentText,
@@ -53,6 +54,8 @@ function verdict(fields: Partial<VerdictOutput> = {}): VerdictOutput {
     ...fields,
   };
 }
+
+const UPHELD: ChallengeOutput = { outcome: "upheld", objections: [], reason: "Nothing overturns it." };
 
 const OVERSIZED = verdict({
   size: { value: "oversized", reason: "A desktop app and a plugin system are two independent deliverables." },
@@ -313,6 +316,8 @@ for (const [name, output] of [
       output,
       facts: { sessionId: "session-1", model: "claude-opus-5-5", durationMs: 1500, estimatedCostUsd: 0.3, usage: { output_tokens: 99 } },
     });
+    const automatic = output.verdict !== "needs_the_owner";
+    if (automatic) h.scripted.script("challenge", "1", { output: UPHELD, facts: { sessionId: "session-2" } });
     await h.pass();
 
     const ticket = h.ticket(1);
@@ -339,9 +344,11 @@ for (const [name, output] of [
       usage: { output_tokens: 99 },
       pin_matches: [],
     });
-    assert.equal(call.modelRuns.length, 1);
+    assert.deepEqual(call.modelRuns.map((run) => run.purpose), automatic ? ["verdict", "challenge"] : ["verdict"]);
     assert.equal(call.modelRuns[0]!.sessionId, "session-1");
     assert.equal(call.modelRuns[0]!.estimatedCostUsd, 0.3);
+    assert.equal((call.checks as { passed: boolean } | null)?.passed ?? null, automatic ? true : null, "an automatic verdict's checks are recorded on it");
+    assert.equal((call.challenge as { overturned: boolean } | null)?.overturned ?? null, automatic ? false : null);
 
     const request = h.scripted.requests[0]!;
     assert.equal(request.kind, "verdict");
@@ -351,7 +358,7 @@ for (const [name, output] of [
 
     assert.deepEqual(h.forge.state.sends, { comment: 0, addLabel: 0, removeLabel: 0, close: 0, merge: 0 }, "routing is left to later steps");
     await h.pass();
-    assert.equal(h.scripted.requests.length, 1, "a recorded verdict is not run again");
+    assert.equal(h.scripted.requests.length, automatic ? 2 : 1, "a recorded verdict is not run again");
   });
 }
 
@@ -362,6 +369,7 @@ test("entail's keyword and path matching is recorded on the verdict beside the m
   await h.pass();
 
   const call = h.setup.store.callsForTicket(h.ticket(9).id).at(-1)!;
+  assert.equal((call.checks as { passed: boolean }).passed, false, "a matched pin fails the checks, so no challenge runs");
   assert.deepEqual(call.inputs?.pins, judgedPins([FORMAT_PIN]));
   assert.deepEqual((call.detail as RecordedVerdict).pin_matches, [
     { pin: "the output format", by: "keyword", keyword: "colour" },
@@ -376,6 +384,7 @@ test("a machine failure records nothing and leaves the ticket deciding; the verd
   const h = await harness(t);
   h.forge.issues = [issue(3)];
   h.scripted.script("verdict", "1", { failure: { kind: "timeout", message: "ran too long" } }, { output: verdict() });
+  h.scripted.script("challenge", "1", { output: UPHELD });
   await h.engine.runPass();
   await until(() => h.setup.logLines().some((line) => line.event === "model-run-retry"), "the failed run waits for its retry");
   const ticket = h.ticket(3);
