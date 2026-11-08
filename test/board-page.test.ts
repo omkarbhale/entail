@@ -367,6 +367,7 @@ interface FakeElement {
   html: string;
   elements?: FakeElement[];
   replaceWith(next: FakeElement): void;
+  getAttribute(name: string): string | null;
 }
 
 /** Just enough of a browser to run the board's live script against the real server: no reload, no navigation. */
