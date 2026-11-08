@@ -50,6 +50,32 @@ export interface RepoRecord extends NewRepo {
   enrolledAt: string;
 }
 
+/** Everything enrolling a repo records, in one transaction (ADR-0018). */
+export interface NewEnrollment {
+  repo: NewRepo;
+  /** The repo's first settings version. */
+  settings: object;
+  /** The owner's display name, recorded with the first settings version. */
+  savedBy: string;
+  /** The default branch commit whose VISION.md the owner reviewed. */
+  visionSha: string;
+  /** Every vision line of that VISION.md, recorded under {@link NewEnrollment.visionOrigin}. */
+  visionLines: readonly string[];
+  /** The one origin the owner confirmed for the existing VISION.md (ADR-0004). */
+  visionOrigin: VisionOrigin;
+  /** The issues open at enrollment, which are not taken in. */
+  openIssueNumbers: readonly number[];
+}
+
+export interface EnrollmentRecord {
+  id: number;
+  repoId: number;
+  enrolledAt: string;
+  visionSha: string;
+  settingsVersionId: number;
+  openIssueNumbers: number[];
+}
+
 export interface SettingsVersionRecord {
   id: number;
   repoId: number;
@@ -381,6 +407,57 @@ export class Store {
     return this.getRepo(id)!;
   }
 
+  /**
+   * Enrolls a repo: records it, its first settings version, the origin of
+   * every existing vision line and the issues open at enrollment, all in one
+   * transaction, so a refused enrollment records nothing (ADR-0018).
+   */
+  enroll(enrollment: NewEnrollment): { repo: RepoRecord; settings: SettingsVersionRecord; enrollment: EnrollmentRecord } {
+    return this.transaction(() => {
+      const repo = this.enrollRepo(enrollment.repo);
+      const settings = this.saveSettings(repo.id, enrollment.settings, enrollment.savedBy);
+      for (const line of new Set(enrollment.visionLines)) {
+        this.recordVisionLineOrigin({
+          repoId: repo.id,
+          line,
+          origin: enrollment.visionOrigin,
+          commitSha: enrollment.visionSha,
+          source: "enrollment",
+        });
+      }
+      const id = this.#insert(
+        "INSERT INTO enrollments (repo_id, enrolled_at, vision_sha, settings_version_id, open_issue_numbers) VALUES (?, ?, ?, ?, ?)",
+        repo.id,
+        repo.enrolledAt,
+        enrollment.visionSha,
+        settings.id,
+        JSON.stringify([...new Set(enrollment.openIssueNumbers)].sort((a, b) => a - b)),
+      );
+      return { repo, settings, enrollment: mapOrNull(this.#get("SELECT * FROM enrollments WHERE id = ?", id), toEnrollment)! };
+    });
+  }
+
+  /** The repo's latest enrollment. */
+  latestEnrollment(repoId: number): EnrollmentRecord | null {
+    return mapOrNull(this.#get("SELECT * FROM enrollments WHERE repo_id = ? ORDER BY id DESC LIMIT 1", repoId), toEnrollment);
+  }
+
+  /** Whether an issue was open when the repo was last enrolled, so it is not taken in on its own (ADR-0018). */
+  wasOpenAtEnrollment(repoId: number, issueNumber: number): boolean {
+    const row = this.#get(
+      `SELECT 1 AS open FROM enrollments e, json_each(e.open_issue_numbers) n
+       WHERE e.id = (SELECT max(id) FROM enrollments WHERE repo_id = ?) AND n.value = ?`,
+      repoId,
+      issueNumber,
+    );
+    return row !== undefined;
+  }
+
+  /** Every enrolled repo, in the order they were enrolled. */
+  listRepos(): RepoRecord[] {
+    return this.#all("SELECT * FROM repos ORDER BY id").map(toRepo);
+  }
+
   getRepo(id: number): RepoRecord | null {
     return mapOrNull(this.#get("SELECT * FROM repos WHERE id = ?", id), toRepo);
   }
@@ -406,6 +483,18 @@ export class Store {
       );
       return mapOrNull(this.#get("SELECT * FROM settings_versions WHERE id = ?", id), toSettings)!;
     });
+  }
+
+  settingsVersion(repoId: number, version: number): SettingsVersionRecord | null {
+    return mapOrNull(
+      this.#get("SELECT * FROM settings_versions WHERE repo_id = ? AND version = ?", repoId, version),
+      toSettings,
+    );
+  }
+
+  /** Every saved version of a repo's settings, newest first. */
+  settingsHistory(repoId: number): SettingsVersionRecord[] {
+    return this.#all("SELECT * FROM settings_versions WHERE repo_id = ? ORDER BY version DESC", repoId).map(toSettings);
   }
 
   latestSettings(repoId: number): SettingsVersionRecord | null {
@@ -837,6 +926,17 @@ function toSettings(row: Row): SettingsVersionRecord {
     savedAt: str(row.saved_at),
     savedBy: str(row.saved_by),
     settings: parse(row.settings),
+  };
+}
+
+function toEnrollment(row: Row): EnrollmentRecord {
+  return {
+    id: num(row.id),
+    repoId: num(row.repo_id),
+    enrolledAt: str(row.enrolled_at),
+    visionSha: str(row.vision_sha),
+    settingsVersionId: num(row.settings_version_id),
+    openIssueNumbers: parse(row.open_issue_numbers) as number[],
   };
 }
 

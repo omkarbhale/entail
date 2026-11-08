@@ -9,7 +9,7 @@ import {
   type GlobalSettings,
   type SettingsErrors,
 } from "./global-settings.ts";
-import { escapeHtml, renderPage } from "./page.ts";
+import { escapeHtml, renderPage, timeHtml } from "./page.ts";
 import { TOKEN_FIELD, type FormRequest, type Page, type PageRequest, type Reply } from "./server.ts";
 import type { GlobalSettingsVersionRecord, Store } from "./store.ts";
 
@@ -195,9 +195,4 @@ function valuesOf(settings: GlobalSettings): FormValues {
     pollIntervalSeconds: String(settings.pollIntervalSeconds),
     boardPort: String(settings.boardPort),
   };
-}
-
-function timeHtml(iso: string): string {
-  const shown = `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
-  return `<time datetime="${escapeHtml(iso)}">${escapeHtml(shown)}</time>`;
 }

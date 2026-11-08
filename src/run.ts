@@ -2,6 +2,8 @@ import { readGlobalSettings, type GlobalSettings } from "./global-settings.ts";
 import { acquireLock, type HeldLock } from "./lock.ts";
 import { Notifier } from "./notice.ts";
 import { OperationalLog, type OperationalLogOptions } from "./operational-log.ts";
+import { Enroller } from "./enrollment.ts";
+import { reposPages } from "./repos-page.ts";
 import { startServer, type BoardPortTakenError, type LocalServer } from "./server.ts";
 import { globalSettingsPage } from "./settings-page.ts";
 import { Store, type StoreOpenError } from "./store.ts";
@@ -35,8 +37,8 @@ export interface RunningEntail {
  * Starts `entail run`: takes the single-copy lock, opens the operational log
  * and the store, and stays up until {@link RunningEntail.stop} (ADR-0017).
  *
- * Then it starts the local server on the board port from the global settings
- * (spec §15).
+ * Then it starts the local server on the board port from the global settings,
+ * serving the Repos page with enrollment and the global settings page (spec §15).
  *
  * Throws {@link LockHeldError} when another copy holds the lock;
  * {@link StoreOpenError} when the store cannot be opened; and
@@ -70,7 +72,9 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
   const port = readGlobalSettings(store).settings.boardPort;
   let server: LocalServer;
   try {
-    server = await startServer({ port, pages: [globalSettingsPage(store)], log });
+    const enroller = new Enroller({ store, dataDirectory: options.dataDirectory, log });
+    const pages = [...reposPages({ store, enroller, dataDirectory: options.dataDirectory }), globalSettingsPage(store)];
+    server = await startServer({ port, pages, log });
   } catch (error) {
     log.error("board-server-failed", { port, error: error instanceof Error ? error.message : String(error) });
     store.close();

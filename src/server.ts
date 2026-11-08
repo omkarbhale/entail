@@ -45,8 +45,9 @@ export interface Page {
   path: string;
   /** The page's label in the shared header, when it is listed there. */
   nav?: string;
-  get?(request: PageRequest): Reply;
-  post?(request: FormRequest): Reply;
+  /** A page that reads the forge or git replies once those reads are done. */
+  get?(request: PageRequest): Reply | Promise<Reply>;
+  post?(request: FormRequest): Reply | Promise<Reply>;
 }
 
 export interface ServerOptions {
@@ -178,7 +179,7 @@ async function handle(
     if (page?.get === undefined) {
       return reply(res, page ? notAllowed(request) : notFound(request));
     }
-    return reply(res, page.get(request));
+    return reply(res, await page.get(request));
   }
 
   if (method !== "POST" || page?.post === undefined) {
@@ -202,7 +203,7 @@ async function handle(
       "This form is not from the running entail. If entail restarted since the page was opened, reload it and try again.",
     );
   }
-  return reply(res, page.post({ ...request, form }));
+  return reply(res, await page.post({ ...request, form }));
 }
 
 function ownHosts(port: number): Set<string> {

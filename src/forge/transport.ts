@@ -36,11 +36,14 @@ export interface Transport {
 export class TransportError extends Error {
   /** True when the CLI says it is not logged in for the host. */
   readonly loggedOut: boolean;
+  /** True when the CLI is not installed: its executable was not found. */
+  readonly cliMissing: boolean;
 
-  constructor(message: string, loggedOut: boolean) {
+  constructor(message: string, loggedOut: boolean, cliMissing = false) {
     super(message);
     this.name = "TransportError";
     this.loggedOut = loggedOut;
+    this.cliMissing = cliMissing;
   }
 }
 
@@ -129,7 +132,10 @@ export class CliTransport implements Transport {
           const detail = stderr.trim() || error?.message || "no HTTP response";
           const loggedOut =
             code !== null && (this.#cli === "gh" ? code === GH_EXIT_AUTH_REQUIRED : GLAB_AUTH_REQUIRED.test(stderr));
-          reject(new TransportError(`${this.#cli} api ${request.method} ${request.path} on ${request.host}: ${detail}`, loggedOut));
+          const cliMissing = error !== null && (error as NodeJS.ErrnoException).code === "ENOENT";
+          reject(
+            new TransportError(`${this.#cli} api ${request.method} ${request.path} on ${request.host}: ${detail}`, loggedOut, cliMissing),
+          );
         },
       );
       // A CLI that exits before reading its input closes the pipe; its exit is what counts.

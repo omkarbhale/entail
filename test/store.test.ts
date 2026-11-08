@@ -62,8 +62,15 @@ function rawConnection(t: TestContext, store: Store): DatabaseSync {
 /** A store with at least one row in every table. */
 function fullStore(t: TestContext): Store {
   const store = openStore(t);
-  const repo = enroll(store);
-  const settings = store.saveSettings(repo.id, { shadow: false, pins: [] }, "Owner");
+  const { repo, settings } = store.enroll({
+    repo: { forge: "github", host: "github.com", projectId: 101, path: "owner/tally", ownerAccountId: 4242, ownerLogin: "owner" },
+    settings: { shadow: false, pins: [] },
+    savedBy: "Owner",
+    visionSha: "v1",
+    visionLines: ["Tally counts words."],
+    visionOrigin: "agent-proposed-owner-approved",
+    openIssueNumbers: [3],
+  });
   store.saveGlobalSettings({ ownerDisplayName: "Owner" }, "Owner");
   const ticket = store.takeIn({ repoId: repo.id, issueNumber: 1 });
   const toBoard = store.recordCall({
@@ -137,14 +144,16 @@ test("a store from schema 1 is migrated to the current schema and keeps its reco
   const first = Store.openIn(dir);
   const repo = enroll(first);
   first.close();
-  // Take the store back to schema 1, which had no global settings.
+  // Take the store back to schema 1, which had no global settings and no enrollments.
   const db = new DatabaseSync(join(dir, STORE_FILE));
-  for (const { type, name } of db
-    .prepare("SELECT type, name FROM sqlite_schema WHERE tbl_name = 'global_settings_versions' AND type = 'trigger'")
-    .all() as { type: string; name: string }[]) {
-    db.exec(`DROP ${type} ${name}`);
+  for (const table of ["global_settings_versions", "enrollments"]) {
+    for (const { type, name } of db
+      .prepare("SELECT type, name FROM sqlite_schema WHERE tbl_name = ? AND type IN ('trigger', 'index')")
+      .all(table) as { type: string; name: string }[]) {
+      if (!name.startsWith("sqlite_")) db.exec(`DROP ${type} ${name}`);
+    }
+    db.exec(`DROP TABLE ${table}`);
   }
-  db.exec("DROP TABLE global_settings_versions");
   db.exec("PRAGMA user_version = 1");
   db.close();
 
@@ -152,9 +161,15 @@ test("a store from schema 1 is migrated to the current schema and keeps its reco
   assert.deepEqual(store.getRepo(repo.id), repo);
   assert.equal(store.latestGlobalSettings(), null);
   assert.equal(store.saveGlobalSettings({ model: "m" }, "Owner").version, 1);
+  assert.equal(store.latestEnrollment(repo.id), null);
   const raw = rawConnection(t, store);
   assert.equal(raw.prepare("PRAGMA user_version").get()?.user_version, SCHEMA_VERSION);
   assert.throws(() => raw.exec("DELETE FROM global_settings_versions"), /append-only/);
+  const triggers = raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = 'enrollments'").all();
+  assert.deepEqual(
+    triggers.map((row) => row.name).sort(),
+    ["enrollments_no_delete", "enrollments_no_replace", "enrollments_no_update", "enrollments_settings_of_repo"],
+  );
 });
 
 test("global settings are saved as numbered versions with time and name, and older versions stay readable", (t) => {
@@ -550,6 +565,65 @@ test("a board item is raised by its call, answered or withdrawn once, and cited 
   const edited = store.recordCall({ ticketId: other.id, kind: "verdict", reason: "the issue was edited", stateTo: "deciding" });
   store.withdrawBoardItem({ boardItemId: otherItem.id, callId: edited.id, reason: "the issue was edited" });
   assert.throws(() => store.recordAnswer({ boardItemId: otherItem.id, answeredBy: "Owner", shape: "dont-go-ahead" }), /withdrawn/);
+});
+
+test("enrolling records the repo, its first settings version, every vision line's origin and the open issues at once", (t) => {
+  const store = openStore(t);
+  const { repo, settings, enrollment } = store.enroll({
+    repo: { forge: "gitlab", host: "git.example.org", projectId: 77, path: "group/tally", ownerAccountId: 9, ownerLogin: "ada" },
+    settings: { visionOrigin: "owner-stated", mergeMethod: null },
+    savedBy: "Ada",
+    visionSha: "c1",
+    visionLines: ["Tally counts words.", "Tally reads files.", "Tally counts words."],
+    visionOrigin: "owner-stated",
+    openIssueNumbers: [5, 2, 5],
+  });
+  assert.deepEqual(store.findRepo({ forge: "gitlab", host: "git.example.org", projectId: 77 }), repo);
+  assert.equal(repo.ownerAccountId, 9);
+  assert.deepEqual(store.listRepos(), [repo]);
+  assert.equal(settings.version, 1);
+  assert.equal(settings.savedBy, "Ada");
+  assert.deepEqual(store.latestSettings(repo.id), settings);
+  assert.deepEqual(store.settingsVersion(repo.id, 1), settings);
+  assert.deepEqual(store.settingsHistory(repo.id), [settings]);
+  for (const line of ["Tally counts words.", "Tally reads files."]) {
+    const origin = store.visionLineOrigin(repo.id, line);
+    assert.equal(origin?.origin, "owner-stated");
+    assert.equal(origin?.source, "enrollment");
+    assert.equal(origin?.commitSha, "c1");
+  }
+  assert.deepEqual(enrollment, {
+    id: enrollment.id,
+    repoId: repo.id,
+    enrolledAt: repo.enrolledAt,
+    visionSha: "c1",
+    settingsVersionId: settings.id,
+    openIssueNumbers: [2, 5],
+  });
+  assert.deepEqual(store.latestEnrollment(repo.id), enrollment);
+  assert.equal(store.wasOpenAtEnrollment(repo.id, 2), true);
+  assert.equal(store.wasOpenAtEnrollment(repo.id, 5), true);
+  assert.equal(store.wasOpenAtEnrollment(repo.id, 3), false);
+});
+
+test("a failed enrollment records nothing", (t) => {
+  const store = openStore(t);
+  const existing = enroll(store);
+  assert.throws(() =>
+    store.enroll({
+      repo: { forge: "github", host: "github.com", projectId: 101, path: "owner/tally", ownerAccountId: 4242, ownerLogin: "owner" },
+      settings: {},
+      savedBy: "Owner",
+      visionSha: "c1",
+      visionLines: ["A line."],
+      visionOrigin: "owner-stated",
+      openIssueNumbers: [],
+    }),
+  );
+  assert.deepEqual(store.listRepos(), [existing]);
+  assert.equal(store.latestSettings(existing.id), null);
+  assert.equal(store.visionLineOrigin(existing.id, "A line."), null);
+  assert.equal(store.latestEnrollment(existing.id), null);
 });
 
 test("vision line origins and vision changes are recorded per repo", (t) => {

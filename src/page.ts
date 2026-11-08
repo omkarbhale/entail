@@ -10,6 +10,12 @@ export function escapeHtml(text: string): string {
     .replaceAll("'", "&#39;");
 }
 
+/** A stored ISO time, shown to the minute in UTC. */
+export function timeHtml(iso: string): string {
+  const shown = `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+  return `<time datetime="${escapeHtml(iso)}">${escapeHtml(shown)}</time>`;
+}
+
 export interface PageContent {
   title: string;
   /** The page's own HTML, already escaped. */
@@ -77,6 +83,10 @@ h2 { font-size: 1.1rem; margin-top: 2rem; }
 .field label { display: block; font-weight: 600; }
 input[type=text], input[type=number], select { font: inherit; padding: .35rem .5rem; width: 100%; max-width: 24rem; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
 input[aria-invalid=true] { border-color: var(--bad); }
+fieldset { border: 0; padding: 0; margin: 1.25rem 0; }
+legend { font-weight: 600; padding: 0; }
+.field label.choice { display: block; font-weight: normal; }
+code { font-size: .9em; }
 button { font: inherit; padding: .4rem 1rem; }
 table { border-collapse: collapse; width: 100%; }
 th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
