@@ -18,6 +18,7 @@ export const CALL_KINDS = [
   "investigation",
   "criteria",
   "decline",
+  "raise",
   "close-at-intake",
   "recheck",
   "landing",
@@ -789,6 +790,16 @@ export class Store {
       this.#time(),
       withdrawal.reason,
     );
+  }
+
+  /** Every board item raised for a ticket, oldest first. */
+  boardItemsForTicket(ticketId: number): BoardItemRecord[] {
+    return this.#all("SELECT * FROM board_items WHERE ticket_id = ? ORDER BY id", ticketId).map(toBoardItem);
+  }
+
+  /** The answer given to a board item, or null while it has none. */
+  answerFor(boardItemId: number): AnswerRecord | null {
+    return mapOrNull(this.#get("SELECT * FROM answers WHERE board_item_id = ?", boardItemId), toAnswer);
   }
 
   /** The ticket's open board item: neither answered nor withdrawn. */
