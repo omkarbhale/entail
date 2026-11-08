@@ -12,6 +12,8 @@ import {
   unseenCheck,
 } from "./generic-criteria.ts";
 import { Git } from "./git.ts";
+import type { HealthCondition } from "./health.ts";
+import { cliOf } from "./host-login.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import { mirrorPaths } from "./mirror.ts";
 import { MECHANICAL_CHECK_KINDS } from "./model-schemas.ts";
@@ -78,7 +80,7 @@ const MAX_CRITERIA_ROWS = 100;
  * setting; waiting for records and no vision are halts (spec §16), and a repo
  * whose records have not been checked yet is left alone until they are.
  */
-export type RepoState = "active" | "pausing" | "paused" | "waiting for records" | "checking records" | "no vision";
+export type RepoState = "active" | "pausing" | "paused" | "waiting for records" | "host halted" | "checking records" | "no vision";
 
 /**
  * What the running process knows about a repo beyond its records. The pass
@@ -91,6 +93,12 @@ export interface RepoActivity {
   /** The time of the repo's last successful poll, as ISO, or null when it has not been polled. */
   lastSuccessfulPoll?(repo: RepoRecord): string | null;
 }
+
+/**
+ * entail's halts and warnings now (spec §16): the Repos page shows each
+ * repo's and each host's apart from the owner's pause. None by default.
+ */
+export type ReposHealth = () => readonly HealthCondition[];
 
 export interface ReposPageOptions extends Omit<RepoSwitchPagesOptions, "store"> {
   store: Store;
@@ -106,6 +114,7 @@ export interface ReposPageOptions extends Omit<RepoSwitchPagesOptions, "store"> 
    * confirmed here. Without it every repo counts as having its records.
    */
   recordsCheck?: RecordsCheck;
+  health?: ReposHealth;
 }
 
 /** Why nothing was enrolled: a refusal, or a review that is no longer open. */
@@ -260,16 +269,19 @@ export function reposPages(options: ReposPageOptions): Page[] {
 
 /**
  * The state shown for a repo: the owner's pause first, then missing records,
- * then records not checked yet, then a vanished vision, else active.
+ * then its host's halt, then records not checked yet, then a vanished
+ * vision, else active.
  */
 export function repoState(
   paused: boolean,
   pausing: boolean,
   visionPresent: boolean | null,
   records: RecordsStanding["status"] = "clear",
+  hostHalted = false,
 ): RepoState {
   if (paused) return pausing ? "pausing" : "paused";
   if (records === "missing") return "waiting for records";
+  if (hostHalted) return "host halted";
   if (records === "unchecked") return "checking records";
   if (visionPresent === false) return "no vision";
   return "active";
@@ -303,20 +315,26 @@ async function reposView(
   const { store } = options;
   const repos = store.listEnrolledRepos();
   const standing = (repo: RepoRecord): RecordsStanding => options.recordsCheck?.standing(repo.id) ?? { status: "clear", checkedAt: "" };
+  const health = options.health?.() ?? [];
+  const onHost = (repo: RepoRecord) => (c: HealthCondition) => c.scope.kind === "host" && c.scope.forge === repo.forge && c.scope.host === repo.host;
   const rows = await Promise.all(
     repos.map(async (repo) => {
       const paused = readRepoSettings(store, repo.id)?.settings.paused === true;
+      const hostHalts = health.filter((c) => c.kind === "halt" && onHost(repo)(c));
       const state = repoState(
         paused,
         paused && (options.activity?.pausing?.(repo) ?? false),
         await mirrorVisionPresent(options.dataDirectory, repo),
         standing(repo).status,
+        hostHalts.length > 0,
       );
       const poll = options.activity?.lastSuccessfulPoll?.(repo) ?? null;
+      // A halt is shown apart from the owner's pause: a paused repo still says why it is halted.
+      const details = health.filter((c) => (c.scope.kind === "repo" && c.scope.repoId === repo.id) || onHost(repo)(c));
       return `<tr>
 <td>${escapeHtml(repo.path)}<br><span class="muted">${escapeHtml(repo.host)}</span></td>
 <td>${forgeName(repo.forge)}</td>
-<td><span class="state" data-state="${escapeHtml(state)}">${escapeHtml(state)}</span></td>
+<td><span class="state" data-state="${escapeHtml(state)}">${escapeHtml(state)}</span>${details.map((c) => `<br><span class="muted" data-health="${escapeHtml(c.key)}">${c.kind === "halt" ? "Halted" : "Warning"}: ${escapeHtml(c.wrong)}, since ${timeHtml(c.since)}</span>`).join("")}</td>
 <td>${poll === null ? `<span class="muted">not yet polled</span>` : timeHtml(poll)}</td>
 <td class="actions"><a href="${REPO_SETTINGS_PATH}?repo=${repo.id}">Settings</a> ${pauseForm(request, repo, paused, "repos")} ${unenrollLink(repo)}</td>
 </tr>`;
@@ -388,6 +406,7 @@ ${freshStartNotice}
 ${notice}
 ${problemHtml}
 ${list}
+${hostsHtml(repos, health)}
 ${waiting}
 ${unenrolledList(store)}
 <h2>Enroll a repo</h2>
@@ -395,6 +414,33 @@ ${refused}
 ${form}
 <p class="muted"><a href="${SETTINGS_PATH}">Global settings</a></p>`;
   return { status, html: renderPage(request, { title: "Repos", body }) };
+}
+
+/** Each enrolled host, with its CLI and its halts, or that it is answering (spec §16). */
+function hostsHtml(repos: readonly RepoRecord[], health: readonly HealthCondition[]): string {
+  const hosts = new Map<string, RepoRecord>();
+  for (const repo of repos) if (!hosts.has(`${repo.forge}:${repo.host}`)) hosts.set(`${repo.forge}:${repo.host}`, repo);
+  if (hosts.size === 0) return "";
+  const rows = [...hosts.values()].map((repo) => {
+    const halts = health.filter((c) => c.scope.kind === "host" && c.scope.forge === repo.forge && c.scope.host === repo.host);
+    const state =
+      halts.length === 0
+        ? `<span class="muted">reachable</span>`
+        : halts.map((c) => `<span data-health="${escapeHtml(c.key)}">Halted: ${escapeHtml(c.wrong)}, since ${timeHtml(c.since)}. ${escapeHtml(c.clears)}.</span>`).join("<br>");
+    return `<tr>
+<td>${escapeHtml(repo.host)}</td>
+<td>${forgeName(repo.forge)}</td>
+<td><code>${cliOf(repo)}</code></td>
+<td>${state}</td>
+</tr>`;
+  });
+  return `<h2>Hosts</h2>
+<table class="hosts">
+<thead><tr><th>Host</th><th>Forge</th><th>CLI</th><th>Health</th></tr></thead>
+<tbody>
+${rows.join("\n")}
+</tbody>
+</table>`;
 }
 
 /**

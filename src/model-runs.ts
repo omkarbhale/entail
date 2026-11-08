@@ -111,6 +111,9 @@ interface Entry {
  * - A usage limit pauses every model run until the reset time `claude`
  *   reported, or for 30 minutes if it reported none. The run that hit it
  *   waits in line again; runs already in flight go on.
+ * - A run `claude` refuses for want of a login holds every model run, as
+ *   does an all-of-entail halt ({@link ModelRuns.hold}), until a pass's check
+ *   finds `claude` logged in again (ADR-0019).
  * - {@link ModelRuns.stop} interrupts the runs in flight and discards them
  *   with every waiting run. Nothing about them is recorded, so the work is
  *   still owed and the next start runs it again.
@@ -137,6 +140,14 @@ export class ModelRuns {
   readonly #retryStates = new Map<string, RetryState>();
   #seq = 0;
   #pausedUntil: number | null = null;
+  /** When the usage-limit pause in force began. */
+  #pausedSince: number | null = null;
+  /** Set while an all-of-entail halt holds model work (ADR-0019). */
+  #held = false;
+  /** When a run was refused because `claude` is not logged in, until a check finds it logged in. */
+  #loggedOutSince: number | null = null;
+  /** When the model runs began failing, every one of them, and the last error; null once one succeeds. */
+  #failing: { since: number; lastError: string } | null = null;
   #pauseTimer: ReturnType<typeof setTimeout> | undefined;
   #stopped = false;
 
@@ -159,6 +170,43 @@ export class ModelRuns {
   /** Until when a usage limit pauses model work, or null when it does not. */
   get pausedUntil(): string | null {
     return this.#pausedUntil === null ? null : new Date(this.#pausedUntil).toISOString();
+  }
+
+  /** When the usage-limit pause in force began, or null when model work is not paused. */
+  get pausedSince(): string | null {
+    return this.#pausedUntil === null || this.#pausedSince === null ? null : new Date(this.#pausedSince).toISOString();
+  }
+
+  /** When a run was last refused because `claude` is not logged in, or null once a check found it logged in. */
+  get loggedOutSince(): string | null {
+    return this.#loggedOutSince === null ? null : new Date(this.#loggedOutSince).toISOString();
+  }
+
+  /**
+   * Since when every model run has failed, with the last error, or null when
+   * the last run that ended succeeded. Usage limits and a logged-out `claude`
+   * are halts of their own and do not count (ADR-0019).
+   */
+  get failing(): { since: string; lastError: string } | null {
+    return this.#failing === null ? null : { since: new Date(this.#failing.since).toISOString(), lastError: this.#failing.lastError };
+  }
+
+  /**
+   * Holds every model run while an all-of-entail halt lasts, or lets them go
+   * again (ADR-0019). Runs in flight go on; waiting runs wait.
+   */
+  hold(held: boolean): void {
+    if (this.#held === held) return;
+    this.#held = held;
+    if (!held) this.#pump();
+  }
+
+  /** A check found `claude` logged in, so runs refused for want of a login go again. */
+  loginRestored(): void {
+    if (this.#loggedOutSince === null) return;
+    this.#loggedOutSince = null;
+    this.#log.info("claude-login-restored", {});
+    this.#pump();
   }
 
   /** The ticket's retry state while its model step is failing, or null. */
@@ -223,7 +271,7 @@ export class ModelRuns {
 
   /** Starts waiting runs, in order, while slots are free. */
   #pump(): void {
-    if (this.#stopped || this.#pausedUntil !== null) return;
+    if (this.#stopped || this.#pausedUntil !== null || this.#held || this.#loggedOutSince !== null) return;
     const limit = Math.max(1, Math.floor(this.#limit()));
     while (this.#inFlight.size < limit) {
       const next = this.#nextReady();
@@ -291,6 +339,7 @@ export class ModelRuns {
       estimatedCostUsd: run.facts.estimatedCostUsd,
     });
     if (ticket !== null && this.#retryStates.delete(ticket)) this.#log.info("model-run-recovered", { ticket, kind });
+    this.#failing = null;
     this.#settle(entry);
     entry.resolve(run);
   }
@@ -313,8 +362,15 @@ export class ModelRuns {
       this.#waiting.add(entry);
       return;
     }
+    if (failure.kind === "logged-out") {
+      // Not the ticket's failure either: all model work waits until a check finds `claude` logged in.
+      this.#loggedOutSince ??= Date.now();
+      this.#waiting.add(entry);
+      return;
+    }
 
     const now = Date.now();
+    this.#failing = { since: this.#failing?.since ?? now, lastError: failure.message };
     const previous = ticket === null ? undefined : this.#retryStates.get(ticket);
     const failures = (previous?.failures ?? 0) + 1;
     const retryAt = now + retryDelay(failures);
@@ -343,11 +399,13 @@ export class ModelRuns {
     const reported = resetAt !== undefined && resetAt.getTime() > now;
     const until = reported ? resetAt.getTime() : now + USAGE_LIMIT_PAUSE_MS;
     if (this.#pausedUntil !== null && this.#pausedUntil >= until) return;
+    if (this.#pausedUntil === null) this.#pausedSince = now;
     this.#pausedUntil = until;
     this.#log.warn("usage-limit-pause", { until: new Date(until).toISOString(), reported });
     clearTimeout(this.#pauseTimer);
     this.#pauseTimer = setTimeout(() => {
       this.#pausedUntil = null;
+      this.#pausedSince = null;
       this.#log.info("usage-limit-pause-ended", {});
       this.#pump();
     }, until - now);

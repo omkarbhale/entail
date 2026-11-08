@@ -191,6 +191,7 @@ function classify<T>(request: ModelRunRequest<T>, exit: Exit, measuredMs: number
   if (result === null) {
     const text = `${exit.stdout}\n${exit.stderr}`;
     if (USAGE_LIMIT.test(text)) return fail(usageLimit(text));
+    if (LOGGED_OUT.test(text)) return fail(loggedOut(text));
     const how = exit.code !== null ? `exited with code ${exit.code}` : `was ended by ${exit.signal ?? "an unknown cause"}`;
     return fail({ kind: "error", message: `claude ${how} without a result: ${tail(exit.stderr || exit.stdout)}` });
   }
@@ -205,6 +206,7 @@ function classify<T>(request: ModelRunRequest<T>, exit: Exit, measuredMs: number
       return fail({ kind: "no-structured-output", message: "the run gave up producing output that matches the schema" }, facts);
     }
     if (result.api_error_status === 429 || USAGE_LIMIT.test(text)) return fail(usageLimit(text), facts);
+    if (result.api_error_status === 401 || LOGGED_OUT.test(text)) return fail(loggedOut(text), facts);
     return fail({ kind: "error", message: `the run failed (${String(result.subtype)}): ${tail(text || exit.stderr)}` }, facts);
   }
   return acceptOutput(request.schema, result.structured_output, facts);
@@ -234,6 +236,14 @@ function factsOf(result: ClaudeResult, requested: string, measuredMs: number): R
 
 /** How `claude` words the subscription's usage limit and rate limits. */
 const USAGE_LIMIT = /usage limit|hit your limit|limit reached|rate limit/i;
+
+/** How `claude` words a run refused for want of a login. */
+const LOGGED_OUT = /not logged in|please run \/login|invalid api key|oauth token has expired|authentication_error|authentication failed/i;
+
+/** A run `claude` refused because it is not logged in: the all-of-entail halt (ADR-0019). */
+export function loggedOut(text: string): MachineFailure {
+  return { kind: "logged-out", message: `claude is not logged in: ${tail(text)}` };
+}
 
 /**
  * A usage-limit failure, with the reset time when `claude` reported one: as

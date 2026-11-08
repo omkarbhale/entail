@@ -423,6 +423,25 @@ test("a repo whose VISION.md is gone decides nothing", async (t) => {
   await engine.stop();
   assert.equal(scripted.requests.length, 0);
   assert.equal(setup.store.latestTicketForIssue(repo.id, 4)!.state, "deciding");
+  // The pass holds the verdict while the repo's vision halt lasts (spec §16).
+  assert.ok(setup.logLines().some((line) => line.event === "vision-gone"));
+  assert.ok(!setup.logLines().some((line) => line.event === "step-started"));
+
+  // And the decider itself decides nothing should its step start anyway.
+  const unchecked = new Passes({
+    store: setup.store,
+    log: setup.log,
+    dataDirectory: setup.dataDirectory,
+    forgeFor: () => forge,
+    defaultBranchFor: async () => mirror,
+    planners: [deciderPlanner({ store: setup.store, log: setup.log, dataDirectory: setup.dataDirectory, mirrorFor: async () => mirror })],
+    modelRuns: new ModelRuns({ runner: scripted, log: setup.log }),
+    visionPresent: async () => null,
+  });
+  await unchecked.runPass();
+  await until(() => unchecked.stepsRunning === 0, "the step has finished");
+  await unchecked.stop();
+  assert.equal(scripted.requests.length, 0);
   assert.ok(setup.logLines().some((line) => line.event === "verdict-skipped"));
 });
 

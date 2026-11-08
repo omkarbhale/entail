@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { ChangeDeduplicator } from "./changes.ts";
 import { ClaudeRunner } from "./claude-runner.ts";
 import { CursorStore } from "./cursors.ts";
@@ -8,7 +10,11 @@ import { Limiter, LimitedTransport } from "./forge-limit.ts";
 import { ForgeWriter, InFlightWrites } from "./forge-writer.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import { takeInIfNew } from "./intake.ts";
-import { forgeRemote, Mirror } from "./mirror.ts";
+import { forgeRemote, Mirror, mirrorPaths } from "./mirror.ts";
+import { Git } from "./git.ts";
+import { checkHostLogin, hostKey, type HostLoginProblem } from "./host-login.ts";
+import type { ToolCheck, ToolProblem } from "./tool-check.ts";
+import { readVision } from "./vision.ts";
 import { ModelRuns } from "./model-runs.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import { pullInOnComment } from "./pull-in.ts";
@@ -21,6 +27,14 @@ import type { RepoRecord, SettingsVersionRecord, Store, TicketRecord } from "./s
 export const BACKOFF_BASE_MS = 60_000;
 /** The longest a failing repo waits between polls (ADR-0017). */
 export const BACKOFF_MAX_MS = 15 * 60_000;
+/**
+ * The steps a repo whose VISION.md is gone or empty does not start: nothing
+ * new is decided and nothing lands there until a vision is back (spec §4).
+ */
+export const VISION_HALTED_STEPS: ReadonlySet<string> = new Set(["verdict", "findings", "criteria", "landing-check", "merge"]);
+
+/** A host none of whose repos has polled for this long is the host-not-answering halt (spec §16). */
+export const HOST_UNANSWERED_HALT_MS = 60 * 60_000;
 
 /** How long a repo that failed `failures` polls in a row waits before its next one. */
 export function backoffDelay(failures: number): number {
@@ -74,6 +88,7 @@ export type OwedStepPlanner = (ticket: TicketRecord, pass: RepoPass) => OwedStep
 export type RepoPassOutcome =
   | { repoId: number; outcome: "polled"; takenIn: number[]; started: number[] }
   | { repoId: number; outcome: "paused" | "stopping" }
+  | { repoId: number; outcome: "halted"; why: "tools" | "host" }
   | { repoId: number; outcome: "waiting-for-records"; since: string; markedIssues: number[] }
   | { repoId: number; outcome: "rate-limited" | "backing-off"; until: string }
   | { repoId: number; outcome: "failed"; error: string };
@@ -105,6 +120,69 @@ export interface PassesOptions {
    * is checked first, and a repo missing records is left alone. None by default.
    */
   recordsCheck?: RecordsCheck;
+  /**
+   * Checks `git` and `claude` before every pass (spec §16). While either
+   * fails, the pass reads and writes nothing and model work is held, until a
+   * later check passes. None by default: the tools count as present.
+   */
+  toolCheck?: ToolCheck;
+  /** Problems the start found with `git` or `claude`, in force until the first pass checks again. */
+  toolProblems?: readonly ToolProblem[];
+  /**
+   * Checks each host's CLI login once a pass, before any of its repos is
+   * polled: a CLI logged out or logged in as another account halts the
+   * host's repos until a later check passes (spec §16). Off by default.
+   */
+  checkHostLogins?: boolean;
+  /** Host halts the start found, by {@link hostKey}, in force until a pass checks the host again. */
+  hostLoginHalts?: ReadonlyMap<string, HostLoginHalt>;
+  /**
+   * Whether VISION.md holds vision lines at the default branch head a pass
+   * saw, or null when that cannot be read; the repo's git mirror by default.
+   */
+  visionPresent?: (repo: RepoRecord, commit: string) => Promise<boolean | null>;
+  /**
+   * Runs once before a repo's first poll in this process, after its records
+   * were found, such as settling forge writes the start could not settle. A
+   * failure fails the poll, and it runs again before the next.
+   */
+  beforeFirstPoll?: (repo: RepoRecord, forge: Forge) => Promise<void>;
+  /** Runs after every pass, with what it did with each repo. */
+  afterPass?: (outcomes: readonly RepoPassOutcome[]) => void | Promise<void>;
+}
+
+/** A host whose CLI cannot act as the owner, and since when (spec §16). */
+export interface HostLoginHalt extends HostLoginProblem {
+  forge: ForgeKind;
+  host: string;
+  since: string;
+}
+
+/** A host none of whose repos has polled for an hour or more, and since when it stopped answering. */
+export interface HostUnanswered {
+  forge: ForgeKind;
+  host: string;
+  since: string;
+  lastError: string;
+}
+
+/** What the passes know of a repo's polling, for health and the Repos page. */
+export interface RepoPolling {
+  /** The last poll that succeeded in this process, as ISO, or null. */
+  lastSuccess: string | null;
+  /** Since when every poll of the repo has failed, and the last error, or null. */
+  failing: { since: string; failures: number; lastError: string; retryAt: string } | null;
+}
+
+/** Whether the repo's mirror holds a VISION.md with vision lines at `commit`; null when it cannot be read. */
+export async function mirrorVisionAt(dataDirectory: string, repo: RepoRecord, commit: string): Promise<boolean | null> {
+  try {
+    const { mirror } = mirrorPaths(dataDirectory, { forge: repo.forge, host: repo.host, projectId: repo.projectId });
+    if (!existsSync(join(mirror, "HEAD"))) return null;
+    return (await readVision(new Git(mirror), commit)).status === "present";
+  } catch {
+    return null;
+  }
 }
 
 /** The forge adapter for an enrolled repo, through the owner's CLI, its subprocesses limited by `limiter`. */
@@ -127,6 +205,13 @@ export function repoForge(repo: RepoRecord, limiter: Limiter): Forge {
  * 2. works out every non-final ticket's next owed step from its records and
  *    the latest forge state;
  * 3. starts that step unless the ticket already has one running.
+ *
+ * Before anything else, a pass checks `git` and `claude`, and does nothing
+ * while either fails; and before a host's repos are polled, it checks once
+ * that the host's CLI is logged in as the account they were enrolled with.
+ * It keeps what health shows (spec §16): each repo's last successful poll
+ * and how long its polls have failed, the hosts that have not answered for an
+ * hour, and the repos whose VISION.md is gone.
  *
  * Repos are polled side by side, with at most four forge subprocesses at once
  * across all of them. A rate limit is honoured until its reset; any other
@@ -157,6 +242,11 @@ export class Passes {
   readonly #inFlight: InFlightWrites;
   readonly #modelRuns: ModelRuns;
   readonly #recordsCheck: RecordsCheck | undefined;
+  readonly #toolCheck: ToolCheck | undefined;
+  readonly #checkHostLogins: boolean;
+  readonly #visionPresent: (repo: RepoRecord, commit: string) => Promise<boolean | null>;
+  readonly #beforeFirstPoll: ((repo: RepoRecord, forge: Forge) => Promise<void>) | undefined;
+  readonly #afterPass: ((outcomes: readonly RepoPassOutcome[]) => void | Promise<void>) | undefined;
 
   readonly #forges = new Map<number, Forge>();
   readonly #defaultBranches = new Map<number, Promise<DefaultBranchSource>>();
@@ -164,8 +254,29 @@ export class Passes {
   readonly #backoff = new Map<number, { failures: number; until: number }>();
   /** Per host, when its rate limit resets. */
   readonly #rateLimited = new Map<string, number>();
-  /** Hosts whose CLI is logged out, until a poll of the host succeeds. */
-  readonly #haltedHosts = new Set<string>();
+  /** Hosts whose CLI is logged out or logged in as another account, by host key, until a check passes and a poll catches up. */
+  readonly #hostLogins = new Map<string, HostLoginHalt>();
+  /** Halted hosts whose check passed again: polled, and freed once a poll of theirs has caught up. */
+  readonly #hostLoginsPassing = new Set<string>();
+  /** Per host key, since when none of its repos has polled, and the last error. */
+  readonly #hostUnanswered = new Map<string, { since: number; lastError: string }>();
+  /** Each host's login check on the pass in progress, so a host is checked once a pass. */
+  #hostChecks = new Map<string, Promise<void>>();
+  /** Per repo, since when every poll has failed. */
+  readonly #pollFailingSince = new Map<number, { since: number; lastError: string }>();
+  /** Per repo, the last poll that succeeded. */
+  readonly #lastSuccess = new Map<number, string>();
+  /** Per repo, whether VISION.md held vision lines at the head the last poll saw, and since when it has not. */
+  readonly #visionGone = new Map<number, string>();
+  /** Per repo, the head whose VISION.md was last read, so an unmoved head is not read again. */
+  readonly #visionRead = new Map<number, string>();
+  /** Repos whose first poll in this process has been prepared for. */
+  readonly #prepared = new Set<number>();
+  /** What the last tool check found; empty while `git` and `claude` are fine. */
+  #toolProblems: readonly ToolProblem[] = [];
+  /** Since when the tools have failed their check. */
+  #toolsHaltedSince: string | null = null;
+  #lastPassAt: string | null = null;
   /** The step each ticket has running, by ticket id. */
   readonly #running = new Map<number, Promise<void>>();
   /** The repo of each ticket with a step running, by ticket id. */
@@ -197,15 +308,80 @@ export class Passes {
     this.#changeHandlers = options.changeHandlers ?? [];
     this.#inFlight = options.inFlight ?? new InFlightWrites();
     this.#recordsCheck = options.recordsCheck;
+    this.#toolCheck = options.toolCheck;
+    this.#checkHostLogins = options.checkHostLogins ?? false;
+    for (const [key, halt] of options.hostLoginHalts ?? []) this.#hostLogins.set(key, halt);
+    if (options.toolProblems !== undefined && options.toolProblems.length > 0) {
+      this.#toolProblems = options.toolProblems;
+      this.#toolsHaltedSince = new Date().toISOString();
+    }
+    const dataDirectory = options.dataDirectory;
+    this.#visionPresent = options.visionPresent ?? ((repo, commit) => mirrorVisionAt(dataDirectory, repo, commit));
+    this.#beforeFirstPoll = options.beforeFirstPoll;
+    this.#afterPass = options.afterPass;
     const store = options.store;
     this.#modelRuns =
       options.modelRuns ??
       new ModelRuns({ runner: new ClaudeRunner(), log: options.log, limit: () => readGlobalSettings(store).settings.modelRunLimit });
   }
 
-  /** Whether the host's CLI is logged out, so its repos cannot be reached. */
+  /**
+   * Whether entail cannot reach the host: its CLI is logged out or logged in
+   * as another account, or it has not answered for an hour (spec §16).
+   */
   hostHalted(host: string): boolean {
-    return this.#haltedHosts.has(host);
+    for (const halt of this.#hostLogins.values()) if (halt.host === host) return true;
+    for (const unanswered of this.hostsUnanswered()) if (unanswered.host === host) return true;
+    return false;
+  }
+
+  /** Hosts whose CLI cannot act as the owner. */
+  hostLoginHalts(): HostLoginHalt[] {
+    return [...this.#hostLogins.values()];
+  }
+
+  /** Hosts none of whose repos has polled for an hour or more: the host-not-answering halt. */
+  hostsUnanswered(now = Date.now()): HostUnanswered[] {
+    const halts: HostUnanswered[] = [];
+    for (const [key, { since, lastError }] of this.#hostUnanswered) {
+      if (now - since < HOST_UNANSWERED_HALT_MS) continue;
+      const [forge, ...host] = key.split(":");
+      halts.push({ forge: forge as ForgeKind, host: host.join(":"), since: new Date(since).toISOString(), lastError });
+    }
+    return halts;
+  }
+
+  /** What `git` and `claude` lacked at the last check, and since when; null while both are fine. */
+  get toolsHalted(): { since: string; problems: readonly ToolProblem[] } | null {
+    return this.#toolsHaltedSince === null ? null : { since: this.#toolsHaltedSince, problems: this.#toolProblems };
+  }
+
+  /** When the last pass ended, as ISO, or null before the first. */
+  get lastPassAt(): string | null {
+    return this.#lastPassAt;
+  }
+
+  /** What the passes know of the repo's polling. */
+  polling(repoId: number): RepoPolling {
+    const failing = this.#pollFailingSince.get(repoId);
+    const backoff = this.#backoff.get(repoId);
+    return {
+      lastSuccess: this.#lastSuccess.get(repoId) ?? null,
+      failing:
+        failing === undefined
+          ? null
+          : {
+              since: new Date(failing.since).toISOString(),
+              failures: backoff?.failures ?? 0,
+              lastError: failing.lastError,
+              retryAt: new Date(backoff?.until ?? failing.since).toISOString(),
+            },
+    };
+  }
+
+  /** Since when the repo's VISION.md has been gone or empty at the head its polls saw, or null. */
+  visionGoneSince(repoId: number): string | null {
+    return this.#visionGone.get(repoId) ?? null;
   }
 
   /** How many tickets have a step running now. */
@@ -266,9 +442,107 @@ export class Passes {
     }, delayMs);
   }
 
-  /** One pass over every enrolled repo; an unenrolled one is neither read nor written. */
+  /**
+   * One pass over every enrolled repo; an unenrolled one is neither read nor
+   * written. It first checks `git` and `claude`: while either fails, it does
+   * nothing else (spec §16).
+   */
   async runPass(): Promise<RepoPassOutcome[]> {
-    return Promise.all(this.#store.listEnrolledRepos().map((repo) => this.#passRepo(repo)));
+    const repos = this.#store.listEnrolledRepos();
+    let outcomes: RepoPassOutcome[];
+    if (!(await this.#checkTools())) {
+      outcomes = repos.map((repo) => ({ repoId: repo.id, outcome: "halted", why: "tools" }));
+    } else {
+      this.#hostChecks = new Map();
+      this.#forgetUnpolled(repos);
+      outcomes = await Promise.all(repos.map((repo) => this.#passRepo(repo)));
+    }
+    this.#lastPassAt = new Date().toISOString();
+    if (this.#afterPass) {
+      try {
+        await this.#afterPass(outcomes);
+      } catch (error) {
+        this.#log.error("after-pass-failed", { error: message(error) });
+      }
+    }
+    return outcomes;
+  }
+
+  /** Checks `git` and `claude`, holding model work while either fails; resolves whether entail may work. */
+  async #checkTools(): Promise<boolean> {
+    if (!this.#toolCheck) return true;
+    let problems: ToolProblem[];
+    try {
+      problems = await this.#toolCheck();
+    } catch (error) {
+      problems = [{ tool: "git", problem: "missing", detail: `the check could not run: ${message(error)}` }];
+    }
+    // A run `claude` refused for want of a login holds model work until a check finds it logged in.
+    if (!problems.some((problem) => problem.tool === "claude")) this.#modelRuns.loginRestored();
+    if (problems.length > 0) {
+      if (this.#toolsHaltedSince === null) {
+        this.#toolsHaltedSince = new Date().toISOString();
+        this.#log.error("tools-halted", { problems: problems.map((problem) => problem.detail) });
+      }
+      this.#toolProblems = problems;
+      this.#modelRuns.hold(true);
+      return false;
+    }
+    if (this.#toolsHaltedSince !== null) this.#log.info("tools-restored", {});
+    this.#toolsHaltedSince = null;
+    this.#toolProblems = [];
+    this.#modelRuns.hold(false);
+    return true;
+  }
+
+  /** Checks the repo's host login once this pass, then resolves whether the host is halted for it. */
+  async #hostLoginHalted(repo: RepoRecord): Promise<boolean> {
+    // Without the login check, a halted host is polled again, and a poll that succeeds clears the halt.
+    if (!this.#checkHostLogins) return false;
+    const key = hostKey(repo);
+    let check = this.#hostChecks.get(key);
+    if (!check) {
+      check = this.#checkHost(repo);
+      this.#hostChecks.set(key, check);
+    }
+    await check;
+    return this.#hostLogins.has(key) && !this.#hostLoginsPassing.has(key);
+  }
+
+  async #checkHost(repo: RepoRecord): Promise<void> {
+    const key = hostKey(repo);
+    const repos = this.#store.listEnrolledRepos().filter((other) => hostKey(other) === key);
+    const check = await checkHostLogin(this.#forge(repo), repos);
+    if (check.status === "unknown") {
+      // Says nothing about the login; the polls show whether the host answers.
+      this.#log.warn("host-check-failed", { host: repo.host, error: check.error });
+      return;
+    }
+    if (check.status === "ok") {
+      // The halt lasts until a poll has caught up, so the board unlocks only once entail has seen what changed.
+      if (this.#hostLogins.has(key)) this.#hostLoginsPassing.add(key);
+      return;
+    }
+    this.#hostLoginsPassing.delete(key);
+    this.#haltHostLogin(repo, { problem: check.problem, detail: check.detail });
+  }
+
+  #haltHostLogin(repo: RepoRecord, problem: HostLoginProblem): void {
+    const key = hostKey(repo);
+    this.#hostLoginsPassing.delete(key);
+    const existing = this.#hostLogins.get(key);
+    if (existing?.problem === problem.problem) return;
+    this.#hostLogins.set(key, { forge: repo.forge, host: repo.host, ...problem, since: new Date().toISOString() });
+    this.#log.error("host-login-halted", { host: repo.host, problem: problem.problem, detail: problem.detail });
+  }
+
+  /** Drops poll failures of repos no longer polled (paused or unenrolled), and of hosts left with none. */
+  #forgetUnpolled(repos: RepoRecord[]): void {
+    const polled = repos.filter((repo) => (this.#store.latestSettings(repo.id)?.settings as Partial<RepoSettings> | undefined)?.paused !== true);
+    const ids = new Set(polled.map((repo) => repo.id));
+    const hosts = new Set(polled.map((repo) => hostKey(repo)));
+    for (const id of [...this.#pollFailingSince.keys()]) if (!ids.has(id)) this.#pollFailingSince.delete(id);
+    for (const key of [...this.#hostUnanswered.keys()]) if (!hosts.has(key)) this.#hostUnanswered.delete(key);
   }
 
   async #passRepo(repo: RepoRecord): Promise<RepoPassOutcome> {
@@ -288,6 +562,7 @@ export class Passes {
     }
     const backoff = this.#backoff.get(repoId);
     if (backoff && now < backoff.until) return { repoId, outcome: "backing-off", until: new Date(backoff.until).toISOString() };
+    if (await this.#hostLoginHalted(repo)) return { repoId, outcome: "halted", why: "host" };
 
     if (this.#recordsCheck) {
       // A repo is read and written only once its records are found (spec §3).
@@ -308,6 +583,10 @@ export class Passes {
     let pass: RepoPass;
     const takenIn: number[] = [];
     try {
+      if (this.#beforeFirstPoll && !this.#prepared.has(repoId)) {
+        await this.#beforeFirstPoll(repo, forge);
+        this.#prepared.add(repoId);
+      }
       const source = await this.#defaultBranch(repo);
       head = await this.#limiter.run(() => source.updateDefaultBranch());
       const batch = await forge.changesSince(this.#cursors.get(key));
@@ -343,8 +622,14 @@ export class Passes {
       this.#seen.delete(repoId);
       return this.#failed(repo, error);
     }
-    this.#haltedHosts.delete(repo.host);
+    this.#hostUnanswered.delete(hostKey(repo));
+    if (!this.#checkHostLogins || this.#hostLoginsPassing.delete(hostKey(repo))) {
+      if (this.#hostLogins.delete(hostKey(repo))) this.#log.info("host-login-restored", { host: repo.host });
+    }
+    this.#pollFailingSince.delete(repoId);
+    this.#lastSuccess.set(repoId, new Date().toISOString());
     if (this.#backoff.delete(repoId)) this.#log.info("poll-recovered", { repoId });
+    await this.#noteVision(repo, head.commit);
     this.#log.info("poll", { repoId, head: head.commit, fetched: head.fetched, takenIn: takenIn.length });
 
     const started = this.#startOwedSteps(pass);
@@ -378,15 +663,34 @@ export class Passes {
     }
     if (error instanceof ForgeLoggedOutError) {
       // A logged-out CLI is the host's halt, not a backoff: it is checked again on the next pass.
-      this.#haltedHosts.add(repo.host);
+      this.#haltHostLogin(repo, { problem: "logged-out", detail: `${repo.forge === "github" ? "gh" : "glab"} is not logged in to ${repo.host}` });
       this.#log.error("host-logged-out", { repoId, host: repo.host, error: error.message });
       return { repoId, outcome: "failed", error: error.message };
     }
+    const now = Date.now();
+    const failing = this.#pollFailingSince.get(repoId);
+    this.#pollFailingSince.set(repoId, { since: failing?.since ?? now, lastError: message(error) });
+    const unanswered = this.#hostUnanswered.get(hostKey(repo));
+    this.#hostUnanswered.set(hostKey(repo), { since: unanswered?.since ?? now, lastError: message(error) });
     const failures = (this.#backoff.get(repoId)?.failures ?? 0) + 1;
-    const until = Date.now() + backoffDelay(failures);
+    const until = now + backoffDelay(failures);
     this.#backoff.set(repoId, { failures, until });
     this.#log.warn("poll-failed", { repoId, failures, retryAt: new Date(until).toISOString(), error: message(error) });
     return { repoId, outcome: "failed", error: message(error) };
+  }
+
+  /** Notes whether VISION.md is gone or empty at the head the poll saw: the repo's vision halt (spec §4, §16). */
+  async #noteVision(repo: RepoRecord, commit: string): Promise<void> {
+    if (this.#visionRead.get(repo.id) === commit) return;
+    const present = await this.#visionPresent(repo, commit);
+    if (present === null) return; // nothing to read; what was known stands
+    this.#visionRead.set(repo.id, commit);
+    if (present) {
+      if (this.#visionGone.delete(repo.id)) this.#log.info("vision-back", { repoId: repo.id, commit });
+    } else if (!this.#visionGone.has(repo.id)) {
+      this.#visionGone.set(repo.id, new Date().toISOString());
+      this.#log.error("vision-gone", { repoId: repo.id, commit });
+    }
   }
 
   /** Starts each non-final ticket's owed step, unless it already has one running. */
@@ -397,6 +701,7 @@ export class Passes {
       if (this.#running.has(ticket.id)) continue;
       const step = this.#owedStep(ticket, pass);
       if (!step) continue;
+      if (VISION_HALTED_STEPS.has(step.name) && this.#visionGone.has(pass.repo.id)) continue;
       const running = step.run().then(
         () => {
           this.#log.info("step-done", { ticketId: ticket.id, step: step.name });
@@ -459,10 +764,6 @@ export class Passes {
     if (name === null) throw new Error("the owner's display name is not set, so entail cannot attribute a comment");
     return new ForgeWriter(this.#store, forge, repo, name, this.#inFlight);
   }
-}
-
-function hostKey(repo: RepoRecord): string {
-  return `${repo.forge}:${repo.host}`;
 }
 
 function message(error: unknown): string {

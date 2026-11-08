@@ -16,7 +16,9 @@ import {
   reposPages,
   REVIEW_TTL_MS,
   type RepoActivity,
+  type ReposHealth,
 } from "../src/repos-page.ts";
+import type { HealthCondition } from "../src/health.ts";
 import { startServer, TOKEN_FIELD, type LocalServer } from "../src/server.ts";
 import { globalSettingsPage } from "../src/settings-page.ts";
 import { enrollmentSetup, type EnrollmentSetup } from "./enrollment-fixture.ts";
@@ -34,7 +36,7 @@ interface Served extends EnrollmentSetup {
 
 async function serveRepos(
   t: TestContext,
-  options: Parameters<typeof enrollmentSetup>[1] & { activity?: RepoActivity; recordsForge?: IntakeForge } = {},
+  options: Parameters<typeof enrollmentSetup>[1] & { activity?: RepoActivity; recordsForge?: IntakeForge; health?: ReposHealth } = {},
 ): Promise<Served> {
   const setup = enrollmentSetup(t, options);
   const recordsForge = options.recordsForge;
@@ -48,6 +50,7 @@ async function serveRepos(
       activity: options.activity,
       now: () => new Date(Date.now() + offset),
       recordsCheck,
+      health: options.health,
     }),
     globalSettingsPage(setup.store),
   ];
@@ -317,6 +320,37 @@ test("each repo shows its state: active, pausing, paused or no vision", async (t
   assert.equal(await stateOf(), "paused");
 });
 
+test("a host's halt is shown on its repos apart from the owner's pause, and on the hosts list", async (t) => {
+  const conditions: HealthCondition[] = [];
+  const served = await serveRepos(t, { health: () => conditions });
+  const result = await served.enroller.check({ forge: "github", host: "github.com", path: "acme/tally" });
+  assert.ok(result.ok);
+  const confirmed = await served.enroller.confirm(result.review, { visionOrigin: "owner-stated", mergeMethod: "squash" });
+  assert.ok(confirmed.ok);
+  const page = async () => (await send(served.server.info.port, { path: REPOS_PATH })).body;
+  assert.match(await page(), /<h2>Hosts<\/h2>[\s\S]*github\.com[\s\S]*<code>gh<\/code>[\s\S]*reachable/);
+
+  conditions.push({
+    key: "host:github:github.com:logged-out",
+    kind: "halt",
+    scope: { kind: "host", forge: "github", host: "github.com" },
+    wrong: "gh is not logged in to github.com",
+    stops: "1 repo on github.com is not being read or written",
+    clears: "Log gh in to github.com as owner; entail checks again on every pass",
+    since: "2026-11-09T09:40:00.000Z",
+    notify: true,
+  });
+  let html = await page();
+  assert.equal(html.match(/data-state="([^"]*)"/)?.[1], "host halted");
+  assert.match(html, /Halted: gh is not logged in to github\.com, since <time datetime="2026-11-09T09:40:00.000Z">/);
+  assert.match(html, /<table class="hosts">[\s\S]*Halted: gh is not logged in to github\.com[\s\S]*Log gh in to github\.com as owner/);
+
+  served.store.saveSettings(confirmed.repo.id, { ...enrollmentSettings("owner-stated", "squash"), paused: true }, "Ada");
+  html = await page();
+  assert.equal(html.match(/data-state="([^"]*)"/)?.[1], "paused", "the owner's pause is the repo's state");
+  assert.match(html, /data-health="host:github:github\.com:logged-out">Halted: gh is not logged in/, "and its halt is still shown, apart");
+});
+
 test("the state rule puts the owner's pause before a vanished vision", () => {
   assert.equal(repoState(false, false, true), "active");
   assert.equal(repoState(false, false, null), "active", "nothing fetched yet");
@@ -573,4 +607,7 @@ test("the state rule puts the owner's pause first, then missing or unchecked rec
   assert.equal(repoState(false, false, true, "unchecked"), "checking records");
   assert.equal(repoState(false, false, false, "clear"), "no vision");
   assert.equal(repoState(true, false, true, "missing"), "paused");
+  assert.equal(repoState(false, false, true, "unchecked", true), "host halted", "a halted host's repos cannot be checked");
+  assert.equal(repoState(false, false, true, "missing", true), "waiting for records");
+  assert.equal(repoState(true, false, true, "clear", true), "paused");
 });

@@ -22,6 +22,9 @@ import { hiddenMarker } from "../src/comment-rules.ts";
 
 const running = new WeakMap<TestContext, RunningEntail[]>();
 
+/** `git` and `claude` found present and logged in, so these tests never depend on the machine's own. */
+const NO_TOOL_PROBLEMS = async () => [];
+
 /** A data directory removed after the test, once every entail started in it has stopped. */
 function dataDirectory(t: TestContext): string {
   const dir = mkdtempSync(join(tmpdir(), "entail-run-"));
@@ -39,12 +42,13 @@ function dataDirectory(t: TestContext): string {
 
 function saveSettings(dir: string, changes: Partial<GlobalSettings>): void {
   const store = Store.openIn(dir);
-  store.saveGlobalSettings({ ...DEFAULT_GLOBAL_SETTINGS, ownerDisplayName: "Ada", ...changes }, "Ada");
+  // Notices go to a file, so a halt never shows on this machine's desktop.
+  store.saveGlobalSettings({ ...DEFAULT_GLOBAL_SETTINGS, ownerDisplayName: "Ada", noticeConnector: "file", ...changes }, "Ada");
   store.close();
 }
 
 async function start(t: TestContext, dir: string): Promise<RunningEntail> {
-  const run = await startRun({ dataDirectory: dir, log: { echo: null } });
+  const run = await startRun({ dataDirectory: dir, log: { echo: null }, toolCheck: NO_TOOL_PROBLEMS });
   running.get(t)!.push(run);
   return run;
 }
@@ -95,7 +99,7 @@ test("entail run fails with a clear message and releases the lock when the board
   const { port } = other.address() as { port: number };
   saveSettings(dir, { boardPort: port });
 
-  await assert.rejects(startRun({ dataDirectory: dir, log: { echo: null } }), (error: unknown) => {
+  await assert.rejects(startRun({ dataDirectory: dir, log: { echo: null }, toolCheck: NO_TOOL_PROBLEMS }), (error: unknown) => {
     assert.ok(error instanceof BoardPortTakenError);
     assert.match(error.message, new RegExp(`board port ${port} on 127\\.0\\.0\\.1 is already in use`));
     return true;
@@ -155,6 +159,7 @@ test("entail starts in spec order: lock, store, the records check, settle intent
   const entail = await startRun({
     dataDirectory: dir,
     log: { echo: null },
+    toolCheck: NO_TOOL_PROBLEMS,
     // No owed steps: this test is about start order, not deciding the tickets it takes in.
     passes: { forgeFor: () => forge, defaultBranchFor: async () => STILL_HEAD, planners: [] },
   });
@@ -200,6 +205,7 @@ test("a repo whose issues carry the marker with no records gets no forge read or
   const entail = await startRun({
     dataDirectory: dir,
     log: { echo: null },
+    toolCheck: NO_TOOL_PROBLEMS,
     passes: { forgeFor: () => forge, defaultBranchFor: async () => STILL_HEAD, planners: [] },
   });
   running.get(t)!.push(entail);
@@ -218,7 +224,7 @@ test("a repo whose issues carry the marker with no records gets no forge read or
 test("stopping starts no new work, waits for in-flight forge writes up to the limit, then releases the lock", async (t) => {
   const dir = dataDirectory(t);
   saveSettings(dir, { boardPort: await freePort() });
-  const entail = await startRun({ dataDirectory: dir, log: { echo: null }, stopWaitMs: 200 });
+  const entail = await startRun({ dataDirectory: dir, log: { echo: null }, toolCheck: NO_TOOL_PROBLEMS, stopWaitMs: 200 });
   let confirmed = false;
   entail.inFlight.track(new Promise<void>((resolve) => setTimeout(() => {
     confirmed = true;
@@ -230,7 +236,7 @@ test("stopping starts no new work, waits for in-flight forge writes up to the li
   assert.ok(!existsSync(join(dir, LOCK_FILE)));
   assert.ok(!logEvents(dir).includes("writes-unconfirmed-at-stop"));
 
-  const again = await startRun({ dataDirectory: dir, log: { echo: null }, stopWaitMs: 100 });
+  const again = await startRun({ dataDirectory: dir, log: { echo: null }, toolCheck: NO_TOOL_PROBLEMS, stopWaitMs: 100 });
   again.inFlight.track(new Promise<void>(() => {}));
   again.stop("SIGINT");
   await again.stopped;
@@ -259,4 +265,47 @@ test("stopping commits the records repo and pushes it to the remote before relea
   assert.ok(readRecordsPushState(dir).lastSuccess !== null);
   const events = logEvents(dir);
   assert.ok(events.indexOf("records-pushed") < events.indexOf("stopped"), "before the lock was released");
+});
+
+test("with claude logged out, entail stays up and serves every page with the halt on the strip, reading no forge until a pass finds it fine", async (t) => {
+  const dir = dataDirectory(t);
+  const port = await freePort();
+  saveSettings(dir, { boardPort: port });
+  const store = Store.openIn(dir);
+  store.enroll({
+    repo: { forge: "github", host: "github.com", projectId: 5001, path: "acme/tally", ownerAccountId: OWNER_ID, ownerLogin: "owner" },
+    settings: enrollmentSettings("owner-stated", "squash"),
+    savedBy: "Ada",
+    visionSha: "c0ffee",
+    visionLines: ["Tally counts words in text."],
+    visionOrigin: "owner-stated",
+    openIssueNumbers: [],
+  });
+  store.close();
+  const forge = new IntakeForge();
+  let problems = [{ tool: "claude" as const, problem: "logged-out" as const, detail: "claude auth status reports no login" }];
+  const entail = await startRun({
+    dataDirectory: dir,
+    log: { echo: null },
+    toolCheck: async () => problems,
+    passes: { forgeFor: () => forge, defaultBranchFor: async () => STILL_HEAD, planners: [] },
+  });
+  running.get(t)!.push(entail);
+  await until(() => entail.passes.lastPassAt !== null);
+
+  for (const path of ["/", CALLS_PATH, "/repos", SETTINGS_PATH, "/no-such-page"]) {
+    const page = await send(port, { path });
+    assert.match(page.body, /<section class="health-strip"/, `the strip is on ${path}`);
+    assert.match(page.body, /Halted: claude is not logged in\.<\/strong> Nothing is read, decided or merged since/);
+  }
+  assert.equal(forge.reads.changes, 0, "no forge read: not the records check, not a poll");
+  const notices = readFileSync(join(dir, NOTICES_FILE), "utf8").split("\n").filter((line) => line !== "");
+  assert.deepEqual(notices.map((line) => JSON.parse(line).kind), ["health"], "one notice as the halt begins");
+
+  problems = [];
+  await entail.passes.runPass();
+  assert.ok(forge.reads.changes > 0, "work resumes by itself");
+  const page = await send(port, { path: "/" });
+  assert.doesNotMatch(page.body, /<section class="health-strip"/, "no strip once all is well");
+  assert.match(page.body, /<span class="last-pass muted">Last pass <time/);
 });

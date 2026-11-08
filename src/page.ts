@@ -1,3 +1,4 @@
+import type { HealthCondition, PageHealth } from "./health.ts";
 import type { PageRequest } from "./server.ts";
 
 /** Escapes text for HTML element content and quoted attribute values. */
@@ -48,8 +49,14 @@ ${content.body}
 `;
 }
 
-/** The header every page shares. */
+/**
+ * The header every page shares. While anything is halted or warned, the
+ * health strip follows it with one line each: what is wrong, what it stops,
+ * since when and what clears it. Otherwise the header says only when the
+ * last pass ran (spec §16). The strip is not a board item and takes no answer.
+ */
 function renderHeader(request: PageRequest): string {
+  const health = readHealth(request);
   const links = request.server.nav
     .map((link) => {
       const current = link.path === request.url.pathname ? ' aria-current="page"' : "";
@@ -61,7 +68,35 @@ function renderHeader(request: PageRequest): string {
 <nav>
 ${links}
 </nav>
-</header>`;
+${health !== null && health.strip.length === 0 ? `<span class="last-pass muted">${lastPassHtml(health.lastPass)}</span>\n` : ""}</header>${health === null ? "" : healthStripHtml(health.strip)}`;
+}
+
+function readHealth(request: PageRequest): PageHealth | null {
+  try {
+    return request.server.health?.() ?? null;
+  } catch {
+    // Health that cannot be read leaves the page as it is.
+    return null;
+  }
+}
+
+function lastPassHtml(lastPass: string | null): string {
+  return lastPass === null ? "No pass has run yet" : `Last pass ${timeHtml(lastPass)}`;
+}
+
+/** The health strip: one line per halt or warning, or nothing when all is well (spec §16). */
+export function healthStripHtml(conditions: readonly HealthCondition[]): string {
+  if (conditions.length === 0) return "";
+  const lines = conditions.map(
+    (condition) =>
+      `<li data-kind="${condition.kind}" data-key="${escapeHtml(condition.key)}"><strong>${condition.kind === "halt" ? "Halted" : "Warning"}: ${escapeHtml(condition.wrong)}.</strong> ${escapeHtml(condition.stops)} since ${timeHtml(condition.since)}. ${escapeHtml(condition.clears)}.</li>`,
+  );
+  return `
+<section class="health-strip" role="status" aria-label="entail's health">
+<ul>
+${lines.join("\n")}
+</ul>
+</section>`;
 }
 
 const STYLE = `
@@ -73,6 +108,11 @@ header.site { display: flex; gap: 1.5rem; align-items: baseline; padding: .75rem
 header.site .brand { font-weight: 600; }
 header.site nav { display: flex; gap: 1rem; }
 header.site a[aria-current] { font-weight: 600; text-decoration: none; color: var(--fg); }
+header.site .last-pass { margin-left: auto; font-size: .875rem; }
+.health-strip { padding: .5rem 1rem; background: var(--soft); border-bottom: 2px solid var(--bad); }
+.health-strip ul { margin: 0; padding-left: 1.25rem; }
+.health-strip li[data-kind=warning] strong { color: var(--fg); }
+.health-strip li[data-kind=halt] strong { color: var(--bad); }
 main { max-width: 48rem; padding: 1rem; margin: 0 auto; }
 main.wide { max-width: 80rem; }
 a { color: var(--accent); }

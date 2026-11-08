@@ -50,13 +50,16 @@ export interface RunFacts {
   usage: Record<string, unknown> | null;
 }
 
-export const MACHINE_FAILURE_KINDS = ["no-structured-output", "error", "timeout", "refusal", "usage-limit"] as const;
+export const MACHINE_FAILURE_KINDS = ["no-structured-output", "error", "timeout", "refusal", "usage-limit", "logged-out"] as const;
 
 export type MachineFailureKind = (typeof MACHINE_FAILURE_KINDS)[number];
 
 /**
  * A run that produced no usable output. A machine failure is retried, logged
  * to the operational log and never reaches the board (ADR-0002, ADR-0017).
+ * `logged-out` is `claude` refusing the run for want of a login: that is the
+ * all-of-entail halt, checked again on every pass, not a failure retried on
+ * its own (ADR-0019).
  */
 export interface MachineFailure {
   kind: MachineFailureKind;
