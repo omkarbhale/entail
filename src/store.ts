@@ -792,6 +792,11 @@ export class Store {
     );
   }
 
+  /** The answer given to a board item, or null while it has none. */
+  answerFor(boardItemId: number): AnswerRecord | null {
+    return mapOrNull(this.#get("SELECT * FROM answers WHERE board_item_id = ?", boardItemId), toAnswer);
+  }
+
   /** The ticket's open board item: neither answered nor withdrawn. */
   openBoardItem(ticketId: number): BoardItemRecord | null {
     return mapOrNull(
@@ -807,14 +812,33 @@ export class Store {
 
   /** Every board item raised for a ticket, oldest first, each with its answer or withdrawal. */
   boardItemsForTicket(ticketId: number): BoardItemHistory[] {
-    return this.#all("SELECT * FROM board_items WHERE ticket_id = ? ORDER BY id", ticketId).map((row) => {
-      const item = toBoardItem(row);
-      return {
-        item,
-        answer: mapOrNull(this.#get("SELECT * FROM answers WHERE board_item_id = ?", item.id), toAnswer),
-        withdrawal: mapOrNull(this.#get("SELECT * FROM board_item_withdrawals WHERE board_item_id = ?", item.id), toWithdrawal),
-      };
-    });
+    return this.#all("SELECT * FROM board_items WHERE ticket_id = ? ORDER BY id", ticketId).map((row) => this.#history(row));
+  }
+
+  /**
+   * The board (ADR-0012): every open item, and every item answered or
+   * withdrawn at or after `since`, oldest raised first across all repos.
+   */
+  boardItemsOnBoard(since: string): BoardItemHistory[] {
+    return this.#all(
+      `SELECT b.* FROM board_items b
+         LEFT JOIN answers a ON a.board_item_id = b.id
+         LEFT JOIN board_item_withdrawals w ON w.board_item_id = b.id
+       WHERE (a.id IS NULL AND w.board_item_id IS NULL) OR a.answered_at >= ? OR w.withdrawn_at >= ?
+       ORDER BY b.raised_at, b.id`,
+      since,
+      since,
+    ).map((row) => this.#history(row));
+  }
+
+  /** A board item with its answer or withdrawal. */
+  #history(row: Row): BoardItemHistory {
+    const item = toBoardItem(row);
+    return {
+      item,
+      answer: mapOrNull(this.#get("SELECT * FROM answers WHERE board_item_id = ?", item.id), toAnswer),
+      withdrawal: mapOrNull(this.#get("SELECT * FROM board_item_withdrawals WHERE board_item_id = ?", item.id), toWithdrawal),
+    };
   }
 
   // The vision of record
