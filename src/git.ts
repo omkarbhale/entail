@@ -35,6 +35,8 @@ export interface GitRunOptions {
   env?: Record<string, string>;
   /** Exit codes other than 0 that are answers rather than failures. */
   okExitCodes?: number[];
+  /** Ends the command with SIGTERM after this long, for one that may wait on the network. */
+  timeoutMs?: number;
 }
 
 export interface GitResult {
@@ -102,7 +104,7 @@ function runGit(fullArgs: string[], shownArgs: string[], options: GitRunOptions)
   const okExitCodes = [0, ...(options.okExitCodes ?? [])];
 
   return new Promise((resolve, reject) => {
-    const child = spawn("git", fullArgs, { env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("git", fullArgs, { env, stdio: ["ignore", "pipe", "pipe"], timeout: options.timeoutMs });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));

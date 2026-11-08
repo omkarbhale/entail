@@ -153,6 +153,9 @@ export class StateForge implements Forge {
   async project(): Promise<Project> {
     throw new Error("not supported");
   }
+  async isPublic(): Promise<boolean> {
+    throw new Error("not supported");
+  }
   async instance(): Promise<ForgeInstance> {
     throw new Error("not supported");
   }

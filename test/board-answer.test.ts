@@ -26,6 +26,8 @@ interface Fixture {
   server: LocalServer;
   github: RepoRecord;
   gitlab: RepoRecord;
+  /** How many times the board said an answer was recorded, as the records repo hears it. */
+  answersRecorded(): number;
   raise(repo: RepoRecord, issueNumber: number, why: WhyRaisedInput, options?: { mark?: VisionCheckMark; title?: string; version?: number }): { ticket: TicketRecord; item: BoardItemRecord };
   get(path: string): Promise<{ status: number; body: string; location?: string }>;
   /** Posts the answer form as the page's own form does, with the per-start token unless it is left out. */
@@ -86,7 +88,8 @@ async function serveBoard(t: TestContext): Promise<Fixture> {
     return { ticket, item };
   };
 
-  const server = await startServer({ port: 0, pages: boardPages({ store, now: () => new Date(now) }) });
+  let answersRecorded = 0;
+  const server = await startServer({ port: 0, pages: boardPages({ store, now: () => new Date(now), afterAnswer: () => answersRecorded++ }) });
   t.after(async () => {
     await server.close();
     store.close();
@@ -102,6 +105,7 @@ async function serveBoard(t: TestContext): Promise<Fixture> {
     server,
     github,
     gitlab,
+    answersRecorded: () => answersRecorded,
     raise,
     get: async (path) => result(await send(server.info.port, { path })),
     post: async (fields, options = {}) =>
@@ -265,6 +269,17 @@ test("the answer is recorded under the owner's display name with the time, the i
   const b = board.store.answerFor(priv.item.id)!;
   assert.deepEqual([b.shape, b.itemVersion, b.note, b.showNoteOnIssue], ["dont-go-ahead", 1, "Private note", false]);
   assert.equal(board.store.callsForTicket(priv.ticket.id).filter((c) => c.answerId !== null).length, 0, "the answer itself is not a call");
+});
+
+test("the board tells the records repo of each recorded answer, and of nothing else", async (t) => {
+  const board = await serveBoard(t);
+  const { item } = board.raise(board.github, 7, { kind: "contradiction" });
+  assert.equal((await board.post(fields(item, { answer: "option:R1", step: "review" }))).status, 200);
+  assert.equal(board.answersRecorded(), 0, "a review records nothing");
+  assert.equal((await board.post(fields(item, { answer: "option:R1", step: "record" }))).status, 303);
+  assert.equal(board.answersRecorded(), 1, "the recorded answer");
+  assert.equal((await board.post(fields(item, { answer: "dont-go-ahead", step: "record" }))).status, 409);
+  assert.equal(board.answersRecorded(), 1, "a refused answer is not recorded");
 });
 
 test("an answer to a withdrawn item is refused with a clear message, keeping the typed text", async (t) => {

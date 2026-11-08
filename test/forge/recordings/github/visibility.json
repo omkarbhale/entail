@@ -1,0 +1,81 @@
+{
+  "host": "github.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "id": 5001,
+          "node_id": "R_5001",
+          "name": "tally",
+          "full_name": "acme/tally",
+          "private": false,
+          "owner": {
+            "login": "owner",
+            "id": 1001,
+            "node_id": "U_1001",
+            "url": "https://api.github.com/users/owner",
+            "html_url": "https://github.com/owner",
+            "type": "User",
+            "site_admin": false
+          },
+          "html_url": "https://github.com/acme/tally",
+          "default_branch": "main",
+          "visibility": "public",
+          "created_at": "2026-10-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "id": 5001,
+          "node_id": "R_5001",
+          "name": "tally",
+          "full_name": "acme/tally",
+          "private": true,
+          "owner": {
+            "login": "owner",
+            "id": 1001,
+            "node_id": "U_1001",
+            "url": "https://api.github.com/users/owner",
+            "html_url": "https://github.com/owner",
+            "type": "User",
+            "site_admin": false
+          },
+          "html_url": "https://github.com/acme/tally",
+          "default_branch": "main",
+          "visibility": "internal",
+          "created_at": "2026-10-01T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

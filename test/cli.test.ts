@@ -120,7 +120,8 @@ test("entail run creates the data directory, serves on port 7419, holds the lock
   assert.ok(!existsSync(join(m.dataDirectory, LOCK_FILE)), "the lock is released");
   assert.deepEqual(
     logEntries(m).map((entry) => entry.event),
-    ["started", "stopping", "stopped"],
+    ["started", "stopping", "records-committed", "stopped"],
+    "stopping commits the records repo before the lock is released",
   );
 });
 
