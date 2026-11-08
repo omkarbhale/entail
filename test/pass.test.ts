@@ -3,7 +3,7 @@ import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { CURSORS_FILE } from "../src/cursors.ts";
-import { RateLimitedError } from "../src/forge/forge.ts";
+import { ForgeLoggedOutError, RateLimitedError } from "../src/forge/forge.ts";
 import { Limiter } from "../src/forge-limit.ts";
 import { DEFAULT_GLOBAL_SETTINGS } from "../src/global-settings.ts";
 import type { IntakeDetail } from "../src/intake.ts";
@@ -400,4 +400,21 @@ test("each non-final ticket's owed step is started once while it runs, and re-de
   await restarted.stop();
   await restarted.runPass();
   assert.equal(started, 2, "a stopping engine starts no new work");
+});
+
+test("a host whose CLI is logged out is reported halted and clears after a successful poll", async (t) => {
+  const setup = passSetup(t);
+  setup.enroll();
+  const forge = new IntakeForge();
+  forge.failChanges = new ForgeLoggedOutError("github.com", "401");
+  const engine = passes(setup, forge);
+
+  assert.equal(engine.hostHalted("github.com"), false);
+  await engine.runPass();
+  assert.equal(engine.hostHalted("github.com"), true);
+  assert.equal(engine.hostHalted("gitlab.example.org"), false);
+
+  const after = await engine.runPass();
+  assert.equal(after[0]?.outcome, "polled");
+  assert.equal(engine.hostHalted("github.com"), false);
 });

@@ -121,10 +121,11 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     limit: () => readGlobalSettings(store).settings.modelRunLimit,
   });
   let server: LocalServer;
+  let passes: Passes | undefined;
   try {
     const enroller = new Enroller({ store, dataDirectory: options.dataDirectory, runner, log });
     const pages = [
-      ...boardPages({ store }),
+      ...boardPages({ store, hostHalted: (host) => passes?.hostHalted(host) ?? false }),
       ...reposPages({ store, enroller, dataDirectory: options.dataDirectory }),
       ...callsPages(store),
       ticketPage({ store, retryState: (ticketId) => modelRuns.retryState(String(ticketId)) }),
@@ -150,7 +151,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     log,
   });
 
-  const passes = new Passes({
+  const running = new Passes({
     store,
     log,
     dataDirectory: options.dataDirectory,
@@ -164,7 +165,8 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     inFlight,
     modelRuns,
   });
-  passes.start();
+  passes = running;
+  running.start();
   const stopWaitMs = options.stopWaitMs ?? STOP_WAIT_MS;
 
   let resolveStopped!: () => void;
@@ -181,7 +183,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     stopped,
     globalSettings: () => readGlobalSettings(store).settings,
     notifier,
-    passes,
+    passes: running,
     inFlight,
     modelRuns,
     stop(reason: string) {
@@ -193,7 +195,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
         // limit for the pass in progress, the interrupted runs and forge
         // writes in flight to confirm. Writes left unconfirmed are settled on
         // the next start, and interrupted runs are run again.
-        await waitAtMost(stopWaitMs, Promise.all([passes.stop(), inFlight.settle(stopWaitMs)]));
+        await waitAtMost(stopWaitMs, Promise.all([running.stop(), inFlight.settle(stopWaitMs)]));
         if (inFlight.count > 0) log.warn("writes-unconfirmed-at-stop", { count: inFlight.count });
         await server.close();
         store.close();
