@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -37,7 +38,7 @@ test("a lock left by a dead process is taken over and the takeover is returned",
   const dir = dataDirectory(t);
   writeFileSync(join(dir, LOCK_FILE), JSON.stringify({ pid: 3333, startedAt: "2026-11-08T09:00:00.000Z" }));
   const now = new Date("2026-11-08T10:00:00.000Z");
-  const lock = acquireLock(dir, { pid: 4444, now: () => now, isAlive: (pid) => pid !== 3333 });
+  const lock = acquireLock(dir, { pid: 4444, now: () => now, isAlive: (holder) => holder.pid !== 3333 });
   assert.deepEqual(lock.takeover, {
     previous: { pid: 3333, startedAt: "2026-11-08T09:00:00.000Z" },
     detectedAt: now.toISOString(),
@@ -78,4 +79,24 @@ test("release leaves alone a lock that another copy has since taken", (t) => {
   lock.release();
   assert.ok(existsSync(join(dir, LOCK_FILE)));
   assert.equal(JSON.parse(readFileSync(join(dir, LOCK_FILE), "utf8")).pid, 7777);
+});
+
+test("a lock whose pid now belongs to a process started after the lock was written is stale", (t) => {
+  const dir = dataDirectory(t);
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  t.after(() => child.kill());
+  const before = new Date(Date.now() - 3_600_000).toISOString();
+  writeFileSync(join(dir, LOCK_FILE), `${JSON.stringify({ pid: child.pid, startedAt: before })}\n`);
+  const lock = acquireLock(dir, { pid: 7777 });
+  assert.equal(lock.takeover?.previous?.pid, child.pid);
+  lock.release();
+});
+
+test("a lock written by a live process that started before it still refuses a second copy", (t) => {
+  const dir = dataDirectory(t);
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "entail"], { stdio: "ignore" });
+  t.after(() => child.kill());
+  const after = new Date(Date.now() + 5_000).toISOString();
+  writeFileSync(join(dir, LOCK_FILE), `${JSON.stringify({ pid: child.pid, startedAt: after })}\n`);
+  assert.throws(() => acquireLock(dir, { pid: 8888 }), LockHeldError);
 });

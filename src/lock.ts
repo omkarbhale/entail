@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { linkSync, openSync, readFileSync, renameSync, unlinkSync, writeSync, closeSync } from "node:fs";
 import { join } from "node:path";
 
@@ -40,8 +41,8 @@ export class LockHeldError extends Error {
 export interface AcquireOptions {
   pid?: number;
   now?: () => Date;
-  /** Whether a process with this pid exists. Replaceable in tests. */
-  isAlive?: (pid: number) => boolean;
+  /** Whether the process that wrote this lock is still running. Replaceable in tests. */
+  isAlive?: (holder: LockHolder) => boolean;
 }
 
 /**
@@ -55,7 +56,7 @@ export interface AcquireOptions {
 export function acquireLock(dataDirectory: string, options: AcquireOptions = {}): HeldLock {
   const pid = options.pid ?? process.pid;
   const now = options.now ?? (() => new Date());
-  const isAlive = options.isAlive ?? processExists;
+  const isAlive = options.isAlive ?? holderIsRunning;
   const path = join(dataDirectory, LOCK_FILE);
   const holder: LockHolder = { pid, startedAt: now().toISOString() };
   const content = `${JSON.stringify(holder)}\n`;
@@ -69,7 +70,7 @@ export function acquireLock(dataDirectory: string, options: AcquireOptions = {})
     const existingText = readIfPresent(path);
     if (existingText === null) continue; // removed between our create and read
     const existing = parseHolder(existingText);
-    if (existing && existing.pid !== pid && isAlive(existing.pid)) {
+    if (existing && existing.pid !== pid && isAlive(existing)) {
       throw new LockHeldError(path, existing);
     }
     // Stale: its holder is gone (or the file is unreadable). Move it aside
@@ -112,6 +113,33 @@ export function processExists(pid: number): boolean {
   } catch (error) {
     // EPERM: it exists but belongs to another user.
     return isCode(error, "EPERM");
+  }
+}
+
+/**
+ * Whether the process that wrote this lock is still running. A pid that is
+ * alive but was started after the lock was written has been reused by an
+ * unrelated process, so the lock is stale. When the start time cannot be read,
+ * the process's command line must mention entail.
+ */
+export function holderIsRunning(holder: LockHolder): boolean {
+  if (!processExists(holder.pid)) return false;
+  const started = Date.parse(psField("lstart", holder.pid));
+  const lockedAt = Date.parse(holder.startedAt);
+  if (!Number.isNaN(started) && !Number.isNaN(lockedAt)) return started <= lockedAt;
+  const command = psField("args", holder.pid);
+  return command === "" || /entail/i.test(command);
+}
+
+function psField(field: string, pid: number): string {
+  try {
+    return execFileSync("ps", ["-o", `${field}=`, "-p", String(pid)], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C" },
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
   }
 }
 
