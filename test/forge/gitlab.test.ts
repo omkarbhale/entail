@@ -401,7 +401,6 @@ test("a commit run more than once on the default branch keeps its newest pipelin
   );
 });
 
-const PROJECT = "projects/acme%2Ftally";
 function accessOn(t: TestContext, user: Record<string, unknown>, project: Record<string, unknown>) {
   return forgeOn(t, [
     { request: { method: "GET", path: "user" }, response: { status: 200, body: { ...OWNER, ...user } } },

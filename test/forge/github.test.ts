@@ -408,6 +408,7 @@ test("a GraphQL error is a request error, and a GraphQL rate limit is surfaced w
   await assert.rejects(forge.linkedIssues(4), (error: unknown) => {
     return error instanceof RateLimitedError && error.resetAt.toISOString() === "2026-11-08T12:00:00.000Z";
   });
+});
 
 const REPO = "repos/acme/tally";
 const repoWith = (body: Record<string, unknown>) => [{ request: { method: "GET" as const, path: REPO }, response: { status: 200, body: { id: 5001, ...body } } }];
