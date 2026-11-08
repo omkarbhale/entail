@@ -12,6 +12,7 @@ import type { ModelRunner } from "./model-runner.ts";
 import { ModelRuns } from "./model-runs.ts";
 import { InFlightWrites, settleUnconfirmedWrites } from "./forge-writer.ts";
 import { Passes, repoForge, type PassesOptions } from "./pass.ts";
+import { landingPlanner } from "./landing.ts";
 import { pullRequestFollowing } from "./pull-requests.ts";
 import { boardPages } from "./board-page.ts";
 import { callsPages } from "./calls-page.ts";
@@ -166,6 +167,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
       criteriaPlanner({ store, log, dataDirectory: options.dataDirectory }),
       boardPlanner({ store, log, dataDirectory: options.dataDirectory, notifier, boardOrigin: server.info.origin }),
       pullRequests.planner,
+      landingPlanner({ store, log, dataDirectory: options.dataDirectory }),
     ],
     changeHandlers: options.passes?.changeHandlers ?? [pullRequests.onChange],
     inFlight,
