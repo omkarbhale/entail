@@ -117,6 +117,10 @@ Final: the owner's answer said not to go ahead; someone other than entail closed
 One product decision raised to the owner about one ticket, carrying what the ticket was, what happened and why it was raised. A ticket has at most one open board item at a time.
 _Avoid_: Question, card, escalation
 
+**Answer**:
+The owner's response to one board item, recorded under the name of whoever gave it. It settles that ticket only and is final once given. An answer that does not let the ticket go ahead is "don't go ahead", and the ticket is cancelled.
+_Avoid_: Ruling, decline, approval
+
 **Call**:
 One decision entail made itself about a ticket, recorded with its reason and, where the vision settled it, its citation. A board answer is not a call; the change it causes is a call that cites the answer.
 _Avoid_: Event, action
