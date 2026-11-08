@@ -25,6 +25,8 @@ export interface FakeForgeWorld {
   access: RepoAccess | Error;
   mergeMethods: MergeMethod[] | null;
   openIssues: number[] | Error;
+  /** The accounts on the host by username; a lookup that is an Error is thrown instead. */
+  users: Record<string, number> | Error;
 }
 
 export function worldFor(forge: "github" | "gitlab", host: string): FakeForgeWorld {
@@ -35,6 +37,7 @@ export function worldFor(forge: "github" | "gitlab", host: string): FakeForgeWor
     access: { cannotLabelAndComment: null, mayLackMerge: null },
     mergeMethods: forge === "github" ? ["squash", "merge", "rebase"] : null,
     openIssues: [3, 1],
+    users: { owner: 1001, executor: 1003, "second-executor": 1004 },
   };
 }
 
@@ -50,6 +53,12 @@ export class FakeForge extends StateForge {
 
   override async currentActor(): Promise<Actor | null> {
     return answer(this.#world.actor);
+  }
+
+  override async actorByUsername(username: string): Promise<Actor | null> {
+    const users = answer(this.#world.users);
+    const id = Object.hasOwn(users, username) ? users[username] : undefined;
+    return id === undefined ? null : { forge: this.setting.forge, host: this.setting.host, id, username };
   }
 
   override async project(): Promise<Project> {

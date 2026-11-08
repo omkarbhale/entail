@@ -60,6 +60,8 @@ const ACCESS = { planner: 15, reporter: 20, developer: 30, maintainer: 40 } as c
 const HOST = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 /** A namespace path and project name, with any depth of subgroups. */
 const PROJECT_PATH = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$/;
+/** A GitLab username: letters, digits, `_`, `.` and `-`, starting with a letter, digit or `_`. */
+const GITLAB_USERNAME = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,254}$/;
 
 interface GitLabCursor {
   /** The newest issue update time read so far; null until an issue was read. */
@@ -119,6 +121,16 @@ export class GitLabForge implements Forge {
       if (error instanceof ForgeLoggedOutError) return null;
       throw error;
     }
+  }
+
+  /** Read from the users list filtered on the exact username, which GitLab matches regardless of case. */
+  async actorByUsername(username: string): Promise<Actor | null> {
+    if (!GITLAB_USERNAME.test(username)) return null;
+    const path = `users?${new URLSearchParams({ username })}`;
+    const users = await this.#getJson(path);
+    if (!Array.isArray(users)) throw this.#malformed(200, path, "expected a list");
+    const found = users.find((user) => isObject(user) && typeof user.username === "string" && user.username.toLowerCase() === username.toLowerCase());
+    return found === undefined ? null : this.#actor(found, "user");
   }
 
   async project(): Promise<Project> {

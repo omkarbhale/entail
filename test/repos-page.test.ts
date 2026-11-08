@@ -183,10 +183,11 @@ test("the repo's settings link shows what was enrolled", async (t) => {
   assert.match(page.body, /In force: version 1, saved .* by Ada\./);
   assert.match(page.body, /<dt>Project id<\/dt><dd>5001<\/dd>/);
   assert.match(page.body, /<dt>Origin of the existing VISION\.md<\/dt><dd>Proposed by an agent and approved by the owner<\/dd>/);
-  assert.match(page.body, /<dt>Merge method<\/dt><dd>Squash and merge<\/dd>/);
-  assert.match(page.body, /<dt>Shadow<\/dt><dd>off<\/dd>/);
-  assert.match(page.body, /<dt>Who counts<\/dt><dd>anyone<\/dd>/);
-  assert.match(page.body, /<dt>Pins<\/dt><dd>VISION\.md<\/dd>/);
+  assert.equal(checked(page.body, "merge_method"), "squash");
+  assert.match(page.body, /<input type="checkbox" name="shadow" value="on">/, "shadow is off");
+  assert.equal(checked(page.body, "who_counts"), "anyone");
+  assert.match(page.body, /data-pin="vision"/, "VISION.md is pinned");
+  assert.doesNotMatch(page.body, /data-pin="0"[\s\S]*name="p0_remove"/, "and no other pin is");
   assert.equal((await send(served.server.info.port, { path: `${REPO_SETTINGS_PATH}?repo=99` })).status, 404);
   assert.equal((await send(served.server.info.port, { path: `${REPO_SETTINGS_PATH}?repo=x` })).status, 404);
 });

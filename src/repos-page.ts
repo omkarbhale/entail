@@ -2,22 +2,23 @@ import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Enroller, type EnrollmentReview, type Refusal, type StatedForge } from "./enrollment.ts";
-import { MERGE_METHODS, type MergeMethod } from "./forge/forge.ts";
+import { MERGE_METHODS, type Forge, type ForgeSetting, type MergeMethod } from "./forge/forge.ts";
 import { Git } from "./git.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import { mirrorPaths } from "./mirror.ts";
 import { escapeHtml, renderPage, timeHtml } from "./page.ts";
-import { isMergeMethod, MERGE_METHOD_LABELS, PRESELECTED_VISION_ORIGIN, type RepoSettings } from "./repo-settings.ts";
+import { isMergeMethod, MERGE_METHOD_LABELS, PRESELECTED_VISION_ORIGIN, readRepoSettings } from "./repo-settings.ts";
+import { REPO_SETTINGS_PATH, repoSettingsPage } from "./repo-settings-page.ts";
 import { TOKEN_FIELD, type FormRequest, type Page, type PageRequest, type Reply } from "./server.ts";
 import { SETTINGS_PATH } from "./settings-page.ts";
-import type { RepoRecord, SettingsVersionRecord, Store, VisionOrigin } from "./store.ts";
+import type { RepoRecord, Store, VisionOrigin } from "./store.ts";
 import { VISION_ORIGINS } from "./store-schema.ts";
 import { readVision } from "./vision.ts";
 
 export const REPOS_PATH = "/repos";
 export const CHECK_PATH = "/repos/check";
 export const ENROLL_PATH = "/repos/enroll";
-export const REPO_SETTINGS_PATH = "/repos/settings";
+export { REPO_SETTINGS_PATH };
 
 /** The enrollment form's field names. */
 export const ENROLL_FIELDS = {
@@ -50,6 +51,8 @@ export interface ReposPageOptions {
   dataDirectory: string;
   activity?: RepoActivity;
   now?: () => Date;
+  /** The forge adapter for an enrolled repo, which its settings page uses to resolve executor usernames. */
+  createForge?: (setting: ForgeSetting) => Forge;
 }
 
 /** Why nothing was enrolled: a refusal, or a review that is no longer open. */
@@ -145,12 +148,7 @@ export function reposPages(options: ReposPageOptions): Page[] {
         return { redirect: `${REPOS_PATH}?enrolled=${result.repo.id}` };
       },
     },
-    {
-      path: REPO_SETTINGS_PATH,
-      get(request) {
-        return repoSettingsView(request, store);
-      },
-    },
+    repoSettingsPage({ store, dataDirectory: options.dataDirectory, createForge: options.createForge }),
   ];
 }
 
@@ -187,8 +185,7 @@ async function reposView(
   const repos = store.listRepos();
   const rows = await Promise.all(
     repos.map(async (repo) => {
-      const settings = repoSettingsOf(store.latestSettings(repo.id));
-      const paused = settings?.paused === true;
+      const paused = readRepoSettings(store, repo.id)?.settings.paused === true;
       const state = repoState(
         paused,
         paused && (options.activity?.pausing?.(repo) ?? false),
@@ -337,67 +334,10 @@ ${mergeField}
   return { status, html: renderPage(request, { title: `Enroll ${setting.path}`, body }) };
 }
 
-/** A repo's settings in force and their history, read-only. */
-function repoSettingsView(request: PageRequest, store: Store): Reply {
-  const asked = request.url.searchParams.get("repo") ?? "";
-  const id = /^\d+$/.test(asked) ? Number(asked) : NaN;
-  const repo = Number.isSafeInteger(id) ? store.getRepo(id) : null;
-  if (repo === null) {
-    const body = `<h1>No such repo</h1>\n<p><a href="${REPOS_PATH}">Back to the repos</a></p>`;
-    return { status: 404, html: renderPage(request, { title: "Repo settings", body }) };
-  }
-  const version = store.latestSettings(repo.id);
-  const settings = repoSettingsOf(version);
-  const yesNo = (on: boolean | undefined) => (on ? "on" : "off");
-  const listed = (items: unknown[] | undefined, none: string) =>
-    items === undefined || items.length === 0 ? `<span class="muted">${none}</span>` : String(items.length);
-  const history = store.settingsHistory(repo.id);
-  const body = `<h1>${escapeHtml(repo.path)} settings</h1>
-${
-  version === null
-    ? `<p class="muted">No settings saved.</p>`
-    : `<p class="muted">In force: version ${version.version}, saved ${timeHtml(version.savedAt)} by ${escapeHtml(version.savedBy)}.</p>`
-}
-<dl>
-<dt>Forge</dt><dd>${forgeName(repo.forge)}</dd>
-<dt>Host</dt><dd>${escapeHtml(repo.host)}</dd>
-<dt>Path</dt><dd>${escapeHtml(repo.path)}</dd>
-<dt>Project id</dt><dd>${repo.projectId}</dd>
-<dt>Owner on this host</dt><dd>${escapeHtml(repo.ownerLogin)} <span class="muted">(account ${repo.ownerAccountId})</span></dd>
-<dt>Enrolled</dt><dd>${timeHtml(repo.enrolledAt)}</dd>
-<dt>Origin of the existing VISION.md</dt><dd>${settings?.visionOrigin ? escapeHtml(ORIGIN_LABELS[settings.visionOrigin] ?? settings.visionOrigin) : ""}</dd>
-${repo.forge === "github" ? `<dt>Merge method</dt><dd>${settings?.mergeMethod ? escapeHtml(MERGE_METHOD_LABELS[settings.mergeMethod]) : ""}</dd>` : ""}
-<dt>Generic criteria</dt><dd>${listed(settings?.genericCriteria, "none")}</dd>
-<dt>Shadow</dt><dd>${yesNo(settings?.shadow)}</dd>
-<dt>Who counts</dt><dd>${settings?.whoCounts === "owner-and-listed" ? "the owner and listed executors" : "anyone"}</dd>
-<dt>Pins</dt><dd>VISION.md${settings?.pins?.length ? `, and ${settings.pins.length} more` : ""}</dd>
-<dt>Paused</dt><dd>${settings?.paused ? "yes" : "no"}</dd>
-</dl>
-${
-  history.length === 0
-    ? ""
-    : `<h2>Settings history</h2>
-<table>
-<thead><tr><th>Version</th><th>Saved</th><th>By</th></tr></thead>
-<tbody>
-${history.map((v) => `<tr><td>Version ${v.version}</td><td>${timeHtml(v.savedAt)}</td><td>${escapeHtml(v.savedBy)}</td></tr>`).join("\n")}
-</tbody>
-</table>`
-}
-<p><a href="${REPOS_PATH}">Back to the repos</a></p>`;
-  return { status: 200, html: renderPage(request, { title: `${repo.path} settings`, body }) };
-}
-
 /** The merge methods the owner picks from on GitHub: those allowed, or all when GitHub did not say; null on GitLab. */
 function offeredMergeMethods(review: EnrollmentReview): readonly MergeMethod[] | null {
   if (review.mergeMethods === null) return null;
   return review.mergeMethods.length === 0 ? MERGE_METHODS : review.mergeMethods;
-}
-
-function repoSettingsOf(version: SettingsVersionRecord | null): Partial<RepoSettings> | null {
-  return version !== null && typeof version.settings === "object" && version.settings !== null
-    ? (version.settings as Partial<RepoSettings>)
-    : null;
 }
 
 function statedOf(form: URLSearchParams): StatedForge {

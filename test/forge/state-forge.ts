@@ -144,6 +144,9 @@ export class StateForge implements Forge {
   async currentActor(): Promise<Actor | null> {
     return this.#actor(this.#actorId);
   }
+  async actorByUsername(_username: string): Promise<Actor | null> {
+    throw new Error("not supported");
+  }
   async project(): Promise<Project> {
     throw new Error("not supported");
   }

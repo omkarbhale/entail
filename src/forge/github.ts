@@ -43,6 +43,8 @@ const PAGE_SIZE = 100;
 /** GitHub asks clients to wait at least a minute when it gives no reset time. */
 const DEFAULT_RATE_LIMIT_WAIT_MS = 60_000;
 const REPO_PATH = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+/** A GitHub login: letters, digits and single hyphens, at most 39 characters, or an app's `name[bot]`. */
+const GITHUB_USERNAME = /^[A-Za-z0-9](?:-?[A-Za-z0-9]){0,38}(?:\[bot\])?$/;
 /** How often a merge GitHub is still running in the background is read again. */
 const MERGE_POLL_INTERVAL_MS = 2_000;
 /** How long to wait for a background merge before it counts as still pending. */
@@ -154,6 +156,18 @@ export class GitHubForge implements Forge {
       if (error instanceof ForgeLoggedOutError) return null;
       throw error;
     }
+  }
+
+  /** A user or bot account; an organization cannot open PRs, so it names no executor. */
+  async actorByUsername(username: string): Promise<Actor | null> {
+    if (!GITHUB_USERNAME.test(username)) return null;
+    const path = `users/${username}`;
+    const response = await this.#get(path, {});
+    if (response.status === 404) return null;
+    this.#ensureOk(response, path, "GET");
+    const user = parseJson(response, this.setting.host, path, "GET");
+    if (isObject(user) && user.type === "Organization") return null;
+    return this.#actor(user, "user");
   }
 
   async project(): Promise<Project> {

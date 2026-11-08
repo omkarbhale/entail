@@ -458,3 +458,27 @@ test("the open issues are read page by page, leaving pull requests out", async (
   ]);
   assert.deepEqual(await forge.openIssueNumbers(), [2, 7]);
 });
+
+test("an organization names no executor, and a name GitHub cannot have is not looked up", async (t) => {
+  const { forge, transport } = forgeOn(t, [
+    { request: { method: "GET", path: "users/acme" }, response: { status: 200, body: { login: "acme", id: 2001, type: "Organization" } } },
+    {
+      request: { method: "GET", path: "users/dependabot[bot]" },
+      response: { status: 200, body: { login: "dependabot[bot]", id: 49699333, type: "Bot" } },
+    },
+  ]);
+  assert.equal(await forge.actorByUsername("acme"), null);
+  assert.deepEqual(await forge.actorByUsername("dependabot[bot]"), { forge: "github", host: "github.com", id: 49699333, username: "dependabot[bot]" });
+  for (const name of ["", "-lead", "a--b", "x/../user", "a b", "user?x=1"]) assert.equal(await forge.actorByUsername(name), null, name);
+  assert.equal(transport.requests.length, 2);
+});
+
+test("a username lookup the forge refuses for its rate limit is not taken for an unknown user", async (t) => {
+  const { forge } = forgeOn(t, [
+    {
+      request: { method: "GET", path: "users/executor" },
+      response: { status: 403, headers: { "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1794139200" }, body: { message: "API rate limit exceeded" } },
+    },
+  ]);
+  await assert.rejects(forge.actorByUsername("executor"), RateLimitedError);
+});
