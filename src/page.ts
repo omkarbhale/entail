@@ -81,8 +81,10 @@ h2 { font-size: 1.1rem; margin-top: 2rem; }
 .error { color: var(--bad); font-size: .875rem; margin: .25rem 0 0; }
 .field { margin: 1.25rem 0; }
 .field label { display: block; font-weight: 600; }
-input[type=text], input[type=number], select { font: inherit; padding: .35rem .5rem; width: 100%; max-width: 24rem; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
-input[aria-invalid=true] { border-color: var(--bad); }
+input[type=text], input[type=number], select, textarea { font: inherit; padding: .35rem .5rem; width: 100%; max-width: 24rem; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
+input[aria-invalid=true], textarea[aria-invalid=true] { border-color: var(--bad); }
+fieldset.row { padding: .5rem .75rem; border: 1px solid var(--line); border-radius: 4px; }
+fieldset.row > label:not(.choice) { display: block; font-weight: 600; margin-top: .5rem; }
 fieldset { border: 0; padding: 0; margin: 1.25rem 0; }
 legend { font-weight: 600; padding: 0; }
 .field label.choice { display: block; font-weight: normal; }

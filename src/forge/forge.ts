@@ -314,6 +314,13 @@ export interface Forge {
    */
   currentActor(): Promise<Actor | null>;
 
+  /**
+   * The account a username names on this host, or null when no such user
+   * exists. Usernames are resolved once, when the owner lists an executor, and
+   * the numeric id is kept from then on (ADR-0015).
+   */
+  actorByUsername(username: string): Promise<Actor | null>;
+
   /** The repo's numeric project id and default branch. */
   project(): Promise<Project>;
 

@@ -31,6 +31,7 @@ import { RecordedTransport, type Recording } from "./recorded-transport.ts";
  */
 export type Scenario =
   | "actor"
+  | "user-lookup"
   | "logged-out"
   | "project"
   | "changes"
@@ -64,6 +65,7 @@ export interface ForgeContractSubject {
  * The world the recordings play out, on repo `setting.path`:
  *
  * - The CLI is logged in as `owner`, user id 1001. `reporter` is user id 1002.
+ * - User lookup: `executor` is user id 1003, and no account is named `nobody-here`.
  * - The project's id is 5001 and its default branch is `main`.
  * - At first: issue #1 (id 9001) by owner, and issue #2 (id 9002) by reporter,
  *   with an `/entail` comment (id 7001) on it by owner. A pull request and a
@@ -135,6 +137,12 @@ export function forgeContract(subject: ForgeContractSubject): void {
     test("the logged-in actor is the forge, host and numeric user id, with the username for display", async (t) => {
       const forge = forgeFor(t, "actor");
       assert.deepEqual(await forge.currentActor(), actor(OWNER));
+    });
+
+    test("a username resolves to its numeric user id, and an unknown username to nothing", async (t) => {
+      const forge = forgeFor(t, "user-lookup");
+      assert.deepEqual(await forge.actorByUsername("executor"), actor({ id: 1003, username: "executor" }));
+      assert.equal(await forge.actorByUsername("nobody-here"), null);
     });
 
     test("a CLI that reports no login gives no actor, and reads fail as logged out", async (t) => {

@@ -228,6 +228,7 @@ test("createForge picks the GitLab adapter for gitlab.com and self-hosted hosts 
 const FREE_ENDPOINTS = [
   /^user$/,
   /^version$/,
+  /^users\?username=[^&]+$/,
   /^projects\/[^/?]+$/,
   /^projects\/[^/?]+\/issues\?/,
   /^projects\/[^/?]+\/issues\/\d+$/,
@@ -447,4 +448,18 @@ test("GitLab has no merge method setting, and its open issues are read page by p
   ]);
   assert.equal(await forge.mergeMethods(), null);
   assert.deepEqual(await forge.openIssueNumbers(), [1, 4, 9]);
+});
+
+test("a username lookup matches the exact username whatever its case, and a name GitLab cannot have is not looked up", async (t) => {
+  const { forge, transport } = forgeOn(t, [
+    {
+      request: { method: "GET", path: "users?username=Executor" },
+      response: { status: 200, body: [{ id: 12, username: "executor", name: "Executor" }] },
+    },
+    { request: { method: "GET", path: "users?username=ghost.user" }, response: { status: 200, body: [{ id: 13, username: "ghost-user" }] } },
+  ]);
+  assert.deepEqual(await forge.actorByUsername("Executor"), { forge: "gitlab", host: SELF_HOSTED, id: 12, username: "executor" });
+  assert.equal(await forge.actorByUsername("ghost.user"), null, "a near match is not the user");
+  for (const name of ["", "-lead", "a b", "x/y", "user&x=1"]) assert.equal(await forge.actorByUsername(name), null, name);
+  assert.equal(transport.requests.length, 2);
 });
