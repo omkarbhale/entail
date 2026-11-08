@@ -200,8 +200,8 @@ export class GitHubForge implements Forge {
     const numbers: number[] = [];
     for (;;) {
       const page = await this.#get(path, {});
-      this.#ensureOk(page, path);
-      const body = parseJson(page, this.setting.host, path);
+      this.#ensureOk(page, path, "GET");
+      const body = parseJson(page, this.setting.host, path, "GET");
       if (!Array.isArray(body)) throw this.#malformed(page.status, path, "expected a list");
       for (const raw of body) {
         // The issues list also carries pull requests.

@@ -13,6 +13,7 @@ import type {
   RepoAccess,
 } from "../src/forge/forge.ts";
 import { Store } from "../src/store.ts";
+import { StateForge } from "./forge/state-forge.ts";
 import { FixtureRepo, tempDirectory } from "./git-fixture.ts";
 
 /** What the fake forge answers; a value that is an Error is thrown instead. */
@@ -37,42 +38,43 @@ export function worldFor(forge: "github" | "gitlab", host: string): FakeForgeWor
   };
 }
 
-export class FakeForge implements Forge {
-  readonly setting: ForgeSetting;
+export class FakeForge extends StateForge {
+  override readonly setting: ForgeSetting;
   readonly #world: FakeForgeWorld;
 
   constructor(setting: ForgeSetting, world: FakeForgeWorld) {
+    super();
     this.setting = setting;
     this.#world = world;
   }
 
-  async currentActor(): Promise<Actor | null> {
+  override async currentActor(): Promise<Actor | null> {
     return answer(this.#world.actor);
   }
 
-  async project(): Promise<Project> {
+  override async project(): Promise<Project> {
     if (this.#world.project) throw this.#world.project;
     const { forge, host, path } = this.setting;
     return { forge, host, path, id: this.#world.projectId, defaultBranch: "main" };
   }
 
-  async instance(): Promise<ForgeInstance> {
+  override async instance(): Promise<ForgeInstance> {
     return this.#world.instance;
   }
 
-  async access(): Promise<RepoAccess> {
+  override async access(): Promise<RepoAccess> {
     return answer(this.#world.access);
   }
 
-  async mergeMethods(): Promise<MergeMethod[] | null> {
+  override async mergeMethods(): Promise<MergeMethod[] | null> {
     return this.#world.mergeMethods;
   }
 
-  async openIssueNumbers(): Promise<number[]> {
+  override async openIssueNumbers(): Promise<number[]> {
     return answer(this.#world.openIssues);
   }
 
-  async changesSince(): Promise<ChangeBatch> {
+  override async changesSince(): Promise<ChangeBatch> {
     throw new Error("enrollment reads no changes");
   }
 }

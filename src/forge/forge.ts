@@ -265,9 +265,6 @@ export interface PostedComment {
  */
 export type CloseReason = "completed" | "not-planned";
 
-/** How GitHub merges a PR: the method set at enrollment. GitLab uses the project's own. */
-export type MergeMethod = "merge" | "squash" | "rebase";
-
 /**
  * What a merge came to. Anything other than merged is a refusal, with the
  * forge's reason (ADR-0014, ADR-0015).
