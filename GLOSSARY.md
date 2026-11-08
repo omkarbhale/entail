@@ -82,7 +82,18 @@ _Avoid_: Investigation report, triage notes
 A part of a criterion that entail computes from what the forge reports alone, with no model: the PR changes a path, leaves a path alone, or a named check passes.
 
 **Generic criteria**:
-The checks every PR in a repo must pass, fixed once per repo.
+The criteria every PR in a repo must meet, with ids G1…Gn. entail proposes them from the repo when it is enrolled, and the owner confirms them once. They are frozen with each ticket when it is cleared, so a later change applies only to tickets cleared after it.
+
+**Landing check**:
+entail's check of one PR at one head before it merges. Mechanical checks run first. A grader then judges every criterion and generic criterion against the evidence and the diff, and a challenge tries to overturn it. A PR that changes something users can observe beyond its criteria does not pass.
+_Avoid_: Review, validation, gate
+
+**Landing comment**:
+The attributed comment entail posts on a PR after each landing check. It marks each criterion and generic criterion as met or not met, names the head checked, and says whether entail is merging.
+
+**Shadow**:
+A per-repo setting, off by default, under which entail decides tickets and runs landing checks but leaves every merge to the owner.
+_Avoid_: Dry run, manual mode
 
 **Intake comment**:
 The attributed comment entail posts on an issue each time it decides the ticket, in two sections: a vision check, then what happens next. That is the criteria and the label `entail:cleared`, what an investigation must establish and the label `entail:investigate`, or that the ticket was raised to the owner.
