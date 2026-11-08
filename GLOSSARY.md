@@ -6,6 +6,10 @@ entail lets an owner own the vision of a product while implementation and decisi
 
 ### Tickets and the forge
 
+**Forge**:
+Where an enrolled repo and its issues and PRs live: GitHub (github.com), or a GitLab instance, either gitlab.com or a self-hosted one at its own host. GitHub and GitLab are equal: everything entail does on one it does the same way on the other, acting through the owner's own account on that host.
+_Avoid_: Host, platform, provider
+
 **Ticket**:
 entail's own record about one issue it has taken into intake, holding its verdicts, criteria, board items, PRs, calls and state. An issue entail never took in has no ticket, and an issue has at most one.
 _Avoid_: Task, item, story
@@ -77,6 +81,10 @@ _Avoid_: Validation report, proof
 **Findings**:
 An executor's report on an issue under investigation, answering each question the investigation had to establish by its id. Like all issue text, they are judged, never taken as the owner's word.
 _Avoid_: Investigation report, triage notes
+
+**Check**:
+One result the forge reports for a commit, known by its name: a GitHub check run or commit status, or a job in a GitLab pipeline. It is pending, passed or failed. A check that a criterion or generic criterion names but that has not reported yet is pending, not failed.
+_Avoid_: Status, CI result
 
 **Mechanical check**:
 A part of a criterion that entail computes from what the forge reports alone, with no model: the PR changes a path, leaves a path alone, or a named check passes.
