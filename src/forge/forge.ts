@@ -1,5 +1,5 @@
 /**
- * The social layer of a forge: issues, comments and identity, read through one
+ * The social layer of a forge: issues, PRs, comments, checks and identity, read through one
  * interface with one adapter per forge (ADR-0015). Nothing above this
  * interface names a forge; repository content comes from git, not from here.
  */
@@ -92,12 +92,109 @@ export interface IssueComment {
 }
 
 /**
+ * A PR: a GitHub pull request or a GitLab merge request, as the forge reports
+ * it. Its description and comments are the author's words, untrusted input.
+ */
+export interface PullRequest {
+  /** The forge's numeric id for the PR. */
+  id: number;
+  /** The PR's number within its repo, as people refer to it: a pull request's number or a merge request's iid. */
+  number: number;
+  title: string;
+  /** The PR's description. */
+  body: string;
+  state: "open" | "closed" | "merged";
+  draft: boolean;
+  /**
+   * Whether the forge says it would merge the PR now, or null when it has not
+   * worked that out yet or the PR came from a list, which does not carry it.
+   * {@link Forge.pullRequest} reads it live.
+   */
+  mergeable: boolean | null;
+  /** Whether the PR conflicts with its base, or null when that is not known, as for {@link mergeable}. */
+  conflicts: boolean | null;
+  /** The sha of the PR's current head commit. */
+  headSha: string;
+  /** The branch the PR would merge into. */
+  baseBranch: string;
+  author: Actor;
+  /** ISO time. */
+  createdAt: string;
+  /** ISO time. */
+  updatedAt: string;
+  url: string;
+}
+
+/** A comment on a PR's conversation. */
+export interface PullRequestComment {
+  /** The forge's numeric id for the comment. */
+  id: number;
+  /** The number of the PR it is on. */
+  pullRequestNumber: number;
+  body: string;
+  author: Actor;
+  /** ISO time. */
+  createdAt: string;
+  /** ISO time. */
+  updatedAt: string;
+  url: string;
+}
+
+/**
+ * Where a check stands: pending until it finishes, then passed or failed.
+ * GitHub's neutral and skipped results count as passed, and a GitLab job
+ * allowed to fail follows GitLab's own pipeline status (ADR-0015).
+ */
+export type CheckStatus = "pending" | "passed" | "failed";
+
+/** One result the forge reports for a commit, known by its name (see the glossary's Check). */
+export interface Check {
+  name: string;
+  status: CheckStatus;
+  /**
+   * False for a check a criterion or generic criterion names that has not
+   * reported at this sha. Such a check is pending, never failed.
+   */
+  reported: boolean;
+  /** Where the forge shows the check's result, or null when it gives no link. */
+  url: string | null;
+}
+
+/**
+ * Something the forge requires before it merges into the default branch: a
+ * required check on GitHub, or GitLab's pipeline when "pipelines must
+ * succeed" is on.
+ */
+export interface RequiredCheck {
+  name: string;
+  /** Whether it has reported at the sha, whatever its result. */
+  reported: boolean;
+}
+
+/** The checks at one sha, and what the forge requires before merging (ADR-0015). */
+export interface CheckReport {
+  sha: string;
+  /** One entry per check name, sorted by name, including named checks that have not reported. */
+  checks: Check[];
+  required: RequiredCheck[];
+}
+
+/** The checks that reported on one commit of the default branch. */
+export interface CommitChecks {
+  sha: string;
+  /** One entry per check name, sorted by name. */
+  checks: Check[];
+}
+
+/**
  * One thing the forge reports as changed. Its kind, id and update time
  * identify it; the core deduplicates on those three (ADR-0015).
  */
 export type Change =
   | { kind: "issue"; id: number; updatedAt: string; issue: Issue }
-  | { kind: "issue-comment"; id: number; updatedAt: string; comment: IssueComment };
+  | { kind: "issue-comment"; id: number; updatedAt: string; comment: IssueComment }
+  | { kind: "pull-request"; id: number; updatedAt: string; pullRequest: PullRequest }
+  | { kind: "pull-request-comment"; id: number; updatedAt: string; comment: PullRequestComment };
 
 /**
  * Where an adapter's change detection got to, opaque to everything above the
@@ -209,8 +306,9 @@ export interface Forge {
   instance(): Promise<ForgeInstance>;
 
   /**
-   * What changed in the repo's issues and issue comments since `cursor`, or
-   * everything when `cursor` is null.
+   * What changed in the repo's issues, PRs and their comments since `cursor`,
+   * or everything when `cursor` is null. A PR's description, head or state
+   * changing reports the PR again.
    *
    * @throws {RateLimitedError} when the forge's rate limit stops the read.
    * @throws {ForgeLoggedOutError} when the host's CLI is not logged in.
@@ -252,6 +350,82 @@ export interface Forge {
 
   /** A PR's state, to learn whether a merge went through. */
   pullRequestState(prNumber: number): Promise<PullRequestState>;
+
+  /** One PR, read live, with whether the forge would merge it and whether it conflicts. */
+  pullRequest(number: number): Promise<PullRequest>;
+
+  /** Every comment on a PR's conversation, oldest first. The PR's description is {@link PullRequest.body}. */
+  pullRequestComments(number: number): Promise<PullRequestComment[]>;
+
+  /**
+   * The issue's PRs, each read live: the PRs in this repo that the forge's own
+   * linked-issue data says close the issue (closing issue references on
+   * GitHub, the merge requests that close it on GitLab) and whose base is the
+   * default branch. PR text is never parsed, so a PR that only mentions the
+   * issue is not one of them (ADR-0013). Closed and merged PRs are included.
+   */
+  linkedPullRequests(issueNumber: number): Promise<PullRequest[]>;
+
+  /**
+   * The numbers of the issues in this repo that the forge's own linked-issue
+   * data says the PR closes, or none when the PR's base is not the default
+   * branch (ADR-0013).
+   */
+  linkedIssues(pullRequestNumber: number): Promise<number[]>;
+
+  /**
+   * The checks at `sha` on a PR, and what the forge requires before merging
+   * into the default branch (ADR-0015). Each name in `named` (the checks the
+   * frozen criteria and generic criteria name) that has not reported is a
+   * pending check. On GitLab the checks are the jobs of the pipeline attached
+   * to the PR's current head, used only when its sha is `sha`.
+   */
+  checks(pullRequestNumber: number, sha: string, named: readonly string[]): Promise<CheckReport>;
+
+  /** The checks that reported on the default branch's most recent commits, newest first. */
+  recentDefaultBranchChecks(commits: number): Promise<CommitChecks[]>;
+}
+
+/**
+ * Whether every check in the report has finished. With no named checks and no
+ * checks at all, every check has finished (ADR-0015).
+ */
+export function allChecksFinished(report: CheckReport): boolean {
+  return report.checks.every((check) => check.status !== "pending");
+}
+
+/** Whether every check in the report has passed. */
+export function allChecksPassed(report: CheckReport): boolean {
+  return report.checks.every((check) => check.status === "passed");
+}
+
+/** Whether everything the forge requires before merging has reported at the report's sha. */
+export function requiredChecksReported(report: CheckReport): boolean {
+  return report.required.every((required) => required.reported);
+}
+
+/**
+ * The checks as one entry per name, sorted by name, with each name in `named`
+ * that has not reported added as a pending check. Two results under one name,
+ * such as a GitHub check run and a commit status, count as one check: failed
+ * if either failed, else pending if either is pending, else passed.
+ */
+export function checksByName(reported: readonly Check[], named: readonly string[] = []): Check[] {
+  const byName = new Map<string, Check>();
+  for (const check of reported) {
+    const seen = byName.get(check.name);
+    byName.set(check.name, seen ? { ...seen, status: worse(seen.status, check.status), url: seen.url ?? check.url } : check);
+  }
+  for (const name of named) {
+    if (!byName.has(name)) byName.set(name, { name, status: "pending", reported: false, url: null });
+  }
+  return [...byName.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+const STATUS_RANK: Record<CheckStatus, number> = { passed: 0, pending: 1, failed: 2 };
+
+function worse(a: CheckStatus, b: CheckStatus): CheckStatus {
+  return STATUS_RANK[a] >= STATUS_RANK[b] ? a : b;
 }
 
 /**

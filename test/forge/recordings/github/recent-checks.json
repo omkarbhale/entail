@@ -1,0 +1,298 @@
+{
+  "host": "github.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "id": 5001,
+          "node_id": "R_5001",
+          "name": "tally",
+          "full_name": "acme/tally",
+          "private": true,
+          "owner": {
+            "login": "owner",
+            "id": 1001,
+            "node_id": "U_1001",
+            "url": "https://api.github.com/users/owner",
+            "html_url": "https://github.com/owner",
+            "type": "User",
+            "site_admin": false
+          },
+          "html_url": "https://github.com/acme/tally",
+          "default_branch": "main",
+          "visibility": "private",
+          "created_at": "2026-10-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/commits?sha=main&per_page=2"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": [
+          {
+            "sha": "2c2c2c2c3d3d3d3d4e4e4e4e5f5f5f5f60606060",
+            "node_id": "C_2c2c2c2c",
+            "commit": {
+              "message": "Count words",
+              "author": {
+                "name": "Owner",
+                "email": "owner@example.com",
+                "date": "2026-11-01T09:00:00Z"
+              }
+            },
+            "url": "https://api.github.com/repos/acme/tally/commits/2c2c2c2c3d3d3d3d4e4e4e4e5f5f5f5f60606060",
+            "html_url": "https://github.com/acme/tally/commit/2c2c2c2c3d3d3d3d4e4e4e4e5f5f5f5f60606060",
+            "author": {
+              "login": "owner",
+              "id": 1001,
+              "node_id": "U_1001",
+              "url": "https://api.github.com/users/owner",
+              "html_url": "https://github.com/owner",
+              "type": "User",
+              "site_admin": false
+            },
+            "committer": {
+              "login": "owner",
+              "id": 1001,
+              "node_id": "U_1001",
+              "url": "https://api.github.com/users/owner",
+              "html_url": "https://github.com/owner",
+              "type": "User",
+              "site_admin": false
+            },
+            "parents": []
+          },
+          {
+            "sha": "1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050",
+            "node_id": "C_1c1c1c1c",
+            "commit": {
+              "message": "Start tally",
+              "author": {
+                "name": "Owner",
+                "email": "owner@example.com",
+                "date": "2026-11-01T09:00:00Z"
+              }
+            },
+            "url": "https://api.github.com/repos/acme/tally/commits/1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050",
+            "html_url": "https://github.com/acme/tally/commit/1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050",
+            "author": {
+              "login": "owner",
+              "id": 1001,
+              "node_id": "U_1001",
+              "url": "https://api.github.com/users/owner",
+              "html_url": "https://github.com/owner",
+              "type": "User",
+              "site_admin": false
+            },
+            "committer": {
+              "login": "owner",
+              "id": 1001,
+              "node_id": "U_1001",
+              "url": "https://api.github.com/users/owner",
+              "html_url": "https://github.com/owner",
+              "type": "User",
+              "site_admin": false
+            },
+            "parents": []
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/commits/2c2c2c2c3d3d3d3d4e4e4e4e5f5f5f5f60606060/check-runs?filter=latest&per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "total_count": 1,
+          "check_runs": [
+            {
+              "id": 1270001,
+              "name": "test",
+              "node_id": "CR_1270001",
+              "head_sha": "2c2c2c2c3d3d3d3d4e4e4e4e5f5f5f5f60606060",
+              "external_id": "ext-1270001",
+              "url": "https://api.github.com/repos/acme/tally/check-runs/1270001",
+              "html_url": "https://github.com/acme/tally/actions/runs/127000/job/1270001",
+              "details_url": "https://github.com/acme/tally/actions/runs/127000/job/1270001",
+              "status": "completed",
+              "conclusion": "success",
+              "started_at": "2026-11-02T09:21:00Z",
+              "completed_at": "2026-11-02T09:24:00Z",
+              "app": {
+                "id": 15368,
+                "slug": "github-actions",
+                "node_id": "MDM6QXBwMTUzNjg=",
+                "name": "GitHub Actions"
+              },
+              "pull_requests": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/commits/2c2c2c2c3d3d3d3d4e4e4e4e5f5f5f5f60606060/status?per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "state": "pending",
+          "statuses": [],
+          "sha": "2c2c2c2c3d3d3d3d4e4e4e4e5f5f5f5f60606060",
+          "total_count": 0,
+          "repository": {
+            "id": 5001,
+            "full_name": "acme/tally"
+          },
+          "commit_url": "https://api.github.com/repos/acme/tally/commits/2c2c2c2c3d3d3d3d4e4e4e4e5f5f5f5f60606060",
+          "url": "https://api.github.com/repos/acme/tally/commits/2c2c2c2c3d3d3d3d4e4e4e4e5f5f5f5f60606060/status"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/commits/1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050/check-runs?filter=latest&per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "total_count": 1,
+          "check_runs": [
+            {
+              "id": 1260001,
+              "name": "test",
+              "node_id": "CR_1260001",
+              "head_sha": "1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050",
+              "external_id": "ext-1260001",
+              "url": "https://api.github.com/repos/acme/tally/check-runs/1260001",
+              "html_url": "https://github.com/acme/tally/actions/runs/126000/job/1260001",
+              "details_url": "https://github.com/acme/tally/actions/runs/126000/job/1260001",
+              "status": "completed",
+              "conclusion": "failure",
+              "started_at": "2026-11-02T09:21:00Z",
+              "completed_at": "2026-11-02T09:24:00Z",
+              "app": {
+                "id": 15368,
+                "slug": "github-actions",
+                "node_id": "MDM6QXBwMTUzNjg=",
+                "name": "GitHub Actions"
+              },
+              "pull_requests": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/commits/1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050/status?per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "state": "success",
+          "statuses": [
+            {
+              "url": "https://api.github.com/repos/acme/tally/statuses/4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e",
+              "id": 4001,
+              "node_id": "SC_4001",
+              "state": "success",
+              "description": "lint is success",
+              "target_url": "https://ci.example.com/acme/tally/builds/40",
+              "context": "lint",
+              "created_at": "2026-11-02T09:21:00Z",
+              "updated_at": "2026-11-02T09:22:00Z",
+              "creator": {
+                "login": "owner",
+                "id": 1001,
+                "node_id": "U_1001",
+                "url": "https://api.github.com/users/owner",
+                "html_url": "https://github.com/owner",
+                "type": "User",
+                "site_admin": false
+              }
+            }
+          ],
+          "sha": "1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050",
+          "total_count": 1,
+          "repository": {
+            "id": 5001,
+            "full_name": "acme/tally"
+          },
+          "commit_url": "https://api.github.com/repos/acme/tally/commits/1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050",
+          "url": "https://api.github.com/repos/acme/tally/commits/1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050/status"
+        }
+      }
+    }
+  ]
+}

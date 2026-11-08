@@ -7,12 +7,18 @@ import { ChangeDeduplicator } from "../../src/changes.ts";
 import { CursorStore } from "../../src/cursors.ts";
 import {
   type Actor,
+  allChecksFinished,
+  allChecksPassed,
   type Change,
+  type Check,
   type Forge,
   ForgeLoggedOutError,
   type ForgeSetting,
   projectKey,
+  type PullRequest,
   RateLimitedError,
+  type RequiredCheck,
+  requiredChecksReported,
   sameActor,
 } from "../../src/forge/forge.ts";
 import type { Transport } from "../../src/forge/transport.ts";
@@ -34,13 +40,24 @@ export type Scenario =
   | "close"
   | "merge"
   | "merge-refused"
-  | "settle-reads";
+  | "settle-reads"
+  | "pull-requests"
+  | "linked"
+  | "checks"
+  | "checks-not-reported"
+  | "recent-checks";
 
 export interface ForgeContractSubject {
   name: string;
   setting: ForgeSetting;
   recording(scenario: Scenario): Recording;
   createForge(setting: ForgeSetting, transport: Transport): Forge;
+  /**
+   * What the forge requires before merging into `main`, as it reports it at
+   * PR #4's head in the checks scenarios: the forges state this differently,
+   * GitHub as required checks and GitLab as its pipeline (ADR-0015).
+   */
+  required(reported: boolean): RequiredCheck[];
 }
 
 /*
@@ -70,6 +87,22 @@ export interface ForgeContractSubject {
  * - Settle reads: issue #2 carries the `/entail` comment then entail's comment
  *   8001 (with a system note between them on GitLab), PR #4 carries entail's
  *   comment 8002, PR #4 is merged and PR #5 is open.
+ * PRs, in the same world:
+ *
+ * - PR #4 (id 8004) by reporter, "Read standard input", from `stdin` into
+ *   `main` at head HEAD4, closes issue #1 by the forge's link data. Owner
+ *   comments on it (id 7002). Later its description is edited and reporter
+ *   posts an evidence comment (id 7004). Read live, it is mergeable.
+ * - PR #5 (id 8005) by owner closes issue #1 but targets `develop`; it is a
+ *   draft with conflicts.
+ * - PR #6 only mentions issue #1 in its text; the forge does not link it.
+ * - PR #7 (id 8007) was merged.
+ * - A PR in another repo also closes issue #1.
+ * - Checks at HEAD4: `test` passed, `docs` skipped, `coverage` neutral or
+ *   allowed to fail, `lint` failed, `build` running and `deploy` passed. The
+ *   criteria name `test` and `e2e`, and `e2e` has not reported.
+ * - At HEAD4B nothing has reported for the PR.
+ * - On `main`, commit C2 (newest) passed `test`; C1 failed `test` and passed `lint`.
  */
 const HEAD = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const MERGE_COMMIT = "9fceb02d0ae598e95dc970b74767f19372d61af8";
@@ -77,6 +110,11 @@ const ISSUE_COMMENT = "Speaking from Owner's entail:\n\nCleared.\n\n<!-- entail 
 const PR_COMMENT = "Speaking from Owner's entail:\n\nNot merged at `4b825dc`.\n\n<!-- entail ticket 42 -->";
 const OWNER = { id: 1001, username: "owner" };
 const REPORTER = { id: 1002, username: "reporter" };
+const HEAD4 = "4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e";
+const HEAD4B = "b7e2d1c0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4";
+const C1 = "1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050";
+const C2 = "2c2c2c2c3d3d3d3d4e4e4e4e5f5f5f5f60606060";
+const EVIDENCE = "## entail evidence\n\nC1: ran `printf 'a b' | tally` — printed 2";
 
 /** Runs the forge contract suite against one adapter on its recorded responses. */
 export function forgeContract(subject: ForgeContractSubject): void {
@@ -140,6 +178,8 @@ export function forgeContract(subject: ForgeContractSubject): void {
         "issue 9001 2026-11-01T10:00:00.000Z",
         "issue 9002 2026-11-01T11:00:00.000Z",
         "issue-comment 7001 2026-11-01T11:05:00.000Z",
+        "pull-request 8004 2026-11-01T10:45:00.000Z",
+        "pull-request-comment 7002 2026-11-01T10:45:00.000Z",
       ]);
       const issue1 = issueOf(first, 9001);
       assert.deepEqual(withoutUrl(issue1), {
@@ -170,6 +210,34 @@ export function forgeContract(subject: ForgeContractSubject): void {
         },
       );
 
+      const pull = pullRequestOf(first, 8004);
+      assert.deepEqual(withoutUrl(pull), {
+        id: 8004,
+        number: 4,
+        title: "Read standard input",
+        body: "Closes #1",
+        state: "open",
+        draft: false,
+        mergeable: null,
+        conflicts: null,
+        headSha: HEAD4,
+        baseBranch: "main",
+        author: actor(REPORTER),
+        createdAt: "2026-11-01T10:30:00.000Z",
+        updatedAt: "2026-11-01T10:45:00.000Z",
+      });
+      assert.ok(pull.url.startsWith(`https://${setting.host}/`), "the PR's URL is on its host");
+      const pullComment = first.find((change) => change.kind === "pull-request-comment");
+      assert.ok(pullComment?.kind === "pull-request-comment");
+      assert.deepEqual(withoutUrl(pullComment.comment), {
+        id: 7002,
+        pullRequestNumber: 4,
+        body: "Looks good.",
+        author: actor(OWNER),
+        createdAt: "2026-11-01T10:45:00.000Z",
+        updatedAt: "2026-11-01T10:45:00.000Z",
+      });
+
       assert.deepEqual(await poll(), [], "nothing changed, so nothing is reported");
       assert.deepEqual(await poll(), [], "still nothing changed");
 
@@ -177,7 +245,18 @@ export function forgeContract(subject: ForgeContractSubject): void {
       assert.deepEqual(later.map(summary).sort(), [
         "issue 9002 2026-11-02T09:00:00.000Z",
         "issue 9003 2026-11-02T09:30:00.000Z",
+        "pull-request 8004 2026-11-02T09:20:00.000Z",
+        "pull-request-comment 7004 2026-11-02T09:20:00.000Z",
       ]);
+      assert.equal(
+        pullRequestOf(later, 8004).body,
+        "Closes #1\n\nReads standard input when no file is given.",
+        "an edited description reports the PR again",
+      );
+      const evidence = later.find((change) => change.kind === "pull-request-comment");
+      assert.ok(evidence?.kind === "pull-request-comment");
+      assert.equal(evidence.comment.body, EVIDENCE);
+      assert.deepEqual(evidence.comment.author, actor(REPORTER));
       const edited = issueOf(later, 9002);
       assert.equal(edited.title, "Word counts are one too high after a leading space");
       assert.deepEqual(edited.labels, ["entail:deciding"]);
@@ -251,6 +330,124 @@ export function forgeContract(subject: ForgeContractSubject): void {
       assert.equal(forge.wording.pullRequest, setting.forge === "gitlab" ? "merge request" : "pull request");
     });
 
+    test("a PR is read live with its state, and its comments with their authors, oldest first", async (t) => {
+      const forge = forgeFor(t, "pull-requests");
+      const open = await forge.pullRequest(4);
+      assert.deepEqual(withoutUrl(open), {
+        id: 8004,
+        number: 4,
+        title: "Read standard input",
+        body: "Closes #1\n\nReads standard input when no file is given.",
+        state: "open",
+        draft: false,
+        mergeable: true,
+        conflicts: false,
+        headSha: HEAD4,
+        baseBranch: "main",
+        author: actor(REPORTER),
+        createdAt: "2026-11-01T10:30:00.000Z",
+        updatedAt: "2026-11-02T09:20:00.000Z",
+      });
+
+      const draft = await forge.pullRequest(5);
+      assert.deepEqual(
+        { state: draft.state, draft: draft.draft, mergeable: draft.mergeable, conflicts: draft.conflicts, base: draft.baseBranch },
+        { state: "open", draft: true, mergeable: false, conflicts: true, base: "develop" },
+      );
+      assert.deepEqual(draft.author, actor(OWNER));
+
+      const merged = await forge.pullRequest(7);
+      assert.equal(merged.state, "merged");
+
+      const comments = await forge.pullRequestComments(4);
+      assert.deepEqual(
+        comments.map((comment) => ({ ...withoutUrl(comment) })),
+        [
+          {
+            id: 7002,
+            pullRequestNumber: 4,
+            body: "Looks good.",
+            author: actor(OWNER),
+            createdAt: "2026-11-01T10:45:00.000Z",
+            updatedAt: "2026-11-01T10:45:00.000Z",
+          },
+          {
+            id: 7004,
+            pullRequestNumber: 4,
+            body: EVIDENCE,
+            author: actor(REPORTER),
+            createdAt: "2026-11-02T09:20:00.000Z",
+            updatedAt: "2026-11-02T09:20:00.000Z",
+          },
+        ],
+        "only comments by people, with the PR's author told apart by id",
+      );
+      for (const comment of comments) assert.ok(comment.url.startsWith(`https://${setting.host}/`), "a comment's URL is on its host");
+    });
+
+    test("a ticket's PRs come from the forge's linked-issue data, into the default branch only", async (t) => {
+      const forge = forgeFor(t, "linked");
+      const linked = await forge.linkedPullRequests(1);
+      assert.deepEqual(
+        linked.map((pull) => pull.number),
+        [4],
+        "not the PR into develop, the PR in another repo, or the PR that only mentions the issue",
+      );
+      assert.equal(linked[0]?.mergeable, true, "each linked PR is read live");
+
+      assert.deepEqual(await forge.linkedIssues(4), [1]);
+      assert.deepEqual(await forge.linkedIssues(5), [], "a PR into a branch other than the default links no ticket");
+      assert.deepEqual(await forge.linkedIssues(6), [], "text that mentions the issue is not a link");
+    });
+
+    test("checks at a sha, with what the forge requires and a named check that has not reported", async (t) => {
+      const forge = forgeFor(t, "checks");
+      const report = await forge.checks(4, HEAD4, ["test", "e2e"]);
+      assert.equal(report.sha, HEAD4);
+      assert.deepEqual(report.checks.map(statusOf), [
+        "build pending",
+        "coverage passed",
+        "deploy passed",
+        "docs passed",
+        "e2e pending (not reported)",
+        "lint failed",
+        "test passed",
+      ]);
+      for (const check of report.checks.filter((c) => c.reported)) {
+        assert.ok(check.url?.startsWith("https://"), `${check.name} links to its result`);
+      }
+      assert.deepEqual(report.required, subject.required(true));
+      assert.equal(allChecksFinished(report), false, "a running check and an unreported named one are pending");
+      assert.equal(allChecksPassed(report), false);
+      assert.equal(requiredChecksReported(report), subject.required(true).every((r) => r.reported));
+    });
+
+    test("with nothing reported a named check is pending, and with none named every check has finished", async (t) => {
+      const forge = forgeFor(t, "checks-not-reported");
+      const named = await forge.checks(4, HEAD4B, ["test"]);
+      assert.deepEqual(named.checks, [{ name: "test", status: "pending", reported: false, url: null }]);
+      assert.equal(allChecksFinished(named), false);
+      assert.deepEqual(named.required, subject.required(false));
+      assert.equal(requiredChecksReported(named), false);
+
+      const unnamed = await forge.checks(4, HEAD4B, []);
+      assert.deepEqual(unnamed.checks, []);
+      assert.equal(allChecksFinished(unnamed), true, "with no named checks and no checks at all, every check has finished");
+      assert.equal(requiredChecksReported(unnamed), false);
+    });
+
+    test("the checks that reported on recent default-branch commits", async (t) => {
+      const forge = forgeFor(t, "recent-checks");
+      const recent = await forge.recentDefaultBranchChecks(2);
+      assert.deepEqual(
+        recent.map((commit) => ({ sha: commit.sha, checks: commit.checks.map(statusOf) })),
+        [
+          { sha: C2, checks: ["test passed"] },
+          { sha: C1, checks: ["lint passed", "test failed"] },
+        ],
+      );
+    });
+
     test("a rate-limited read is surfaced with its reset time", async (t) => {
       const forge = forgeFor(t, "rate-limited");
       await assert.rejects(forge.changesSince(null), (error: unknown) => {
@@ -266,6 +463,16 @@ export function forgeContract(subject: ForgeContractSubject): void {
 
 function summary(change: Change): string {
   return `${change.kind} ${change.id} ${change.updatedAt}`;
+}
+
+function statusOf(check: Check): string {
+  return `${check.name} ${check.status}${check.reported ? "" : " (not reported)"}`;
+}
+
+function pullRequestOf(changes: Change[], id: number): PullRequest {
+  const change = changes.find((c) => c.kind === "pull-request" && c.id === id);
+  assert.ok(change?.kind === "pull-request", `PR ${id} is reported`);
+  return change.pullRequest;
 }
 
 function issueOf(changes: Change[], id: number) {

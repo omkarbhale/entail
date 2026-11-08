@@ -1,0 +1,359 @@
+{
+  "host": "github.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "id": 5001,
+          "node_id": "R_5001",
+          "name": "tally",
+          "full_name": "acme/tally",
+          "private": true,
+          "owner": {
+            "login": "owner",
+            "id": 1001,
+            "node_id": "U_1001",
+            "url": "https://api.github.com/users/owner",
+            "html_url": "https://github.com/owner",
+            "type": "User",
+            "site_admin": false
+          },
+          "html_url": "https://github.com/acme/tally",
+          "default_branch": "main",
+          "visibility": "private",
+          "created_at": "2026-10-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/branches/main"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "name": "main",
+          "commit": {
+            "sha": "0000000000000000000000000000000000000000",
+            "url": "https://api.github.com/repos/acme/tally/commits/0000000000000000000000000000000000000000"
+          },
+          "protected": true,
+          "protection": {
+            "enabled": true,
+            "required_status_checks": {
+              "enforcement_level": "non_admins",
+              "contexts": [
+                "test"
+              ],
+              "checks": [
+                {
+                  "context": "test",
+                  "app_id": 15368
+                }
+              ]
+            }
+          },
+          "protection_url": "https://api.github.com/repos/acme/tally/branches/main/protection"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/rules/branches/main?per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": [
+          {
+            "type": "deletion",
+            "ruleset_source_type": "Repository",
+            "ruleset_source": "acme/tally",
+            "ruleset_id": 301
+          },
+          {
+            "type": "required_status_checks",
+            "ruleset_source_type": "Repository",
+            "ruleset_source": "acme/tally",
+            "ruleset_id": 301,
+            "parameters": {
+              "strict_required_status_checks_policy": false,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {
+                  "context": "build"
+                },
+                {
+                  "context": "security",
+                  "integration_id": 9001
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/commits/b7e2d1c0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4/check-runs?filter=latest&per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "total_count": 0,
+          "check_runs": []
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/commits/b7e2d1c0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4/status?per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "state": "pending",
+          "statuses": [],
+          "sha": "b7e2d1c0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4",
+          "total_count": 0,
+          "repository": {
+            "id": 5001,
+            "full_name": "acme/tally"
+          },
+          "commit_url": "https://api.github.com/repos/acme/tally/commits/b7e2d1c0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4",
+          "url": "https://api.github.com/repos/acme/tally/commits/b7e2d1c0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4/status"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "id": 5001,
+          "node_id": "R_5001",
+          "name": "tally",
+          "full_name": "acme/tally",
+          "private": true,
+          "owner": {
+            "login": "owner",
+            "id": 1001,
+            "node_id": "U_1001",
+            "url": "https://api.github.com/users/owner",
+            "html_url": "https://github.com/owner",
+            "type": "User",
+            "site_admin": false
+          },
+          "html_url": "https://github.com/acme/tally",
+          "default_branch": "main",
+          "visibility": "private",
+          "created_at": "2026-10-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/branches/main"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "name": "main",
+          "commit": {
+            "sha": "0000000000000000000000000000000000000000",
+            "url": "https://api.github.com/repos/acme/tally/commits/0000000000000000000000000000000000000000"
+          },
+          "protected": true,
+          "protection": {
+            "enabled": true,
+            "required_status_checks": {
+              "enforcement_level": "non_admins",
+              "contexts": [
+                "test"
+              ],
+              "checks": [
+                {
+                  "context": "test",
+                  "app_id": 15368
+                }
+              ]
+            }
+          },
+          "protection_url": "https://api.github.com/repos/acme/tally/branches/main/protection"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/rules/branches/main?per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": [
+          {
+            "type": "deletion",
+            "ruleset_source_type": "Repository",
+            "ruleset_source": "acme/tally",
+            "ruleset_id": 301
+          },
+          {
+            "type": "required_status_checks",
+            "ruleset_source_type": "Repository",
+            "ruleset_source": "acme/tally",
+            "ruleset_id": 301,
+            "parameters": {
+              "strict_required_status_checks_policy": false,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {
+                  "context": "build"
+                },
+                {
+                  "context": "security",
+                  "integration_id": 9001
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/commits/b7e2d1c0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4/check-runs?filter=latest&per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "total_count": 0,
+          "check_runs": []
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/commits/b7e2d1c0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4/status?per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "state": "pending",
+          "statuses": [],
+          "sha": "b7e2d1c0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4",
+          "total_count": 0,
+          "repository": {
+            "id": 5001,
+            "full_name": "acme/tally"
+          },
+          "commit_url": "https://api.github.com/repos/acme/tally/commits/b7e2d1c0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4",
+          "url": "https://api.github.com/repos/acme/tally/commits/b7e2d1c0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4/status"
+        }
+      }
+    }
+  ]
+}

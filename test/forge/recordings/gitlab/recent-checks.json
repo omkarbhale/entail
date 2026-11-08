@@ -1,0 +1,289 @@
+{
+  "host": "gitlab.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "projects/acme%2Ftally"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "max-age=0, private, must-revalidate",
+          "RateLimit-Limit": "2000",
+          "RateLimit-Observed": "12",
+          "RateLimit-Remaining": "1988",
+          "RateLimit-Reset": "1794139200",
+          "RateLimit-ResetTime": "Sun, 08 Nov 2026 12:00:00 GMT",
+          "X-Gitlab-Meta": "{\"correlation_id\":\"01JC0000000000000000000000\",\"version\":\"1\"}"
+        },
+        "body": {
+          "id": 5001,
+          "name": "tally",
+          "path": "tally",
+          "path_with_namespace": "acme/tally",
+          "name_with_namespace": "acme / tally",
+          "default_branch": "main",
+          "visibility": "private",
+          "web_url": "https://gitlab.com/acme/tally",
+          "http_url_to_repo": "https://gitlab.com/acme/tally.git",
+          "created_at": "2026-10-01T00:00:00.000Z",
+          "namespace": {
+            "id": 3001,
+            "name": "acme",
+            "path": "acme",
+            "kind": "group",
+            "full_path": "acme"
+          },
+          "issues_enabled": true,
+          "merge_requests_enabled": true,
+          "only_allow_merge_if_pipeline_succeeds": true
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "projects/acme%2Ftally/pipelines?ref=main&order_by=id&sort=desc&per_page=2"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "max-age=0, private, must-revalidate",
+          "RateLimit-Limit": "2000",
+          "RateLimit-Observed": "12",
+          "RateLimit-Remaining": "1988",
+          "RateLimit-Reset": "1794139200",
+          "RateLimit-ResetTime": "Sun, 08 Nov 2026 12:00:00 GMT",
+          "X-Gitlab-Meta": "{\"correlation_id\":\"01JC0000000000000000000000\",\"version\":\"1\"}",
+          "X-Page": "1",
+          "X-Per-Page": "100",
+          "X-Next-Page": "2",
+          "X-Prev-Page": "",
+          "X-Total": "2"
+        },
+        "body": [
+          {
+            "id": 72,
+            "iid": 12,
+            "project_id": 5001,
+            "sha": "2c2c2c2c3d3d3d3d4e4e4e4e5f5f5f5f60606060",
+            "ref": "main",
+            "status": "success",
+            "source": "push",
+            "created_at": "2026-11-02T09:20:30.000Z",
+            "updated_at": "2026-11-02T09:24:00.000Z",
+            "web_url": "https://gitlab.com/acme/tally/-/pipelines/72"
+          },
+          {
+            "id": 71,
+            "iid": 11,
+            "project_id": 5001,
+            "sha": "1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050",
+            "ref": "main",
+            "status": "failed",
+            "source": "push",
+            "created_at": "2026-11-02T09:20:30.000Z",
+            "updated_at": "2026-11-02T09:24:00.000Z",
+            "web_url": "https://gitlab.com/acme/tally/-/pipelines/71"
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "projects/acme%2Ftally/pipelines/72/jobs?per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "max-age=0, private, must-revalidate",
+          "RateLimit-Limit": "2000",
+          "RateLimit-Observed": "12",
+          "RateLimit-Remaining": "1988",
+          "RateLimit-Reset": "1794139200",
+          "RateLimit-ResetTime": "Sun, 08 Nov 2026 12:00:00 GMT",
+          "X-Gitlab-Meta": "{\"correlation_id\":\"01JC0000000000000000000000\",\"version\":\"1\"}",
+          "X-Page": "1",
+          "X-Per-Page": "100",
+          "X-Next-Page": "",
+          "X-Prev-Page": "",
+          "X-Total": "1"
+        },
+        "body": [
+          {
+            "id": 7201,
+            "status": "success",
+            "stage": "test",
+            "name": "test",
+            "ref": "stdin",
+            "tag": false,
+            "coverage": null,
+            "allow_failure": false,
+            "created_at": "2026-11-02T09:20:30.000Z",
+            "started_at": "2026-11-02T09:21:00.000Z",
+            "finished_at": "2026-11-02T09:24:00.000Z",
+            "erased_at": null,
+            "duration": null,
+            "queued_duration": null,
+            "user": {
+              "id": 1002,
+              "username": "reporter",
+              "name": "Reporter",
+              "state": "active",
+              "locked": false,
+              "avatar_url": "https://gitlab.com/uploads/-/system/user/avatar/1002/avatar.png",
+              "web_url": "https://gitlab.com/reporter"
+            },
+            "commit": {
+              "id": "2c2c2c2c3d3d3d3d4e4e4e4e5f5f5f5f60606060",
+              "short_id": "2c2c2c2c",
+              "title": "Read standard input"
+            },
+            "pipeline": {
+              "id": 72,
+              "project_id": 5001,
+              "ref": "main",
+              "sha": "2c2c2c2c3d3d3d3d4e4e4e4e5f5f5f5f60606060",
+              "status": "success"
+            },
+            "web_url": "https://gitlab.com/acme/tally/-/jobs/7201",
+            "project": {
+              "ci_job_token_scope_enabled": false
+            },
+            "artifacts": [],
+            "runner": null,
+            "artifacts_expire_at": null,
+            "archived": false,
+            "tag_list": [],
+            "failure_reason": null
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "projects/acme%2Ftally/pipelines/71/jobs?per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "max-age=0, private, must-revalidate",
+          "RateLimit-Limit": "2000",
+          "RateLimit-Observed": "12",
+          "RateLimit-Remaining": "1988",
+          "RateLimit-Reset": "1794139200",
+          "RateLimit-ResetTime": "Sun, 08 Nov 2026 12:00:00 GMT",
+          "X-Gitlab-Meta": "{\"correlation_id\":\"01JC0000000000000000000000\",\"version\":\"1\"}",
+          "X-Page": "1",
+          "X-Per-Page": "100",
+          "X-Next-Page": "",
+          "X-Prev-Page": "",
+          "X-Total": "2"
+        },
+        "body": [
+          {
+            "id": 7101,
+            "status": "failed",
+            "stage": "test",
+            "name": "test",
+            "ref": "stdin",
+            "tag": false,
+            "coverage": null,
+            "allow_failure": false,
+            "created_at": "2026-11-02T09:20:30.000Z",
+            "started_at": "2026-11-02T09:21:00.000Z",
+            "finished_at": "2026-11-02T09:24:00.000Z",
+            "erased_at": null,
+            "duration": null,
+            "queued_duration": null,
+            "user": {
+              "id": 1002,
+              "username": "reporter",
+              "name": "Reporter",
+              "state": "active",
+              "locked": false,
+              "avatar_url": "https://gitlab.com/uploads/-/system/user/avatar/1002/avatar.png",
+              "web_url": "https://gitlab.com/reporter"
+            },
+            "commit": {
+              "id": "1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050",
+              "short_id": "1c1c1c1c",
+              "title": "Read standard input"
+            },
+            "pipeline": {
+              "id": 71,
+              "project_id": 5001,
+              "ref": "main",
+              "sha": "1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050",
+              "status": "failed"
+            },
+            "web_url": "https://gitlab.com/acme/tally/-/jobs/7101",
+            "project": {
+              "ci_job_token_scope_enabled": false
+            },
+            "artifacts": [],
+            "runner": null,
+            "artifacts_expire_at": null,
+            "archived": false,
+            "tag_list": [],
+            "failure_reason": "script_failure"
+          },
+          {
+            "id": 7102,
+            "status": "success",
+            "stage": "test",
+            "name": "lint",
+            "ref": "stdin",
+            "tag": false,
+            "coverage": null,
+            "allow_failure": false,
+            "created_at": "2026-11-02T09:20:30.000Z",
+            "started_at": "2026-11-02T09:21:00.000Z",
+            "finished_at": "2026-11-02T09:24:00.000Z",
+            "erased_at": null,
+            "duration": null,
+            "queued_duration": null,
+            "user": {
+              "id": 1002,
+              "username": "reporter",
+              "name": "Reporter",
+              "state": "active",
+              "locked": false,
+              "avatar_url": "https://gitlab.com/uploads/-/system/user/avatar/1002/avatar.png",
+              "web_url": "https://gitlab.com/reporter"
+            },
+            "commit": {
+              "id": "1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050",
+              "short_id": "1c1c1c1c",
+              "title": "Read standard input"
+            },
+            "pipeline": {
+              "id": 71,
+              "project_id": 5001,
+              "ref": "main",
+              "sha": "1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050",
+              "status": "failed"
+            },
+            "web_url": "https://gitlab.com/acme/tally/-/jobs/7102",
+            "project": {
+              "ci_job_token_scope_enabled": false
+            },
+            "artifacts": [],
+            "runner": null,
+            "artifacts_expire_at": null,
+            "archived": false,
+            "tag_list": [],
+            "failure_reason": null
+          }
+        ]
+      }
+    }
+  ]
+}

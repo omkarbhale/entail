@@ -151,6 +151,24 @@ export class StateForge implements Forge {
   async changesSince(): Promise<ChangeBatch> {
     throw new Error("not supported");
   }
+  async pullRequest(): Promise<never> {
+    throw new Error("not supported");
+  }
+  async pullRequestComments(): Promise<never> {
+    throw new Error("not supported");
+  }
+  async linkedPullRequests(): Promise<never> {
+    throw new Error("not supported");
+  }
+  async linkedIssues(): Promise<never> {
+    throw new Error("not supported");
+  }
+  async checks(): Promise<never> {
+    throw new Error("not supported");
+  }
+  async recentDefaultBranchChecks(): Promise<never> {
+    throw new Error("not supported");
+  }
 
   get #actorId(): number {
     return this.#options.actorId ?? 1001;
