@@ -35,3 +35,9 @@ entail and an executor share no API. They meet on the issue and the PR, in the s
 - The "who counts" setting and its executor list are set where the other per-repo settings are, decided on [How is a repo enrolled, and what per-repo settings exist?](https://github.com/omkarbhale/entail/issues/25).
 - Several PRs for one ticket and generic criteria ids are decided in ADR-0014, on [How does entail verify a landed PR's evidence, and how is a failing PR routed?](https://github.com/omkarbhale/entail/issues/22). Routing a failing PR beyond a comment is a later effort.
 - Decided on [What is the contract between entail and any executor?](https://github.com/omkarbhale/entail/issues/30).
+
+## Amendment: a PR linking an issue whose ticket ended
+
+Point 4's one comment for a PR linking an issue with no criteria in force also covers an issue whose latest ticket is final as declined or cancelled. The PR is not checked or merged. The comment names the end state, links the comment that gave its reason, and says the issue has no criteria in force unless the owner pulls it in again (ADR-0020) and it is cleared. If that happens, the PR links the new ticket and is checked against its criteria. A PR linking a merged ticket gets ADR-0014's "already merged" comment instead. Under "owner plus listed executors", another account's PR gets only point 3's comment, as before. Each PR gets the comment once per ticket.
+
+Settled after the MVP-1 spec was assembled, as an engineering call the owner delegated (open point 7 of `docs/spec/mvp-1.md`). The executor's question is the same as for a ticket with no criteria yet, why the PR is not checked, so one existing comment answers it. Staying silent was passed over, because an executor would be left waiting on a check that never comes.

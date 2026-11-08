@@ -27,3 +27,11 @@ entail writes each cleared ticket's criteria itself, because an issue is a reque
 - **Landing.** The landing check runs mechanical checks first, and no grade overrules a failed one. A fresh session grades the rest. Every "met" quotes its evidence word for word from the PR at the checked head, and no evidence means not met.
 - **Unknown causes.** Criteria are written only once the problem is known. When the cause or validity of a report is unknown, the ticket is investigated first (ADR-0006).
 - Decided on [What form do intake criteria take, and when does writing them need the owner?](https://github.com/omkarbhale/entail/issues/21).
+
+## Amendment: findings can be a criterion's source
+
+A ticket cleared after investigation (ADR-0006) has a fix that only its findings make known, such as the `tally` fixture's T11, where the findings establish that a leading space counts as a word. Its criteria may therefore cite an entry of the findings, by question id, as their source. A criterion's sources are now the issue, an entry of its findings, a vision line or the owner's answer. A criterion that states the reading entail chose is traced to the issue.
+
+- Findings are issue text like the issue itself (ADR-0001): judged, never the owner's word. The product-call rule applies to them unchanged. A findings entry can say what is wrong, but a criterion that fixes something users can observe, which the issue, the vision or an answer does not choose, still sends the ticket to the board.
+- "Each has a source that exists" means, for findings, that the findings comment the ticket was decided from has an entry for that question id.
+- Settled after the MVP-1 spec was assembled, as an engineering call the owner delegated (open point 3 of `docs/spec/mvp-1.md`). Requiring every criterion to trace to the issue alone was passed over, because it would leave T11's criteria too vague to check, against ADR-0006's "a real problem whose fix is now known gets its criteria".

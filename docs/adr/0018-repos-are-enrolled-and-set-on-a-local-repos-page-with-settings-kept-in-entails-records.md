@@ -86,3 +86,21 @@ The owner chose this over a CLI, a hand-edited config file, or a file committed 
 - **Enrolling and settings need entail running.** The Repos page is served by the running process, so enrolling, changing settings, pausing and unenrolling happen there and not through separate `entail` commands. This narrows ADR-0017's mention of `entail` commands for enrolling and settings. Those commands are not needed, because the board already requires the process to be running. The running process re-reads settings on every pass (ADR-0017), so a saved change takes effect within one pass.
 - **Two kinds of halt.** The owner's pause is a setting. It is not the automatic halt of ADR-0017, which stops a repo's work while its host's CLI is logged out or logged in as another account, or while the subscription's usage limit is reached. The Repos page shows them apart.
 - Decided on [How is a repo enrolled, and what per-repo settings exist?](https://github.com/omkarbhale/entail/issues/25).
+
+## Amendment: the global settings and the model
+
+Settled after the MVP-1 spec was assembled, as an engineering call the owner delegated (open point 8 of `docs/spec/mvp-1.md`). [#19](https://github.com/omkarbhale/entail/issues/19) and [#21](https://github.com/omkarbhale/entail/issues/21) set the model "once in entail's global config", but the list above left it out. The global settings live on a page of their own, linked from the Repos page, kept and versioned like repo settings. They are the only entail-wide settings in MVP-1:
+
+| Setting | Default | Takes effect |
+| --- | --- | --- |
+| Owner's display name | none; asked for before the first enrollment | from the next comment or answer |
+| Records repo remote | none ("no remote set" is shown here, ADR-0019) | from the next records push |
+| Notice connector | `desktop` (ADR-0017) | from the next notice |
+| Model | Opus 5.5 (`claude-opus-5-5`) | from the next model run |
+| Model-run limit | 2 | from the next pass |
+| Poll interval | 60 s | from the next pass |
+| Board port | 7419 | from the next start |
+
+- **The model** is one setting for every model run, because nothing decided a per-run choice. Each call already records the model of every run behind it (ADR-0009).
+- **The display name** has no default, because the attribution line and every answer carry it and no forge account name is reliably the name the owner wants. Enrolling waits until it is set.
+- **The port** changes only on the next start, because a running server keeps the port its posted links use (ADR-0017).

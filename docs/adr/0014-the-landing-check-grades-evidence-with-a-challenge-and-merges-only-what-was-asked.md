@@ -60,3 +60,7 @@ VISION.md says a PR that passes its criteria merges automatically, so the merge 
 - **A PR closed without merging.** The ticket goes back to cleared if no other PR for it is open.
 - **Cost.** A passing PR costs two model runs, the grader and the challenge, at each head that reaches grading.
 - Decided on [How does entail verify a landed PR's evidence, and how is a failing PR routed?](https://github.com/omkarbhale/entail/issues/22).
+
+## Amendment: VISION.md now says entail comments, never fixes
+
+VISION.md said that when a PR fails its criteria, entail decides whether to fix it itself, raise it again, or cancel it, which contradicted entail never executing ([#24](https://github.com/omkarbhale/entail/issues/24)). The owner amended the line: entail decides whether to comment on the PR with what needs to change, raise it again, or cancel it, and it never fixes the PR itself. The failing landing comment is that comment. Raising a failing PR again and cancelling it remain the later routing effort named above.

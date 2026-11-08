@@ -39,3 +39,12 @@ ADR-0011 replaced the **small** verdict: a ticket the vision does not contradict
 - **T13, new, consequential readings**: "Word counts differ from other tools on text with non-breaking spaces." Whether a non-breaking space separates words changes the counts, and "A word is a run of characters between whitespace." bears on that without choosing. So it needs the owner. The harness answers in its own words, "Any Unicode whitespace separates words, including a non-breaking space.", and the criteria cite that answer. End state: merged.
 
 The rest of the test is unchanged. Clearing T7, T8, T9 or T13 without an answer is still a wrong clear and fails the test.
+
+## Amendment: seams, pass check 4 and T2
+
+Settled after the MVP-1 spec was assembled, as engineering calls the owner delegated (open points 1, 4 and 5 of `docs/spec/mvp-1.md`):
+
+- **Seams.** to-spec asks for the testing seams to be confirmed with the owner, who delegated it. The seams tests substitute are the `Forge` interface and its transport (ADR-0015), the model runner (ADR-0017) and the notice connector (ADR-0017). The acceptance test's real surfaces are the forge, entail's store and the board form on localhost. Repository content is tested on real local git repositories, and time with `node:test`'s mock timers, so neither is a seam of entail's own.
+- **Pass check 4** still named "a small category" as a criterion's source after ADR-0011 replaced small. It now reads: every criterion's source is the issue, an entry of its findings, a vision line or the owner's answer (ADR-0005's amendment); VISION.md is unchanged; and no vision line was added.
+- **T2** was "settled, citing the errors line (small is also acceptable)". Unopposed replaced small, so an unopposed T2 is also acceptable and is not a wrong clear. When T2 is settled, pass check 3 still requires the errors line in its citation.
+- **T10's** end state is declined with its issue left open (ADR-0007's amendment).

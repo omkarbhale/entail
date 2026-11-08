@@ -83,3 +83,17 @@ There is no job queue. Work owed is a function of the records, so a restart lose
   - A failed notice is logged and blocks nothing. The issue comment linking to the board is still posted.
 - **Operational log.** Polls, backoffs, retries, machine failures, pauses at the usage limit and failed notices are not calls (ADR-0009). They go to a JSON-lines file in the data directory, rotated at 10 MB with five files kept, and the same lines go to stdout for a terminal or the system journal. How the process reports its own health to the owner is a separate question.
 - Decided on [What is the shape of entail's local process?](https://github.com/omkarbhale/entail/issues/27).
+
+## Amendment: the model runner and the notice connector
+
+Settled after the MVP-1 spec was assembled, as engineering calls the owner delegated (open points 2 and 9 of `docs/spec/mvp-1.md`).
+
+- **The model runner.** Every model run goes through one interface, `run(request)`, which tests can replace. The unit tests ADR-0016 and ADR-0020 name, for each re-check outcome, need one.
+  - The request names the run's kind (verdict, challenge, criteria, re-check, grade, landing challenge or generic criteria proposal), its prompt and prompt version, its JSON Schema, the read-only checkout and sha it reads, and the model.
+  - The result is either the structured output, with the session id, model, duration, estimated cost and usage, or a machine failure classified as no structured output, an error, a timeout, a refusal or a usage limit (with the reset time `claude` reported, if any). Classifying there keeps everything above the runner unaware of `claude`, and retries and the usage-limit pause act on the classification.
+  - The real runner spawns `claude -p`. Unit tests use a scripted runner that returns a recorded output or failure for each kind and ticket. The acceptance test (ADR-0010) uses the real runner, because model verdicts are what it measures.
+- **The notice connector.** One interface, `send(notice)`, which resolves when the notice was handed over and fails otherwise. The health notice (ADR-0019) uses the same one.
+  - A notice carries only its kind (`board-item` or `health`), one line of text, the repo when there is one, and a link: the board item, or the Repos page for health. It carries no question text and no issue text, so nothing a reporter wrote reaches the owner's desktop, and it takes no answer.
+  - entail makes one attempt per notice. A failure is logged, sets ADR-0019's "last notice failed" warning, and blocks nothing. There is no retry, because the issue comment and the board already show the item.
+  - MVP-1 has two connectors: `desktop`, the default, as above, and `file`, which appends each notice as one JSON line to `notices.jsonl` in the data directory. The acceptance test selects `file` on the global settings page and counts its lines, so it drives the same path as the owner's settings rather than a test-only hook.
+  - The connector is picked by name in the global settings (ADR-0018). A later channel is a new connector behind the same interface.
