@@ -150,6 +150,15 @@ function findEntry(board: Board, id: number | null): BoardEntry | null {
   return [...board.open, ...board.endedToday].find((e) => e.history.item.id === id) ?? null;
 }
 
+/** The oldest open item, which "Next decision" opens: the owner moves on by choosing to, never by itself. */
+function nextOpenId(board: Board): number | null {
+  return board.open[0]?.history.item.id ?? null;
+}
+
+function nextDecision(nextId: number | null): string {
+  return nextId === null ? "" : `\n<p><a class="next-decision" href="${escapeHtml(itemPath(nextId))}">Next decision</a></p>`;
+}
+
 function itemPath(id: number): string {
   return `${BOARD_PATH}?${ITEM_PARAM}=${id}`;
 }
@@ -169,7 +178,7 @@ function boardView(options: BoardPageOptions, request: PageRequest): Reply {
   let detail: string;
   let status = 200;
   if (entry !== null) {
-    detail = renderItem(entry, now);
+    detail = renderItem(entry, now, nextOpenId(board));
   } else if (selected.asked) {
     const item = selected.id === null ? null : options.store.boardItem(selected.id);
     if (item === null) {
@@ -211,12 +220,20 @@ function liveView(options: BoardPageOptions, request: PageRequest): Reply {
   const board = readBoard(options);
   const selected = selectedId(request, board);
   const entry = findEntry(board, selected.id);
-  const state = entry !== null ? renderItemState(entry) : selected.id !== null ? renderLeftState() : `<div id="item-state" data-key="none" data-locked="false" hidden></div>`;
+  const nextId = nextOpenId(board);
+  const state =
+    entry !== null
+      ? renderItemState(entry, nextId)
+      : selected.id !== null
+        ? renderLeftState(nextId)
+        : `<div id="item-state" data-key="none" data-locked="false" hidden></div>`;
+  // Only the empty page asks without an item id, and it has no typed text to lose.
+  const select = !selected.asked && entry !== null ? `<a id="select" href="${escapeHtml(itemPath(selected.id!))}"></a>\n` : "";
   const html = `<!doctype html>
 <title>${escapeHtml(titleOf(board))} · entail</title>
 ${renderCount(board)}
 ${renderList(board, selected.id, now)}
-${state}
+${select}${state}
 `;
   return { status: 200, html };
 }
@@ -260,7 +277,7 @@ function whyTag(e: BoardEntry): string {
 }
 
 /** The selected item: its parts in the order spec §13 lists them. */
-function renderItem(e: BoardEntry, now: Date): string {
+function renderItem(e: BoardEntry, now: Date, nextId: number | null): string {
   const { item } = e.history;
   const s = e.snapshot;
   const where = whereOf(e);
@@ -271,7 +288,7 @@ function renderItem(e: BoardEntry, now: Date): string {
   } · raised ${timeHtml(item.raisedAt)} (${escapeHtml(raisedAgo(item.raisedAt, now).replace(/^raised /, ""))})</p>`;
   return `${meta}
 <section data-part="decision"><h2 class="decision">${escapeHtml(item.decision)}</h2></section>
-${renderItemState(e)}
+${renderItemState(e, nextId)}
 <section data-part="why" class="why"><h3>Why it was raised</h3>
 <p>${escapeHtml(s.why?.text ?? item.whyRaised)}</p></section>
 ${renderVisionCheck(s)}
@@ -384,9 +401,9 @@ ${choice("dont-go-ahead", "Don't go ahead", `The ticket is cancelled and entail 
  * locked, answered or withdrawn. Its key changes when the state does, and the
  * page then swaps it in and locks or unlocks the form.
  */
-function renderItemState(e: BoardEntry): string {
-  if (e.status === "withdrawn") return withdrawnState(e.history.withdrawal!, e);
-  if (e.status === "answered") return answeredState(e.history.answer!, e);
+function renderItemState(e: BoardEntry, nextId: number | null): string {
+  if (e.status === "withdrawn") return withdrawnState(e.history.withdrawal!, e, nextId);
+  if (e.status === "answered") return answeredState(e.history.answer!, e, nextId);
   if (e.lock?.kind === "paused") {
     return stateBox(
       "paused",
@@ -406,14 +423,14 @@ function renderItemState(e: BoardEntry): string {
   return `<div id="item-state" data-key="open" data-locked="false" hidden></div>`;
 }
 
-function withdrawnState(withdrawal: WithdrawalRecord, e: BoardEntry): string {
+function withdrawnState(withdrawal: WithdrawalRecord, e: BoardEntry, nextId: number | null): string {
   return stateBox(
-    "withdrawn",
+    `withdrawn:${nextId ?? ""}`,
     true,
     `<strong>Withdrawn: this item takes no answer.</strong>
 <p>${escapeHtml(withdrawal.reason)}</p>
 ${e.next ? `<p>${escapeHtml(e.next)}</p>` : ""}
-<p class="hint">Anything you typed stays below to copy. It is not recorded.</p>`,
+<p class="hint">Anything you typed stays below to copy. It is not recorded.</p>${nextDecision(nextId)}`,
   );
 }
 
@@ -434,11 +451,11 @@ export function whatNext(state: TicketState | null): string | null {
   }
 }
 
-function answeredState(answer: AnswerRecord, e: BoardEntry): string {
+function answeredState(answer: AnswerRecord, e: BoardEntry, nextId: number | null): string {
   return stateBox(
-    "answered",
+    `answered:${nextId ?? ""}`,
     true,
-    `<strong>Answered by ${escapeHtml(answer.answeredBy)}</strong> at ${timeHtml(answer.answeredAt)}: ${escapeHtml(answerWords(answer, e))}`,
+    `<strong>Answered by ${escapeHtml(answer.answeredBy)}</strong> at ${timeHtml(answer.answeredAt)}: ${escapeHtml(answerWords(answer, e))}${nextDecision(nextId)}`,
   );
 }
 
@@ -454,8 +471,8 @@ function answerWords(answer: AnswerRecord, e: BoardEntry): string {
   }
 }
 
-function renderLeftState(): string {
-  return stateBox("left", true, `<strong>This item has left the board.</strong>`);
+function renderLeftState(nextId: number | null): string {
+  return stateBox(`left:${nextId ?? ""}`, true, `<strong>This item has left the board.</strong>${nextDecision(nextId)}`);
 }
 
 function stateBox(key: string, locked: boolean, html: string): string {
@@ -541,6 +558,11 @@ export const BOARD_SCRIPT = `
       const response = await fetch(board.dataset.live, { cache: "no-store" });
       if (!response.ok) return;
       const doc = parser.parseFromString(await response.text(), "text/html");
+      const select = doc.getElementById("select");
+      if (select) {
+        location.assign(select.getAttribute("href"));
+        return;
+      }
       swap(doc, "board-count");
       swap(doc, "board-list");
       if (doc.title) document.title = doc.title;

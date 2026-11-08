@@ -232,7 +232,7 @@ test("the page asks for the board every few seconds, and the live board says whe
   withdraw(board, ticket, item, "The issue was edited.", "deciding");
   live = await board.get(`${BOARD_LIVE_PATH}?item=${item.id}`);
   const state = stateOf(live.body);
-  assert.equal(state.key, "withdrawn");
+  assert.equal(state.key, `withdrawn:${other.item.id}`);
   assert.equal(state.locked, "true");
   assert.match(state.text, /Withdrawn: this item takes no answer\.\s*The issue was edited\.\s*The ticket is decided again\. If it still needs you, a new item comes to the board\.\s*Anything you typed stays below to copy\. It is not recorded\./);
   assert.deepEqual(listed(live.body), { open: [other.item.decision], ended: [item.decision] }, "it moves to answered or withdrawn today");
@@ -255,7 +255,7 @@ test("a withdrawn item's form is locked: nothing in it can be sent", async (t) =
   assert.equal((page.body.match(/<textarea [^>]* readonly>/g) ?? []).length, 2, "text fields stay readable to copy, but read-only");
   assert.ok(!form.controls.some((c) => c.tag === "button" || c.type === "submit"), "no button sends it");
   assert.match(page.body, /document\.addEventListener\("submit"[\s\S]*dataset\.locked === "true"\) event\.preventDefault\(\)/, "a locked form refuses to submit");
-  assert.equal(stateOf(page.body).key, "withdrawn");
+  assert.equal(stateOf(page.body).key, "withdrawn:");
 });
 
 test('"Answered or withdrawn today" empties at the end of the day', async (t) => {
@@ -352,7 +352,7 @@ test("the board offers no reordering, postponing, later, pause or split", async 
     assert.doesNotMatch(page.body, /draggable/);
   }
   const page = await board.get(`/?item=${answered.item.id}`);
-  assert.match(stateOf(page.body).text, /^Answered by Ada Owner at .*: Any Unicode whitespace separates words$/);
+  assert.match(stateOf(page.body).text, /^Answered by Ada Owner at .*: Any Unicode whitespace separates words\s*Next decision$/);
 });
 
 /** An element as much as the page's script touches it. */
@@ -389,6 +389,7 @@ function fakeBrowser(port: number, html: string) {
       replaceWith(next) {
         ids.set(id, next);
       },
+      getAttribute: (name: string) => (new RegExp(`^<[^>]* ${name}="([^"]*)"`).exec(outer)?.[1] ?? null),
       ...extra,
     };
     return el;
@@ -405,8 +406,9 @@ function fakeBrowser(port: number, html: string) {
   const typed = { ...control("TEXTAREA", "textarea", "text"), value: "Only ASCII whitespace, please." };
   const note = { ...control("TEXTAREA", "textarea", "note"), value: "My private note." };
   const controls = [control("INPUT", "hidden", "item"), control("INPUT", "radio", "answer"), control("INPUT", "radio", "answer"), typed, control("INPUT", "checkbox", "show_note"), note];
-  const form = { ...byId(html, "answer-form")!, elements: controls };
-  ids.set("answer-form", form);
+  const shown = byId(html, "answer-form");
+  const form = { ...shown!, elements: controls };
+  if (shown) ids.set("answer-form", form);
 
   let poll: (() => Promise<void>) | undefined;
   const listeners: string[] = [];
@@ -426,10 +428,12 @@ function fakeBrowser(port: number, html: string) {
     poll = fn;
     return ms;
   };
-  new Function("document", "DOMParser", "fetch", "setInterval", BOARD_SCRIPT)(document, DOMParser, fetchLocal, setInterval);
+  const navigated: string[] = [];
+  const location = { assign: (href: string) => void navigated.push(href) };
+  new Function("document", "DOMParser", "fetch", "setInterval", "location", BOARD_SCRIPT)(document, DOMParser, fetchLocal, setInterval, location);
   assert.ok(poll, "the script starts polling");
   assert.deepEqual(listeners, ["submit"]);
-  return { ids, form, typed, note, controls, document, poll: () => poll!() };
+  return { ids, form, typed, note, controls, document, navigated, poll: () => poll!() };
 }
 
 test("the page refreshes the board without a reload, and a withdrawn item's form locks with its typed text kept", async (t) => {
@@ -454,7 +458,7 @@ test("the page refreshes the board without a reload, and a withdrawn item's form
   withdraw(board, ticket, item, "The issue was edited.", "deciding");
   await browser.poll();
   const state = browser.ids.get("item-state")!;
-  assert.equal(state.dataset.key, "withdrawn");
+  assert.equal(state.dataset.key, `withdrawn:${newer.item.id}`);
   assert.match(state.html, /The issue was edited\./);
   assert.equal(browser.ids.get("answer-form"), shownForm, "the form itself is never replaced");
   assert.equal(shownForm.dataset.locked, "true");
@@ -473,4 +477,48 @@ test("the page refreshes the board without a reload, and a withdrawn item's form
   assert.equal(browser.typed.value, "Only ASCII whitespace, please.", "typed text stays visible to copy");
   assert.equal(browser.note.value, "My private note.");
   assert.deepEqual(listed(browser.ids.get("board-list")!.html), { open: [newer.item.decision], ended: [item.decision] });
+});
+
+const nextLinkTo = (html: string) => /<a class="next-decision" href="([^"]*)">Next decision<\/a>/.exec(html)?.[1];
+
+test("an empty board shows the oldest item once one is raised", async (t) => {
+  const board = await serveBoard(t);
+  const browser = fakeBrowser(board.server.info.port, (await board.get("/")).body);
+  await browser.poll();
+  assert.deepEqual(browser.navigated, [], "nothing to show yet");
+
+  const first = board.raise(board.github, 7, { kind: "contradiction" });
+  board.advance(1);
+  board.raise(board.gitlab, 8, { kind: "contradiction" });
+  await browser.poll();
+  assert.deepEqual(browser.navigated, [`/?item=${first.item.id}`], "the oldest open item is opened");
+  assert.match((await board.get(browser.navigated[0]!)).body, new RegExp(first.item.decision.slice(0, 20)));
+});
+
+test("a withdrawn or answered item offers Next decision to the oldest open item, and the page never moves on by itself", async (t) => {
+  const board = await serveBoard(t);
+  const a = board.raise(board.github, 7, { kind: "contradiction" });
+  board.advance(1);
+  const b = board.raise(board.gitlab, 8, { kind: "contradiction" });
+  board.advance(1);
+  const c = board.raise(board.github, 9, { kind: "contradiction" });
+
+  const open = await board.get(`/?item=${a.item.id}`);
+  assert.equal(nextLinkTo(open.body), undefined, "an open item has no Next decision");
+
+  const browser = fakeBrowser(board.server.info.port, open.body);
+  withdraw(board, a.ticket, a.item, "The issue was edited.", "deciding");
+  await browser.poll();
+  assert.equal(nextLinkTo(browser.ids.get("item-state")!.html), `/?item=${b.item.id}`);
+  assert.deepEqual(browser.navigated, [], "it does not move on by itself");
+  assert.equal(browser.typed.value, "Only ASCII whitespace, please.");
+  assert.equal(nextLinkTo((await board.get(`/?item=${a.item.id}`)).body), `/?item=${b.item.id}`, "the server render carries it too");
+
+  board.store.recordAnswer({ boardItemId: b.item.id, answeredBy: "Ada Owner", shape: "dont-go-ahead" });
+  const answered = await board.get(`/?item=${b.item.id}`);
+  assert.equal(nextLinkTo(answered.body), `/?item=${c.item.id}`, "answered elsewhere: Next decision opens the oldest still open");
+
+  withdraw(board, c.ticket, c.item, "The issue was closed.", "cancelled");
+  assert.equal(nextLinkTo((await board.get(`/?item=${c.item.id}`)).body), undefined, "nothing else is open");
+  assert.equal(nextLinkTo((await board.get(`${BOARD_LIVE_PATH}?item=${c.item.id}`)).body), undefined);
 });
