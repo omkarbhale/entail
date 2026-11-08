@@ -207,6 +207,14 @@ export class GitLabForge implements Forge {
     return moved;
   }
 
+  async issue(issueNumber: number): Promise<Issue | null> {
+    const path = `${this.#projectRef}/issues/${pathNumber(issueNumber)}`;
+    const response = await this.#get(path);
+    if (response.status === 404) return null;
+    this.#ensureOk(response, path, "GET");
+    return this.#issue(parseJson(response, this.setting.host, path, "GET"));
+  }
+
   /**
    * The instance's version from `/api/v4/version`. One older than
    * {@link MINIMUM_GITLAB_VERSION}, or one entail cannot read, is unsupported,

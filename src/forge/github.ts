@@ -248,6 +248,20 @@ export class GitHubForge implements Forge {
     return items.totalCount > 0;
   }
 
+  async issue(issueNumber: number): Promise<Issue | null> {
+    const path = `repos/${this.setting.path}/issues/${pathNumber(issueNumber)}`;
+    const response = await this.#get(path, {});
+    // Gone: never opened, or deleted. A transferred issue answers with a redirect to its new repo.
+    if (response.status === 404 || response.status === 410 || response.status === 301) return null;
+    this.#ensureOk(response, path, "GET");
+    const raw = parseJson(response, this.setting.host, path, "GET");
+    // The issues API answers for pull requests too, which are not issues.
+    if (isObject(raw) && "pull_request" in raw) return null;
+    const issue = this.#issue(raw);
+    // A transferred issue, followed to its new repo, is no longer this repo's issue by that number.
+    return issue.number === issueNumber ? issue : null;
+  }
+
   /** github.com is the only GitHub host, with no version to read, so it is always served. */
   async instance(): Promise<ForgeInstance> {
     return { version: null, unsupported: null };

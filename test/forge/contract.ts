@@ -47,7 +47,8 @@ export type Scenario =
   | "checks"
   | "checks-not-reported"
   | "recent-checks"
-  | "transferred-in";
+  | "transferred-in"
+  | "issue";
 
 export interface ForgeContractSubject {
   name: string;
@@ -90,6 +91,8 @@ export interface ForgeContractSubject {
  * - Settle reads: issue #2 carries the `/entail` comment then entail's comment
  *   8001 (with a system note between them on GitLab), PR #4 carries entail's
  *   comment 8002, PR #4 is merged and PR #5 is open.
+ * - Issue read: issue #2 as at first; #4 is PR #4's number on GitHub and no
+ *   issue's on GitLab, and no issue is #404.
  * PRs, in the same world:
  *
  * - PR #4 (id 8004) by reporter, "Read standard input", from `stdin` into
@@ -162,6 +165,19 @@ export function forgeContract(subject: ForgeContractSubject): void {
       const forge = forgeFor(t, "transferred-in");
       assert.equal(await forge.transferredIn(3), false, "opened here");
       assert.equal(await forge.transferredIn(8), true, "transferred in");
+    });
+
+    test("one issue is read live, and a number with no issue, or a PR's, reads as none", async (t) => {
+      const forge = forgeFor(t, "issue");
+      const issue = await forge.issue(2);
+      assert.ok(issue !== null);
+      assert.equal(issue.number, 2);
+      assert.equal(issue.id, 9002);
+      assert.equal(issue.title, "Word counts are sometimes one too high");
+      assert.equal(issue.state, "open");
+      assert.ok(sameActor(issue.author, { forge: setting.forge, host: setting.host, id: 1002, username: "reporter" }));
+      assert.equal(await forge.issue(4), null, "PR #4 is no issue");
+      assert.equal(await forge.issue(404), null, "no issue #404");
     });
 
     test("the project is known by its numeric id, with its default branch", async (t) => {

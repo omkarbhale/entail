@@ -65,10 +65,11 @@ test("a settled verdict in the spec's shape conforms to the verdict schema", () 
     reading_chosen: null,
     why_raised: null,
     open_readings: [],
+    close_evidence: [],
     reason: "the standard-input line chooses the reading",
   };
   assert.deepEqual(checkAgainst(verdictSchema, verdict), []);
-  assert.deepEqual(checkAgainst(verdictSchema, { ...verdict, verdict: "small" }), ['$.verdict is not one of "settled", "unopposed", "needs_the_owner"']);
+  assert.deepEqual(checkAgainst(verdictSchema, { ...verdict, verdict: "small" }), ['$.verdict is not one of "settled", "unopposed", "needs_the_owner", "close"']);
 });
 
 test("criteria and a grade in the spec's shape conform to their schemas", () => {
