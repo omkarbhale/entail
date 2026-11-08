@@ -2,6 +2,8 @@
 
 > **Amended by ADR-0018.** Enrolling a repo, changing its settings, pausing it and unenrolling it happen on the Repos page served by the running process, not through separate `entail` commands. The commands that open the store directly are what remains, such as status.
 
+> **Amended by ADR-0019.** A failed start-up check for `git` or `claude` no longer stops the process. `entail run` stays up and serves its pages with the halt shown, does no work, and resumes once a later check passes. Only a held lock, an unopenable store or a taken port still exit. `entail status` also reads a status file the process rewrites on every pass, so it answers whether or not entail is running.
+
 entail is one long-running TypeScript process on Node 24, `entail run`, and only one copy runs per machine. Every 60 seconds it runs a **pass** over each enrolled repo:
 
 1. It reads what changed on the forge.
