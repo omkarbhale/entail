@@ -148,7 +148,8 @@ test("entail starts in spec order: lock, store, settle intents, the server, then
   const entail = await startRun({
     dataDirectory: dir,
     log: { echo: null },
-    passes: { forgeFor: () => forge, defaultBranchFor: async () => STILL_HEAD },
+    // No owed steps: this test is about start order, not deciding the tickets it takes in.
+    passes: { forgeFor: () => forge, defaultBranchFor: async () => STILL_HEAD, planners: [] },
   });
   running.get(t)!.push(entail);
   await until(() => logEvents(dir).includes("poll"));
