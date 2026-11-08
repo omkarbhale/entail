@@ -162,6 +162,9 @@ export class StateForge implements Forge {
   async changesSince(): Promise<ChangeBatch> {
     throw new Error("not supported");
   }
+  async transferredIn(_issueNumber: number): Promise<boolean> {
+    throw new Error("not supported");
+  }
   async pullRequest(): Promise<never> {
     throw new Error("not supported");
   }

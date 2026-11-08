@@ -1,7 +1,7 @@
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
 import { join } from "node:path";
 import { MIGRATIONS, SCHEMA_SQL, SCHEMA_VERSION, type ANSWER_SHAPES, type FORGE_WRITE_KINDS, type VISION_ORIGINS } from "./store-schema.ts";
-import { assertTransition, type TicketState } from "./ticket-states.ts";
+import { assertTransition, FINAL_STATES, type TicketState } from "./ticket-states.ts";
 
 /** The store's file in the data directory. */
 export const STORE_FILE = "store.sqlite";
@@ -13,6 +13,7 @@ export type Forge = "github" | "gitlab";
  * moves a ticket records the state change with the call.
  */
 export const CALL_KINDS = [
+  "intake",
   "verdict",
   "investigation",
   "criteria",
@@ -553,6 +554,11 @@ export class Store {
     return mapOrNull(this.#get(`${TICKET_SELECT} WHERE t.id = ?`, id), toTicket);
   }
 
+  /** A repo's tickets that are not final, oldest first. */
+  ticketsInFlight(repoId: number): TicketRecord[] {
+    return this.#all(`${TICKET_SELECT} WHERE t.repo_id = ? AND s.state NOT IN (${FINAL_STATE_LIST}) ORDER BY t.id`, repoId).map(toTicket);
+  }
+
   /** The issue's newest ticket, in flight or final. */
   latestTicketForIssue(repoId: number, issueNumber: number): TicketRecord | null {
     return mapOrNull(
@@ -835,6 +841,8 @@ export class Store {
     };
   }
 }
+
+const FINAL_STATE_LIST = FINAL_STATES.map((state) => `'${state}'`).join(", ");
 
 const TICKET_SELECT = `SELECT t.*, s.state, s.call_id AS state_call_id, s.changed_at AS state_changed_at
   FROM tickets t JOIN ticket_states s ON s.ticket_id = t.id`;

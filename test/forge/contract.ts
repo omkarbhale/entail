@@ -45,7 +45,8 @@ export type Scenario =
   | "linked"
   | "checks"
   | "checks-not-reported"
-  | "recent-checks";
+  | "recent-checks"
+  | "transferred-in";
 
 export interface ForgeContractSubject {
   name: string;
@@ -103,6 +104,10 @@ export interface ForgeContractSubject {
  *   criteria name `test` and `e2e`, and `e2e` has not reported.
  * - At HEAD4B nothing has reported for the PR.
  * - On `main`, commit C2 (newest) passed `test`; C1 failed `test` and passed `lint`.
+ *
+ * Transferred in: owner opened issue #3 here, and it was renamed since (on
+ * GitLab, a system note says so). Issue #8 was opened in `acme/other` and
+ * transferred (moved, on GitLab) into this repo.
  */
 const HEAD = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const MERGE_COMMIT = "9fceb02d0ae598e95dc970b74767f19372d61af8";
@@ -143,6 +148,12 @@ export function forgeContract(subject: ForgeContractSubject): void {
       await assert.rejects(forge.changesSince(null), (error: unknown) => {
         return error instanceof ForgeLoggedOutError && error.host === setting.host;
       });
+    });
+
+    test("an issue transferred in from another repo is told apart from one opened here", async (t) => {
+      const forge = forgeFor(t, "transferred-in");
+      assert.equal(await forge.transferredIn(3), false, "opened here");
+      assert.equal(await forge.transferredIn(8), true, "transferred in");
     });
 
     test("the project is known by its numeric id, with its default branch", async (t) => {
