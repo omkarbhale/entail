@@ -11,6 +11,7 @@ import type { ModelRunner } from "./model-runner.ts";
 import { ModelRuns } from "./model-runs.ts";
 import { InFlightWrites, settleUnconfirmedWrites } from "./forge-writer.ts";
 import { Passes, repoForge, type PassesOptions } from "./pass.ts";
+import { boardPages } from "./board-page.ts";
 import { callsPages } from "./calls-page.ts";
 import { reposPages } from "./repos-page.ts";
 import { startServer, type BoardPortTakenError, type LocalServer } from "./server.ts";
@@ -62,8 +63,9 @@ export interface RunningEntail {
  * Starts `entail run` in spec §1's order (ADR-0017): takes the single-copy
  * lock, opens the operational log and the store, settles unconfirmed forge
  * writes by reading the forge, starts the local server on the board port from
- * the global settings (the Repos page with enrollment and the global settings
- * page, spec §15, and the read-only Calls page and ticket pages, spec §14),
+ * the global settings (the board page, spec §13, the Repos page with
+ * enrollment and the global settings page, spec §15, and the read-only Calls
+ * page and ticket pages, spec §14),
  * and then the passes. It stays up until
  * {@link RunningEntail.stop}.
  *
@@ -122,6 +124,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
   try {
     const enroller = new Enroller({ store, dataDirectory: options.dataDirectory, runner, log });
     const pages = [
+      ...boardPages({ store }),
       ...reposPages({ store, enroller, dataDirectory: options.dataDirectory }),
       ...callsPages(store),
       ticketPage({ store, retryState: (ticketId) => modelRuns.retryState(String(ticketId)) }),

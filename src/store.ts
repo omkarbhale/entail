@@ -831,6 +831,12 @@ export class Store {
     ).map((row) => this.#history(row));
   }
 
+  /** One board item with its answer or withdrawal, or null when there is none with this id. */
+  boardItem(id: number): BoardItemHistory | null {
+    const row = this.#get("SELECT * FROM board_items WHERE id = ?", id);
+    return row === undefined ? null : this.#history(row);
+  }
+
   /** A board item with its answer or withdrawal. */
   #history(row: Row): BoardItemHistory {
     const item = toBoardItem(row);
