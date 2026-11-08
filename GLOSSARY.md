@@ -19,7 +19,7 @@ A GitHub pull request or a GitLab merge request. entail may say "merge request" 
 _Avoid_: MR, merge request, pull request, change
 
 **Executor**:
-Whatever picks up a cleared issue and does its work, such as firstmate, a Claude Code action or a person; entail never executes.
+Whatever picks up a cleared issue and does its work, or picks up an issue marked for investigation and reports its findings, such as firstmate, a Claude Code action or a person; entail never executes.
 
 ### Judging a ticket
 
@@ -32,7 +32,7 @@ One line of the vision of record, normally one sentence, identified by its exact
 _Avoid_: Clause, rule
 
 **Origin**:
-How a vision line came to be in the vision: stated by the owner, proposed by an agent and approved by the owner, or added automatically with the owner notified. It is kept in entail's records, never in the vision's prose.
+How a vision line came to be in the vision: stated by the owner, proposed by an agent and approved by the owner, or added automatically with the owner notified. Whoever writes a line records its origin when they write it, and a line that arrives with no record is stated by the owner. It is kept in entail's records, never in the vision's prose.
 _Avoid_: Provenance, author
 
 **Vision change**:
@@ -66,8 +66,11 @@ A topic the owner has said must always come to them, even where the vision settl
 An independent second judgment that tries to overturn an automatic verdict by finding another reading, an uncited assumption, a touched pin or a high-stakes area; if it succeeds, the ticket needs the owner.
 
 **Criteria**:
-What one ticket's PR must contain, written at intake or after the owner's answer, and published on the issue when the ticket is cleared.
+What one ticket's PR must contain, written by entail because an issue carries no implementation idea: a few numbered outcomes, namely what is true once the issue is resolved and any vision constraint the change must respect. Each outcome is traced to its source (the issue, a vision line, a small category or the owner's answer) and may carry mechanical checks. They are published on the issue when the ticket is cleared and are frozen from then on; only a new version written by a new call changes them.
 _Avoid_: Acceptance criteria, requirements
+
+**Mechanical check**:
+A part of a criterion that entail computes from what the forge reports alone, with no model: the PR changes a path, leaves a path alone, or a named check passes.
 
 **Generic criteria**:
 The checks every PR in a repo must pass, fixed once per repo.
@@ -75,7 +78,11 @@ The checks every PR in a repo must pass, fixed once per repo.
 ### Ticket states
 
 **Deciding**:
-The ticket has been taken in and has no verdict yet.
+The ticket has been taken in, or its investigation findings have arrived, and it is not yet cleared, investigating, declined or on the board: entail is giving it a verdict or writing its criteria.
+
+**Investigating**:
+Whether the issue describes a real problem, or what causes it, is unknown, so entail has marked it for investigation and waits for an executor's findings on the issue. Investigating is not a verdict and needs no PR. A ticket is investigated at most once.
+_Avoid_: Triage, needs info
 
 **Declined**:
 Final: the ticket is too large for one PR, so entail will not take it forward. Size is checked before any verdict, so a declined ticket has none.
@@ -95,7 +102,7 @@ A PR linking the issue is open and is being checked against the criteria and gen
 Final: the ticket's PR has merged, whether entail merged it or someone else did.
 
 **Cancelled**:
-Final: the owner's answer said not to go ahead, or someone other than entail closed the issue before its PR merged.
+Final: the owner's answer said not to go ahead; someone other than entail closed the issue before its PR merged; or entail closed it because the repo's state or an investigation's findings settle that nothing is to be done, such as a duplicate, an already-fixed report or a problem that cannot be reproduced.
 
 ### Decisions and records
 
