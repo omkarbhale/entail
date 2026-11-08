@@ -21,10 +21,10 @@ export const TICKET_PATH = "/ticket";
 export const CALL_KIND_LABELS: Readonly<Record<(typeof CALL_KINDS)[number], string>> = {
   intake: "intake",
   verdict: "verdict",
+  raise: "raised to the board",
   investigation: "investigation",
   criteria: "criteria",
   decline: "declined",
-  raise: "raised to the board",
   "close-at-intake": "closed at intake",
   recheck: "re-check",
   landing: "landing check",

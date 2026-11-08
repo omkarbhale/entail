@@ -132,6 +132,8 @@ export class Passes {
   readonly #backoff = new Map<number, { failures: number; until: number }>();
   /** Per host, when its rate limit resets. */
   readonly #rateLimited = new Map<string, number>();
+  /** Hosts whose CLI is logged out, until a poll of the host succeeds. */
+  readonly #haltedHosts = new Set<string>();
   /** The step each ticket has running, by ticket id. */
   readonly #running = new Map<number, Promise<void>>();
 
@@ -161,6 +163,11 @@ export class Passes {
     this.#modelRuns =
       options.modelRuns ??
       new ModelRuns({ runner: new ClaudeRunner(), log: options.log, limit: () => readGlobalSettings(store).settings.modelRunLimit });
+  }
+
+  /** Whether the host's CLI is logged out, so its repos cannot be reached. */
+  hostHalted(host: string): boolean {
+    return this.#haltedHosts.has(host);
   }
 
   /** How many tickets have a step running now. */
@@ -246,6 +253,7 @@ export class Passes {
       this.#seen.delete(repoId);
       return this.#failed(repo, error);
     }
+    this.#haltedHosts.delete(repo.host);
     if (this.#backoff.delete(repoId)) this.#log.info("poll-recovered", { repoId });
     this.#log.info("poll", { repoId, head: head.commit, fetched: head.fetched, takenIn: takenIn.length });
 
@@ -269,6 +277,7 @@ export class Passes {
     }
     if (error instanceof ForgeLoggedOutError) {
       // A logged-out CLI is the host's halt, not a backoff: it is checked again on the next pass.
+      this.#haltedHosts.add(repo.host);
       this.#log.error("host-logged-out", { repoId, host: repo.host, error: error.message });
       return { repoId, outcome: "failed", error: error.message };
     }

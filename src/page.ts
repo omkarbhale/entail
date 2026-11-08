@@ -20,6 +20,8 @@ export interface PageContent {
   title: string;
   /** The page's own HTML, already escaped. */
   body: string;
+  /** Lets the page use the window's full width, as the board's list beside its item does. */
+  wide?: boolean;
 }
 
 /**
@@ -38,7 +40,7 @@ export function renderPage(request: PageRequest, content: PageContent): string {
 </head>
 <body>
 ${renderHeader(request)}
-<main>
+<main${content.wide ? ' class="wide"' : ""}>
 ${content.body}
 </main>
 </body>
@@ -72,6 +74,7 @@ header.site .brand { font-weight: 600; }
 header.site nav { display: flex; gap: 1rem; }
 header.site a[aria-current] { font-weight: 600; text-decoration: none; color: var(--fg); }
 main { max-width: 48rem; padding: 1rem; margin: 0 auto; }
+main.wide { max-width: 80rem; }
 a { color: var(--accent); }
 h1 { font-size: 1.4rem; }
 h2 { font-size: 1.1rem; margin-top: 2rem; }
