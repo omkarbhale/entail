@@ -406,9 +406,9 @@ export function alreadyMergedText(store: Store, pass: Pick<RepoPass, "forge">, t
  * re-check followed, a vision change or a change to the repo's pins, never
  * naming a pin (ADR-0018).
  */
-export function cancelledAfterRecheckText(pass: Pick<RepoPass, "forge">, issueNumber: number, change: { visionChange: string | null; pinChange: boolean }): string {
+export function cancelledAfterRecheckText(pass: Pick<RepoPass, "forge">, issueNumber: number, change: { visionChange: string | null; pinChange: boolean; issueEdited: boolean }): string {
   const pr = pass.forge.wording.pullRequest;
-  const after = [...(change.visionChange !== null ? ["a vision change"] : []), ...(change.pinChange ? ["a change to the repo's pins"] : [])].join(" and ") || "a re-check";
+  const after = [...(change.visionChange !== null ? ["a vision change"] : []), ...(change.pinChange ? ["a change to the repo's pins"] : []), ...(change.issueEdited ? ["an edit to the issue"] : [])].join(" and ") || "a re-check";
   return [
     `The owner decided not to go ahead with #${issueNumber} after ${after}, so its ticket is cancelled.`,
     `entail does not check or merge this ${pr}, and does not close it.`,

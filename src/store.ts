@@ -33,6 +33,7 @@ export const CALL_KINDS = [
   "pr-closed",
   "merged-by-others",
   "new-push",
+  "issue-edit",
 ] as const;
 export type CallKind = (typeof CALL_KINDS)[number];
 

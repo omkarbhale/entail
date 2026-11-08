@@ -5,6 +5,7 @@ import { composeComment } from "./comment-rules.ts";
 import { MergePendingError, type CheckReport, type Issue, type MergeMethod, type MergeOutcome, type PullRequest } from "./forge/forge.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import { CLEARED_LABEL } from "./intake-comment.ts";
+import { isIssueEdit, recordedIssueText, type IssueText } from "./issue-edit.ts";
 import {
   code,
   LANDING_CHECKS,
@@ -40,7 +41,8 @@ import { readVision } from "./vision.ts";
  *   that moved or closed is left to the run for its new head, or to following
  *   its PRs. A guard that says no fails the landing check with its comment.
  * - **Just before merging** entail re-reads VISION.md's blob on the default
- *   branch and each linked issue's title and body. If either changed, the
+ *   branch and each linked issue's title and body. If either changed (for
+ *   an issue, by an edit: not whitespace or task-list ticks alone), the
  *   change is processed first ({@link MergeOptions.processChanges}, where
  *   flagging plugs in) and the PR merges only if no ticket was flagged; a
  *   flagged run is held, its result reused once the re-check is recorded.
@@ -150,32 +152,11 @@ export function mergeGuard(input: { pinnedSha: string; pr: Pick<PullRequest, "st
   return failures.length === 0 ? { verdict: "merge", results } : { verdict: "refuse", results, failures };
 }
 
-/** An issue's title and body as a call recorded them. */
-export interface IssueText {
-  title: string;
-  body: string;
-}
-
-/** The issue text the ticket's latest call to record one judged, or null when none did. */
-export function recordedIssueText(calls: readonly CallRecord[]): IssueText | null {
-  for (const call of [...calls].reverse()) {
-    const title = call.inputs?.issueTitle;
-    const body = call.inputs?.issueBody;
-    if (typeof title === "string" && typeof body === "string") return { title, body };
-  }
-  return null;
-}
-
-/** Whether an issue's title or body differs from the text recorded. Whether such a change is an edit that flags is for flagging to say. */
-export function issueTextChanged(recorded: IssueText, current: Pick<Issue, "title" | "body">): boolean {
-  return recorded.title !== current.title || recorded.body !== current.body;
-}
-
 /** What changed just before a merge, read live, since the pass that checked the PR. */
 export interface ChangesBeforeMerge {
   /** VISION.md's blob changed on the default branch since the pass's head; null when it did not. */
   vision: { fromCommit: string; toCommit: string; fromBlob: string | null; toBlob: string | null } | null;
-  /** Each linked ticket whose issue title or body differs from the text its records judged. */
+  /** Each linked ticket whose issue title or body is an edit of the text its records judged (ADR-0020). */
   issues: { ticket: TicketRecord; recorded: IssueText; current: Issue }[];
 }
 
@@ -539,7 +520,7 @@ async function flaggedBeforeMerge(context: MergeContext, tickets: readonly Ticke
       return true;
     }
     const recorded = recordedIssueText(store.callsForTicket(ticket.id));
-    if (recorded !== null && issueTextChanged(recorded, current)) changes.issues.push({ ticket, recorded, current });
+    if (recorded !== null && isIssueEdit(recorded, current)) changes.issues.push({ ticket, recorded, current });
   }
 
   if (changes.vision !== null || changes.issues.length > 0) {

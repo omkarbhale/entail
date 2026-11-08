@@ -16,6 +16,7 @@ import { judgedPins, judgedRequest, requestText, visionText, type DeciderMirror,
 import { RECENT_DEFAULT_BRANCH_COMMITS, reportedCheckNames } from "./generic-criteria.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import { CLEARED_LABEL, clearedNextText, intakeCommentText, visionCheckOf, type WhyCleared } from "./intake-comment.ts";
+import { latestIssueEditId } from "./issue-edit.ts";
 import { findingsIds, findingsOf, findingsText, type FindingsDetail } from "./investigation.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import type { ModelRunRequest } from "./model-runner.ts";
@@ -489,6 +490,8 @@ export function owedCriteria(ticket: TicketRecord, calls: readonly CallRecord[])
   if ((latest.checks as Partial<VerdictChecks> | null)?.passed !== true) return null;
   if ((latest.challenge as Partial<RecordedChallenge> | null)?.overturned === true) return null;
   if (calls.some((call) => call.id > latest.id && (call.kind === "criteria" || call.kind === "raise"))) return null;
+  // An issue edited since the verdict is decided again at the latest text (ADR-0020).
+  if (latestIssueEditId(calls) > latest.id) return null;
   return latest;
 }
 
@@ -562,11 +565,16 @@ export function criteriaPlanner(options: CriteriaOptions): OwedStepPlanner {
   };
 }
 
-/** Whether the ticket is still owed criteria for the same call, unmoved since the step began. */
-function stillOwed(store: Store, ticket: TicketRecord, owedCall: CallRecord): boolean {
+/**
+ * Whether the ticket is still owed criteria for the same call, unmoved since
+ * the step began, and its issue not edited since: an edit discards the run in
+ * flight, and the criteria are written again at the latest text (ADR-0020).
+ */
+function stillOwed(store: Store, ticket: TicketRecord, owedCall: CallRecord, editId: number): boolean {
   const now = store.getTicket(ticket.id);
   if (now === null || now.state !== ticket.state || now.stateCallId !== ticket.stateCallId) return false;
-  return owedCriteriaCall(now, store.callsForTicket(ticket.id))?.id === owedCall.id;
+  const calls = store.callsForTicket(ticket.id);
+  return owedCriteriaCall(now, calls)?.id === owedCall.id && latestIssueEditId(calls) === editId;
 }
 
 /**
@@ -610,6 +618,7 @@ async function writeCriteria(options: CriteriaOptions, ticket: TicketRecord, owe
   const { verdictCall, verdict, goAhead, answers } = basis;
   const answered = goAhead !== null;
   const request = judgedRequest(calls);
+  const editId = latestIssueEditId(calls);
   if (request === null) {
     log.warn("criteria-skipped", { ticketId: ticket.id, why: "no intake call records the issue's text" });
     return;
@@ -659,7 +668,7 @@ async function writeCriteria(options: CriteriaOptions, ticket: TicketRecord, owe
     since: ticket.takenInAt,
     accept: (output) => invalidCriteria(checkCriteria(output as CriteriaOutput, context)),
   });
-  if (!stillOwed(store, ticket, owedCall)) {
+  if (!stillOwed(store, ticket, owedCall, editId)) {
     log.info("criteria-discarded", { ticketId: ticket.id });
     return;
   }
@@ -731,7 +740,7 @@ async function writeCriteria(options: CriteriaOptions, ticket: TicketRecord, owe
     model,
   };
   const challengeRun = await pass.modelRuns.run(challengeRequest, { priority: "intake", since: ticket.takenInAt });
-  if (!stillOwed(store, ticket, owedCall)) {
+  if (!stillOwed(store, ticket, owedCall, editId)) {
     log.info("criteria-discarded", { ticketId: ticket.id });
     return;
   }
@@ -767,6 +776,7 @@ async function writeCriteria(options: CriteriaOptions, ticket: TicketRecord, owe
     modelRuns,
     readingChosen,
     detail: (version) => detail({ outcome: "criteria", version }),
+    editId,
   });
 }
 
@@ -822,6 +832,8 @@ async function clear(
     modelRuns: ReturnType<typeof modelRunRecord>[];
     readingChosen: Reading | null;
     detail: (version: number) => CriteriaDetail;
+    /** The ticket's latest issue edit when the step began; a later one discards the clear. */
+    editId: number;
   },
 ): Promise<void> {
   const { store, log } = options;
@@ -835,7 +847,7 @@ async function clear(
   const visionCheck = visionCheckOf(location, verdict.vision_sha, call.vision, verdict.vision_check);
 
   const done = store.transaction(() => {
-    if (!stillOwed(store, ticket, owedCall)) return null;
+    if (!stillOwed(store, ticket, owedCall, call.editId)) return null;
     const before = store.callsForTicket(ticket.id);
     const version = 1 + before.filter((c) => c.kind === "criteria" && typeof (c.detail as Partial<CriteriaDetail> | null)?.version === "number").length;
     const detail = call.detail(version);

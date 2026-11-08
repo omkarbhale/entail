@@ -261,6 +261,8 @@ export interface AnswerCommentParts {
   next?: string;
   /** The intake comment this one replaces, named first. */
   replaces?: string | null;
+  /** What a re-check that rewrote the criteria followed, such as "after the issue was edited", named with the comment it replaces (ADR-0020). */
+  after?: string | null;
 }
 
 /**
@@ -283,7 +285,7 @@ export function answerComment(
   if (answer.shape === "dont-go-ahead") return composeComment(owner, ticketId, decision);
   const decisions = [...(more.earlier ?? []).map((given) => answerDecisionText(owner, given.answer, given.snapshot, forge)), decision];
   const parts: string[] = [];
-  if (more.replaces) parts.push(`This replaces [entail's earlier intake comment](${more.replaces}).`, "");
+  if (more.replaces) parts.push(`This replaces [entail's earlier intake comment](${more.replaces})${more.after ? `, ${more.after}` : ""}.`, "");
   if (snapshot.visionCheck !== undefined) parts.push(visionCheckSection(snapshot.visionCheck), "");
   parts.push("### What happens next", "", decisions.join("\n\n"), "", (more.next ?? CRITERIA_TO_COME).trim(), "", EXECUTOR_LINE);
   return composeComment(owner, ticketId, parts.join("\n"));

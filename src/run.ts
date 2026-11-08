@@ -13,6 +13,7 @@ import { findingsPlanner } from "./investigation.ts";
 import type { ModelRunner } from "./model-runner.ts";
 import { ModelRuns } from "./model-runs.ts";
 import { InFlightWrites, settleUnconfirmedWrites } from "./forge-writer.ts";
+import { issueEdits } from "./issue-edit.ts";
 import { outsideCloses } from "./outside-close.ts";
 import { Passes, repoForge, type PassesOptions } from "./pass.ts";
 import { landingPlanner } from "./landing.ts";
@@ -229,6 +230,8 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
 
   const pullRequests = pullRequestFollowing({ store, log });
   const closes = outsideCloses({ store, log });
+  // Issue edits: recorded as the pass reads them, they decide a ticket again or flag it for a re-check (ADR-0020).
+  const edits = issueEdits({ store, log });
   const landingPins = landingPinRaising({ store, log, dataDirectory: options.dataDirectory, notifier, boardOrigin: server.info.origin });
   // Vision changes: recorded each pass, they flag tickets for a re-check and hold their landing and merge (ADR-0016).
   const vision = visionChanges({ store, log, dataDirectory: options.dataDirectory, board: { notifier, boardOrigin: server.info.origin } });
@@ -264,7 +267,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
       // Last, so reading an issue live never delays a step the ticket owes.
       closes.planner,
     ],
-    changeHandlers: options.passes?.changeHandlers ?? [pullRequests.onChange, closes.onChange],
+    changeHandlers: options.passes?.changeHandlers ?? [pullRequests.onChange, closes.onChange, edits.onChange],
     hooks: options.passes?.hooks ?? [vision.hook],
     inFlight,
     modelRuns,

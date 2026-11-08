@@ -9,6 +9,7 @@ import { criteriaInForce, criteriaPlanner, type CriteriaDetail } from "../src/cr
 import { deciderPlanner } from "../src/decider.ts";
 import type { ChangeBatch, Check, CheckReport, CommitChecks, Issue, MergeOutcome, PullRequest, PullRequestComment } from "../src/forge/forge.ts";
 import { CLEARED_LABEL } from "../src/intake-comment.ts";
+import { issueEdits, recordIssueEdit, type IssueEditDetail } from "../src/issue-edit.ts";
 import { landingPlanner, type LandingMirror } from "../src/landing.ts";
 import { landingGrader, type GradeMirror, type LandingChallengeOutput } from "../src/landing-grade.ts";
 import { landingMerger } from "../src/merge.ts";
@@ -273,6 +274,8 @@ interface Harness {
   setPins(pins: Pin[]): void;
   /** Takes issue 1 in and clears it on the scripted verdict, criteria and challenge. */
   clear(verdict?: VerdictOutput, criteria?: CriteriaOutput): Promise<TicketRecord>;
+  /** Edits issue 1 on the forge, which the next pass reads as a change. */
+  editIssue(fields: Partial<Issue>): void;
   kinds(): string[];
 }
 
@@ -330,7 +333,7 @@ async function harness(t: TestContext): Promise<Harness> {
       following.planner,
       landingPlanner({ ...common, hold: vision.hold, mirrorFor: async () => landingMirror, afterMechanical: merger.reusingHeld(vision.reusingHeld(grader)) }),
     ],
-    changeHandlers: [following.onChange],
+    changeHandlers: [following.onChange, issueEdits(common).onChange],
     hooks: [vision.hook],
     modelRuns: new ModelRuns({ runner, log: setup.log }),
   });
@@ -375,8 +378,14 @@ async function harness(t: TestContext): Promise<Harness> {
       assert.ok(cleared.state === "cleared" || cleared.state === "landing", `cleared, not ${cleared.state}`);
       return cleared;
     },
+    editIssue(fields) {
+      edits++;
+      const at = new Date(Date.parse("2026-11-09T02:00:00.000Z") + edits * 60_000).toISOString();
+      forge.issues = forge.issues.map((i) => (i.number === 1 ? { ...i, ...fields, updatedAt: at } : i));
+    },
     kinds: () => runner.requests.map((request) => request.kind),
   };
+  let edits = 0;
   return h;
 }
 
@@ -1031,4 +1040,391 @@ test("a pin change withdraws the open board items it touches, and their tickets 
   assert.equal(h.calls(1, "verdict").length, 3);
   assert.equal(h.setup.store.openBoardItem(ticket.id)?.whyRaised, "pin");
   assert.equal(h.setup.logLines().some((line) => line.event === "board-item-withdrawn" && line.why === "pin-change"), true);
+});
+
+// Issue edits (ADR-0020): the same re-check as a vision change, given the old and new text.
+
+const TITLE = "Count hyphenated words";
+const BODY = "Is `a-b` one word or two?";
+const EDITED = "Is `a-b` one word or two? Treat `a_b` the same way.";
+
+function editCall(h: Harness, at = -1): CallRecord & { detail: IssueEditDetail } {
+  return h.calls(1, "issue-edit").at(at) as CallRecord & { detail: IssueEditDetail };
+}
+
+/** A needs-the-owner verdict on consequential readings, answered "go ahead" with R1, and cleared on the answer. */
+async function clearOnAnswer(h: Harness): Promise<{ ticket: TicketRecord; answerId: number }> {
+  h.forge.issues = [issue(1, { title: TITLE, body: BODY })];
+  h.runner.script("verdict", "1", { output: ANSWERED_PRIOR });
+  await h.pass(2);
+  const item = h.setup.store.openBoardItem(h.ticket().id)!;
+  const answer = h.setup.store.recordAnswer({ boardItemId: item.id, answeredBy: "Ada", shape: "option", optionId: "R1" });
+  h.runner.script("criteria", String(h.ticket().id), { output: ANSWER_CRITERIA });
+  h.runner.script("challenge", String(h.ticket().id), { output: UPHELD });
+  await h.pass(3);
+  assert.equal(h.ticket().state, "cleared");
+  return { ticket: h.ticket(), answerId: answer.id };
+}
+
+const ANSWERED_PRIOR = settled({
+  verdict: "needs_the_owner",
+  citations: [],
+  vision_check: [{ line: WORD_LINE, mark: "does_not_settle" }],
+  why_raised: "consequential_readings",
+  open_readings: ["R1", "R2"],
+  reason: "Whether a hyphen splits words is consequential.",
+});
+
+const ANSWER_CRITERIA: CriteriaOutput = {
+  outcome: "criteria",
+  criteria: [{ id: "C1", sentence: "`tally` counts `a-b` as one word.", source: { kind: "answer", ref: null }, checks: [], states_reading: null }],
+  product_call: null,
+};
+
+/** A re-check of a ticket cleared on the owner's answer: the prior call's fields as they were. */
+function answeredRecheck(fields: Partial<RecheckOutput> = {}): RecheckOutput {
+  const { size: _s, close_evidence: _c, questions: _q, verdict: _v, ...call } = ANSWERED_PRIOR;
+  return { outcome: "stands", ...call, verdict: "needs_the_owner", reason: "The edit does not change what the answer decided.", ...fields };
+}
+
+test("an edit to a cleared ticket's issue flags it: its re-check is given the old and new text, and standing keeps the criteria, state and label with no comment; whitespace and labels are no edit", async (t) => {
+  const h = await harness(t);
+  const ticket = await h.clear();
+  const comments = h.forge.commentsOn().length;
+
+  // Whitespace, a label and the update time alone change nothing.
+  h.editIssue({ body: `${BODY.replace("one word", "one  word")}\n\n`, labels: ["bug"] });
+  await h.pass();
+  assert.deepEqual(h.calls(1, "issue-edit"), []);
+  assert.equal(h.vision.flags.flag(ticket.id), null);
+
+  h.editIssue({ body: EDITED });
+  h.runner.script("re-check", String(ticket.id), { output: recheckOf({ reason: "Treating `a_b` the same way does not change how words are split." }) });
+  h.runner.script("challenge", String(ticket.id), { output: UPHELD });
+  await h.pass();
+
+  const edit = editCall(h);
+  assert.equal(edit.stateChange, null, "a cleared ticket keeps its state");
+  assert.deepEqual(edit.detail.edit, { from: { title: TITLE, body: BODY }, to: { title: TITLE, body: EDITED } });
+  assert.deepEqual([edit.inputs?.issueTitle, edit.inputs?.issueBody], [TITLE, EDITED]);
+  const call = recheckCall(h);
+  assert.equal(call.detail.recheck.outcome, "stands");
+  assert.deepEqual(call.detail.recheck.issueEdit, { from: { title: TITLE, body: BODY }, to: { title: TITLE, body: EDITED }, editCallIds: [edit.id] });
+  assert.deepEqual(call.detail.visionChangeIds, []);
+  assert.equal(call.detail.recheck.answered, false);
+  assert.deepEqual([call.detail.recheck.criteriaVersion, call.detail.recheck.criteriaRewritten, call.detail.recheck.changed], [1, false, []]);
+  assert.equal(call.inputs?.issueBody, EDITED, "the re-check judged the latest text");
+  assert.match(call.reason, /^Re-checked after an edit to the issue: the call stands\./);
+  const prompt = h.runner.requests.find((request) => request.kind === "re-check")!.prompt;
+  assert.match(prompt, /re-checking one ticket after a change to the issue's title or body\./);
+  assert.match(prompt, /## The issue's edit since the prior call/);
+  assert.ok(prompt.includes(JSON.stringify({ before: { title: TITLE, body: BODY }, now: { title: TITLE, body: EDITED } }, null, 2)));
+  assert.match(prompt, /Removed lines \(a reworded line is one removed and one added\):\nNone\./);
+
+  assert.equal(h.ticket().state, "cleared");
+  assert.equal(criteriaInForce(h.calls())?.version, 1);
+  assert.equal(h.forge.commentsOn().length, comments, "nothing an executor reads changed, so the issue gets no comment");
+  assert.deepEqual(h.forge.state.labels[1], [CLEARED_LABEL]);
+  await h.pass(2);
+  assert.equal(h.calls(1, "recheck").length, 1, "recorded, the flag is resolved");
+});
+
+test("an edit that makes a landing ticket need the owner raises it, removes entail:cleared, and the issue and each open PR are told it followed the edit", async (t) => {
+  const h = await harness(t);
+  const ticket = await h.clear();
+  h.forge.open(12, 1);
+  await h.pass();
+  assert.equal(h.ticket().state, "landing");
+  h.runner.script("grade", String(ticket.id), { output: GOOD_GRADE });
+  h.runner.script("landing-challenge", String(ticket.id), { output: LANDING_UPHELD });
+
+  h.editIssue({ title: "Count hyphenated words as two", body: "Count `a-b` as two words." });
+  h.runner.script("re-check", String(ticket.id), {
+    output: recheckOf({ outcome: "needs_the_owner", verdict: "needs_the_owner", vision_check: [{ line: WORD_LINE, mark: "contradicts" }], citations: [], why_raised: "contradiction" }),
+  });
+  await h.pass(2);
+
+  assert.equal(h.ticket().state, "on-the-board");
+  assert.deepEqual(h.forge.merges, []);
+  assert.deepEqual(h.forge.state.labels[1], []);
+  const item = h.setup.store.openBoardItem(ticket.id)!;
+  const snapshot = item.snapshot as BoardItemSnapshot;
+  assert.deepEqual([snapshot.ticket.issue.title, snapshot.ticket.request], ["Count hyphenated words as two", "Count `a-b` as two words."], "the item quotes the edited issue");
+  const intake = h.forge.commentsOn().at(-1)!;
+  assertCommentRules(intake, "Ada", ticket.id);
+  assert.match(intake, /This replaces \[entail's earlier intake comment\]\([^)]+\), after the issue was edited\./);
+  const [raised, ...more] = h.forge.prComments(12);
+  assert.deepEqual(more, []);
+  assert.match(raised!, /entail raised #1 to the owner after the issue was edited\./);
+
+  h.setup.store.recordAnswer({ boardItemId: item.id, answeredBy: "Ada", shape: "dont-go-ahead" });
+  await h.pass(2);
+  assert.equal(h.ticket().state, "cancelled");
+  assert.match(h.forge.prComments(12)[1]!, /The owner decided not to go ahead with #1 after an edit to the issue, so its ticket is cancelled\./);
+
+  // A final ticket: an edit does nothing.
+  const calls = h.calls().length;
+  h.editIssue({ body: "Count `a-b` as three words." });
+  await h.pass();
+  assert.equal(h.calls().length, calls);
+});
+
+test("a ticket cleared by the owner's answer is re-checked on an edit but keeps the answer: it stands, gets new criteria that still cite it, or raises only the call the answer does not cover", async (t) => {
+  const h = await harness(t);
+  const { ticket, answerId } = await clearOnAnswer(h);
+  const answered = criteriaInForce(h.calls())!;
+  assert.deepEqual(answered.answerIds, [answerId]);
+  const comments = h.forge.commentsOn().length;
+
+  // 1. It stands, though the run repeats the prior verdict, needs the owner: only its outcome counts, and the answer is not reopened.
+  h.editIssue({ body: EDITED });
+  h.runner.script("re-check", String(ticket.id), { output: answeredRecheck() });
+  h.runner.script("challenge", String(ticket.id), { output: UPHELD });
+  await h.pass();
+  let call = recheckCall(h);
+  assert.equal(call.detail.recheck.outcome, "stands");
+  assert.equal(call.detail.recheck.answered, true);
+  assert.equal(call.answerId, answerId, "the call cites the answer");
+  assert.equal(call.checks, null, "a call on the owner's answer is no verdict to check");
+  assert.equal(h.ticket().state, "cleared");
+  assert.equal(criteriaInForce(h.calls())?.version, answered.version);
+  assert.equal(h.forge.commentsOn().length, comments);
+  const prompt = h.runner.requests.filter((request) => request.kind === "re-check").at(-1)!.prompt;
+  assert.match(prompt, /They are the owner's word and they stand: you cannot reopen them/);
+  assert.match(prompt, /## The owner's answers \(the owner's word, given on entail's board, oldest first, as JSON\)\n\[\n[^\]]*"answer": "Split words on whitespace only\."/);
+  const challenge = h.runner.requests.filter((request) => request.kind === "challenge").at(-1)!.prompt;
+  assert.match(challenge, /Split words on whitespace only\./, "the challenge is shown the answer");
+
+  // 2. It goes ahead differently: a new criteria version that still cites the answer, and a comment quoting it again.
+  h.editIssue({ body: `${EDITED} Also count \`a.b\` as one word.` });
+  h.runner.script("re-check", String(ticket.id), { output: answeredRecheck({ outcome: "goes_ahead_differently" }) });
+  h.runner.script("criteria", String(ticket.id), {
+    output: { ...ANSWER_CRITERIA, criteria: [...ANSWER_CRITERIA.criteria, { id: "C2", sentence: "`tally` counts `a.b` as one word.", source: { kind: "issue", ref: null }, checks: [], states_reading: null }] },
+  });
+  h.runner.script("challenge", String(ticket.id), { output: UPHELD });
+  await h.pass();
+  call = recheckCall(h);
+  assert.equal(call.detail.recheck.outcome, "goes_ahead_differently");
+  const v2 = criteriaInForce(h.calls())!;
+  assert.deepEqual([v2.version, v2.verdictCallId, v2.answerIds, v2.goAheadCallId], [answered.version! + 1, call.id, [answerId], answered.goAheadCallId]);
+  assert.equal(h.calls(1, "criteria").at(-1)!.answerId, answerId);
+  assert.equal(h.ticket().state, "cleared");
+  const body = h.forge.commentsOn().at(-1)!;
+  assertCommentRules(body, "Ada", ticket.id);
+  assert.match(body, /This replaces \[entail's earlier intake comment\]\([^)]+\), after the issue was edited\./);
+  assert.match(body, /Split words on whitespace only\./, "the answer is quoted again");
+  assert.match(body, /`tally` counts `a\.b` as one word\./);
+
+  // 3. A product call the answer does not cover: a new item for that call alone.
+  const R3 = { id: "R3", reading: "Count `a/b` as one word.", observed_outcome: "`tally a/b` prints 1." };
+  const R4 = { id: "R4", reading: "Count `a/b` as two words.", observed_outcome: "`tally a/b` prints 2." };
+  h.editIssue({ body: `${EDITED} And what about \`a/b\`?` });
+  h.runner.script("re-check", String(ticket.id), {
+    output: answeredRecheck({ outcome: "needs_the_owner", readings: [R3, R4], open_readings: ["R3", "R4"], reason: "Whether a slash splits words is a new product call." }),
+  });
+  await h.pass(2);
+  call = recheckCall(h);
+  assert.equal(call.detail.recheck.outcome, "needs_the_owner");
+  assert.equal(h.ticket().state, "on-the-board");
+  const [first, second] = h.setup.store.boardItemsForTicket(ticket.id);
+  assert.equal(first!.answer?.id, answerId, "the answer stays as given");
+  assert.equal(second!.item.whyRaised, "criteria_product_call");
+  const options = (second!.item.snapshot as BoardItemSnapshot).form!.options.map((option) => option.reading);
+  assert.deepEqual(options, [R3.reading, R4.reading], "only the open call, never the readings the owner already chose between");
+
+  // Going ahead on it writes criteria from both answers.
+  const again = h.setup.store.recordAnswer({ boardItemId: second!.item.id, answeredBy: "Ada", shape: "option", optionId: "R1" });
+  h.runner.script("criteria", String(ticket.id), { output: ANSWER_CRITERIA });
+  h.runner.script("challenge", String(ticket.id), { output: UPHELD });
+  await h.pass(3);
+  assert.equal(h.ticket().state, "cleared");
+  assert.deepEqual(criteriaInForce(h.calls())?.answerIds, [answerId, again.id]);
+});
+
+test("an answered ticket stays unflagged by a vision change, but an edit flags it", async (t) => {
+  const h = await harness(t);
+  const { ticket } = await clearOnAnswer(h);
+  h.editVision(`${VISION}${NEW_LINE}\n`);
+  await h.pass(2);
+  assert.equal(h.vision.flags.flag(ticket.id), null);
+  const settingsId = h.setup.store.latestSettings(h.repo.id)!.id;
+  assert.notEqual(recordIssueEdit(h.setup.store, ticket.id, { title: "Count hyphenated and dotted words", body: BODY }, settingsId), null);
+  await h.vision.flags.refresh(h.repo);
+  const flag = h.vision.flags.flag(ticket.id)!;
+  assert.deepEqual(flag.edit?.to, { title: "Count hyphenated and dotted words", body: BODY });
+  assert.equal(flag.changes.length, 1, "re-checked at the current vision, with the change since");
+});
+
+test("a deciding ticket's verdict run in flight when the issue is edited is discarded, and the ticket decided at the latest text", async (t) => {
+  const h = await harness(t);
+  h.forge.issues = [issue(1, { title: TITLE, body: BODY })];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  h.runner.script("verdict", "1", { output: settled(), until: gate });
+  await passUntil(h, "verdict");
+  h.editIssue({ body: EDITED });
+  await h.engine.runPass();
+  release();
+  await h.idle();
+  assert.deepEqual(h.calls(1, "verdict"), []);
+  assert.equal(editCall(h).stateChange, null);
+
+  h.runner.script("verdict", "1", { output: settled() });
+  await h.pass();
+  const [verdict] = h.calls(1, "verdict");
+  assert.equal(verdict?.inputs?.issueBody, EDITED);
+  assert.ok(h.runner.requests.filter((request) => request.kind === "verdict").at(-1)!.prompt.includes("Treat `a_b` the same way."));
+});
+
+test("a deciding ticket edited after its verdict, before its criteria, is decided again at the latest text", async (t) => {
+  const h = await harness(t);
+  h.forge.issues = [issue(1, { title: TITLE, body: BODY })];
+  h.runner.script("verdict", "1", { output: settled() });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  h.runner.script("criteria", "1", { output: SETTLED_CRITERIA, until: gate });
+  await passUntil(h, "criteria");
+  h.editIssue({ body: EDITED });
+  await h.engine.runPass();
+  release();
+  await h.idle();
+  assert.deepEqual(h.calls(1, "criteria"), [], "the criteria run in flight is discarded");
+
+  h.runner.script("verdict", "1", { output: settled() });
+  h.runner.script("criteria", "1", { output: SETTLED_CRITERIA });
+  h.runner.script("challenge", "1", { output: UPHELD });
+  await h.pass(3);
+  assert.equal(h.ticket().state, "cleared");
+  assert.deepEqual(h.calls(1, "verdict").map((call) => call.inputs?.issueBody), [BODY, EDITED]);
+  assert.equal(h.calls(1, "criteria")[0]!.inputs?.issueBody, EDITED);
+});
+
+test("an investigating ticket edited before its findings arrive is decided at the text current when they do", async (t) => {
+  const h = await harness(t);
+  h.forge.issues = [issue(1, { title: TITLE, body: BODY })];
+  h.runner.script("verdict", "1", { output: settled({ verdict: "investigate", citations: [], questions: ["Does `a-b` count as two today?"], reason: "Unknown." }) });
+  await h.pass();
+  assert.equal(h.ticket().state, "investigating");
+
+  h.editIssue({ body: EDITED });
+  await h.pass();
+  assert.equal(h.ticket().state, "investigating", "nothing happens until findings arrive");
+  assert.equal(editCall(h).stateChange, null);
+
+  const investigation = h.calls(1, "investigation")[0]!;
+  h.setup.store.recordCall({
+    ticketId: h.ticket().id,
+    kind: "findings",
+    reason: "Findings arrived.",
+    detail: {
+      investigationCallId: investigation.id,
+      comment: { id: 77, url: "https://github.com/acme/tally/issues/1#issuecomment-77", createdAt: "2026-11-09T03:00:00.000Z", author: EXECUTOR, body: "## entail findings\n\nQ1: Yes." },
+      questions: [{ id: "Q1", question: "Does `a-b` count as two today?" }],
+      entries: [{ id: "Q1", text: "Yes." }],
+      unknown: [],
+    },
+    stateTo: "deciding",
+  });
+  h.runner.script("verdict", "1", { output: settled() });
+  await h.pass();
+  const verdicts = h.calls(1, "verdict");
+  assert.equal(verdicts.at(-1)!.inputs?.issueBody, EDITED);
+});
+
+test("an edit withdraws an open board item, its form locking with the reason, and the ticket is decided again at the latest text", async (t) => {
+  const h = await harness(t);
+  h.forge.issues = [issue(1, { title: "Fetch a URL", body: "Count the words of a web page." })];
+  const raised = settled({ verdict: "needs_the_owner", citations: [], vision_check: [{ line: "tally never reaches the network.", mark: "contradicts" }], why_raised: "contradiction", reason: "It reaches the network." });
+  h.runner.script("verdict", "1", { output: raised });
+  await h.pass(2);
+  const ticket = h.ticket();
+  const item = h.setup.store.openBoardItem(ticket.id)!;
+
+  h.editIssue({ body: "Count the words of a web page saved to a file." });
+  h.runner.script("verdict", "1", { output: raised });
+  await h.pass(3);
+
+  const history = h.setup.store.boardItem(item.id)!;
+  assert.equal(history.withdrawal?.reason, "The issue was edited, and this item's options were written for the old text.");
+  const edit = editCall(h);
+  assert.deepEqual(edit.stateChange, { from: "on-the-board", to: "deciding" });
+  assert.equal(history.withdrawal?.callId, edit.id);
+  const verdicts = h.calls(1, "verdict");
+  assert.equal(verdicts.length, 2, "decided again");
+  assert.equal(verdicts[1]!.inputs?.issueBody, "Count the words of a web page saved to a file.");
+  assert.equal(h.ticket().state, "on-the-board");
+  assert.equal((h.setup.store.openBoardItem(ticket.id)!.snapshot as BoardItemSnapshot).ticket.request, "Count the words of a web page saved to a file.");
+});
+
+test("an edit landing just before merge is caught by the merge guard and holds the merge until its re-check is recorded", async (t) => {
+  const h = await harness(t);
+  const ticket = await h.clear();
+  h.forge.open(12, 1);
+  await h.pass();
+  assert.equal(h.ticket().state, "landing");
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  h.runner.script("grade", String(ticket.id), { output: GOOD_GRADE, until: gate });
+  h.runner.script("landing-challenge", String(ticket.id), { output: LANDING_UPHELD });
+  await passUntil(h, "grade");
+  // Edited while the landing check runs, with no pass reading it before the merge.
+  h.editIssue({ body: EDITED });
+  release();
+  await h.idle();
+
+  assert.deepEqual(h.forge.merges, [], "the merge guard's re-read caught the edit");
+  assert.deepEqual(h.forge.prComments(12), [], "and nothing is posted for the hold");
+  assert.equal(h.calls(1, "issue-edit").length, 1, "the edit was recorded first");
+  assert.notEqual(await h.vision.flags.flagOf(h.repo, h.ticket()), null);
+
+  h.runner.script("re-check", String(ticket.id), { output: recheckOf() });
+  h.runner.script("challenge", String(ticket.id), { output: UPHELD });
+  await h.pass(3);
+  assert.equal(recheckCall(h).detail.recheck.issueEdit?.to.body, EDITED);
+  assert.equal(h.calls(1, "issue-edit").length, 1, "the pass reads the same edit as no new one");
+  assert.equal(h.ticket().state, "merged");
+  assert.equal(h.forge.merges.length, 1);
+  assert.equal(h.kinds().filter((kind) => kind === "grade").length, 1, "the criteria version is unchanged, so the grade is reused");
+});
+
+test("an edit before a vision change's re-check is recorded restarts it with every change so far", async (t) => {
+  const h = await harness(t);
+  const ticket = await h.clear();
+  const sha = h.editVision(`${VISION}${NEW_LINE}\n`);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  h.runner.script("re-check", String(ticket.id), { output: recheckOf(), until: gate });
+  await passUntil(h, "re-check");
+
+  h.editIssue({ body: EDITED });
+  await h.engine.runPass();
+  release();
+  await h.idle();
+  assert.equal(h.calls(1, "recheck").length, 0, "the re-check in flight is discarded");
+
+  h.runner.script("re-check", String(ticket.id), { output: recheckOf() });
+  h.runner.script("challenge", String(ticket.id), { output: UPHELD });
+  await h.pass();
+  const call = recheckCall(h);
+  assert.equal(call.detail.visionChangeIds.length, 1);
+  assert.deepEqual(call.detail.recheck.added, [NEW_LINE]);
+  assert.equal(call.detail.recheck.issueEdit?.to.body, EDITED);
+  assert.match(call.reason, new RegExp(`^Re-checked after the vision change at ${sha.slice(0, 7)} and an edit to the issue: the call stands\\.`));
+  const prompt = h.runner.requests.filter((request) => request.kind === "re-check").at(-1)!.prompt;
+  assert.match(prompt, /after a change to the vision of record and the issue's title or body\./);
+  assert.match(prompt, /- "Counts are exact\." \(origin: owner-stated\)/);
+  assert.match(prompt, /## The issue's edit since the prior call/);
+});
+
+test("recording an edit is safe to run twice, and does nothing for a final ticket or text that is no edit", async (t) => {
+  const h = await harness(t);
+  const ticket = await h.clear();
+  const settingsId = h.setup.store.latestSettings(h.repo.id)!.id;
+  assert.equal(recordIssueEdit(h.setup.store, ticket.id, { title: TITLE, body: `${BODY} ` }, settingsId), null);
+  assert.notEqual(recordIssueEdit(h.setup.store, ticket.id, { title: TITLE, body: EDITED }, settingsId), null);
+  assert.equal(recordIssueEdit(h.setup.store, ticket.id, { title: TITLE, body: EDITED }, settingsId), null, "the same edit twice");
+  h.setup.store.recordCall({ ticketId: ticket.id, kind: "cancel-on-outside-close", reason: "Closed.", stateTo: "cancelled" });
+  assert.equal(recordIssueEdit(h.setup.store, ticket.id, { title: "Another title", body: EDITED }, settingsId), null);
+  assert.equal(h.calls(1, "issue-edit").length, 1);
 });

@@ -212,7 +212,7 @@ async function actOnAnswer(
   }
 }
 
-/** The re-check that raised a board item, after a vision change or pin change (ADR-0016, ADR-0018), or null when none did. */
+/** The re-check that raised a board item, after a vision change, a pin change or an issue edit (ADR-0016, ADR-0018, ADR-0020), or null when none did. */
 function recheckRaising(store: Store, item: BoardItemRecord): CallRecord | null {
   const basedOn = (store.getCall(item.callId)?.detail as { basedOnCallId?: unknown } | null)?.basedOnCallId;
   const call = typeof basedOn === "number" ? store.getCall(basedOn) : null;

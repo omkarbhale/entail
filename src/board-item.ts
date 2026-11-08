@@ -6,6 +6,7 @@ import type { Actor } from "./forge/forge.ts";
 import type { Git } from "./git.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import type { IntakeDetail } from "./intake.ts";
+import { latestIssueEditId, recordedIssueText } from "./issue-edit.ts";
 import { intakeCommentText, raisedNextText, shortSha, visionCheckOf, type VisionCheck, type VisionCheckMark } from "./intake-comment.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import { makeNotice, type Notifier } from "./notice.ts";
@@ -209,6 +210,8 @@ export interface RaiseRequest {
   visionChangeSha?: string | null;
   /** Whether a re-check raised the ticket after a change to the repo's pins, which its intake comment says without naming them (ADR-0018). */
   pinChange?: boolean;
+  /** Whether a re-check raised the ticket after an issue edit, which its intake comment says (ADR-0020). */
+  issueEdited?: boolean;
 }
 
 /**
@@ -273,6 +276,8 @@ export function owedRaise(ticket: TicketRecord, calls: readonly CallRecord[]): C
   const since = ticket.stateCallId ?? 0;
   const latest = calls.findLast((call) => call.id > since && (call.kind === "verdict" || call.kind === "criteria"));
   if (latest === undefined) return null;
+  // An issue edited since is decided again at the latest text, not raised on the old one (ADR-0020).
+  if (latestIssueEditId(calls) > latest.id) return null;
   if (!(latest.kind === "verdict" ? verdictNeedsTheOwner(latest) : criteriaNeedTheOwner(latest))) return null;
   if (calls.some((call) => call.id > latest.id && call.kind === "raise")) return null;
   return latest;
@@ -535,17 +540,18 @@ function happened(store: Store, ticket: TicketRecord): { calls: HappenedCall[]; 
   return { calls, answers };
 }
 
-/** What the intake call recorded about the issue: its link, and who filed it. */
+/** What the intake call recorded about the issue, its link and who filed it, with its text as last recorded, after any edit (ADR-0020). */
 function issueOf(calls: readonly CallRecord[]): { url: string; filedBy: Actor | null; title: string; body: string } | null {
   for (const call of [...calls].reverse()) {
     const detail = call.detail as Partial<IntakeDetail> | null;
     if (detail?.issue === undefined || !Array.isArray(detail.request)) continue;
     const body = detail.request?.find((part) => part.part === "body");
+    const text = recordedIssueText(calls);
     return {
       url: detail.issue.url,
       filedBy: body?.author ?? null,
-      title: call.inputs?.issueTitle ?? "",
-      body: call.inputs?.issueBody ?? "",
+      title: text?.title ?? call.inputs?.issueTitle ?? "",
+      body: text?.body ?? call.inputs?.issueBody ?? "",
     };
   }
   return null;
@@ -657,7 +663,7 @@ export async function raiseToBoard(
     };
     const item = store.raiseBoardItem({ ticketId: ticket.id, callId: call.id, decision, whyRaised: why.kind, snapshot });
     const link = boardItemLink(options.boardOrigin, item.id);
-    const body = composeComment(ownerName, ticket.id, intakeCommentText({ visionCheck: check, next: raisedNextText(link), replaces, visionChange: request.visionChangeSha ?? null, pinChange: request.pinChange === true }));
+    const body = composeComment(ownerName, ticket.id, intakeCommentText({ visionCheck: check, next: raisedNextText(link), replaces, visionChange: request.visionChangeSha ?? null, pinChange: request.pinChange === true, issueEdited: request.issueEdited === true }));
     store.recordForgeWriteIntent({
       repoId: repo.id,
       ticketId: ticket.id,

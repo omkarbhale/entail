@@ -2,28 +2,34 @@ import type { BoardItemSnapshot } from "./board-item.ts";
 import { criteriaInForce, type CriteriaDetail } from "./criteria.ts";
 import { judgedPins, type JudgedPin } from "./decider.ts";
 import type { Git } from "./git.ts";
+import { issueEditSince, latestIssueEditId, type IssueEditSince } from "./issue-edit.ts";
 import { readRepoSettings, repoSettingsOf } from "./repo-settings.ts";
 import type { BoardItemRecord, CallRecord, RepoRecord, Store, TicketRecord, VisionChangeRecord } from "./store.ts";
 import { blobAt, visionChangesInForce } from "./vision-change.ts";
 import { collapseWhitespace, computeVisionChange, readVision, visionLinesOf, type VisionLine } from "./vision.ts";
 
 /**
- * Which tickets a vision change or a pin change flags (spec §12, §15,
- * ADR-0016, ADR-0018), and which open board items they touch (spec §13,
+ * Which tickets a vision change, a pin change or an issue edit flags (spec
+ * §12, §15, ADR-0016, ADR-0018, ADR-0020), and which open board items vision
+ * changes and pin changes touch (spec §13,
  * ADR-0008).
  *
  * - A vision change flags a cleared or landing ticket whose clear came from
  *   an automatic verdict (settled or unopposed) when any line was added, or a
  *   line its call cites was removed. A ticket cleared by the owner's answer
- *   is not flagged by a vision change, and nothing else is.
+ *   is not flagged by a vision change, and nothing else but an issue edit is.
  * - Adding a pin flags the same tickets the way an added line does: every
  *   cleared or landing ticket cleared by an automatic verdict. A pin is
  *   compared whole, so editing any part of one counts as removing the old pin
  *   and adding the new. Removing a pin flags nothing.
- * - A ticket stays flagged until a re-check is recorded at a vision and pins
- *   that hold every change so far. Its flag is worked out against the vision
- *   and pins its latest judgment read (its clear, or its latest re-check), so
- *   a second change before the re-check is recorded is judged with the first.
+ * - An issue edit flags any cleared or landing ticket, including one cleared
+ *   by the owner's answer: the text recorded since its latest judgment is an
+ *   edit of the text that judgment read (`issue-edit.ts`).
+ * - A ticket stays flagged until a re-check is recorded at a vision, pins and
+ *   issue text that hold every change so far. Its flag is worked out against
+ *   the vision, pins and text its latest judgment read (its clear, or its
+ *   latest re-check), so a second change before the re-check is recorded is
+ *   judged with the first.
  * - An open board item is touched when a line was added, or a line of its
  *   vision check was removed or reworded; and when a pin was added, or a pin
  *   it names was removed or edited.
@@ -190,13 +196,17 @@ interface PinsSince {
   pinsAdded: JudgedPin[];
 }
 
-/** A ticket flagged by vision changes, pin changes or both, with what it is re-checked on. */
+/** A ticket flagged by vision changes, pin changes, an issue edit or any of them, with what it is re-checked on. */
 export interface VisionFlag extends VisionSince, PinsSince {
   ticketId: number;
   /** The judgment the flag is against, which the re-check is given as the prior call. */
   judgmentCallId: number;
   /** The repo's latest vision change recorded when the flag was worked out, so one recorded since restarts the re-check. */
   latestVisionChangeId: number | null;
+  /** The ticket's latest issue edit recorded when the flag was worked out, so one recorded since restarts the re-check. */
+  latestIssueEditId: number;
+  /** The issue edit since the judgment, or null when the issue's text is as the judgment read it. */
+  edit: IssueEditSince | null;
 }
 
 /** An open board item touched by vision changes or pin changes since it was raised. */
@@ -260,17 +270,25 @@ export class VisionFlags {
     }
   }
 
-  /** The ticket's flag, read afresh from the records, or null when it is not flagged. */
+  /**
+   * The ticket's flag, read afresh from the records, or null when it is not
+   * flagged. A ticket flagged by an issue edit is re-checked with every
+   * vision change since its judgment too, flagging or not, so the re-check
+   * is at the current vision and text.
+   */
   async flagOf(repo: RepoRecord, ticket: TicketRecord): Promise<VisionFlag | null> {
     if (ticket.state !== "cleared" && ticket.state !== "landing") return null;
-    const basis = flagBasisOf(ticket, this.#store.callsForTicket(ticket.id));
-    if (basis === null || !basis.automatic) return null;
+    const calls = this.#store.callsForTicket(ticket.id);
+    const basis = flagBasisOf(ticket, calls);
+    if (basis === null) return null;
+    const edit = issueEditSince(basis.judgment, calls);
+    if (!basis.automatic && edit === null) return null;
     const latestVisionChangeId = this.#store.visionChanges(repo.id).at(-1)?.id ?? null;
     const since = await this.#since(repo, basis.visionSha, basis.judgment.madeAt);
     const pins = this.#pinsSince(repo, pinsJudgedBy(this.#store, repo.id, basis.judgment));
     const byVision = since !== null && visionChangeFlags(basis, lineTexts(since));
-    if (!byVision && !pinChangeFlags(basis, { removed: pins.pinsRemoved, added: pins.pinsAdded })) return null;
-    return { ticketId: ticket.id, judgmentCallId: basis.judgment.id, latestVisionChangeId, ...(since ?? unchanged(basis.visionSha)), ...pins };
+    if (!byVision && !pinChangeFlags(basis, { removed: pins.pinsRemoved, added: pins.pinsAdded }) && edit === null) return null;
+    return { ticketId: ticket.id, judgmentCallId: basis.judgment.id, latestVisionChangeId, latestIssueEditId: latestIssueEditId(calls), edit, ...(since ?? unchanged(basis.visionSha)), ...pins };
   }
 
   /** The ticket's open board item, when a vision change or pin change since it was raised touches it, or null. */
