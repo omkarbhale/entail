@@ -353,7 +353,10 @@ export class ModelRuns {
   #settle(entry: Entry): void {
     entry.signal?.removeEventListener("abort", entry.onAbort);
     const ticket = entry.request.ticket;
-    if (ticket !== null && this.#holders.get(ticket) === entry) this.#holders.delete(ticket);
+    if (ticket !== null && this.#holders.get(ticket) === entry) {
+      this.#holders.delete(ticket);
+      this.#retryStates.delete(ticket);
+    }
   }
 }
 
