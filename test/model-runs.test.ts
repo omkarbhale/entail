@@ -445,3 +445,30 @@ test("stopping the passes interrupts the model runs in flight; on restart the ow
   assert.equal(second.requests.length, 1, "the interrupted run is run again");
   await restarted.stop();
 });
+
+test("a failing run discarded while it waits for a retry clears the ticket's retry state, so a later run starts at 1 minute", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: NOW });
+  const { log } = logFor(t);
+  const scripted = new ScriptedRunner()
+    .script("verdict", "t1", { failure: { kind: "refusal", message: "no" } }, { failure: { kind: "refusal", message: "no" } })
+    .script("verdict", "t1", { failure: { kind: "refusal", message: "no" } }, { output: { greeting: "ok" } });
+  const runs = new ModelRuns({ runner: scripted, log });
+  const controller = new AbortController();
+  const first = runs.run(request("verdict", "t1"), { ...schedule(), signal: controller.signal });
+  const rejected = assert.rejects(first, /withdrawn/);
+  await flush();
+  t.mock.timers.tick(MINUTE);
+  await flush();
+  assert.equal(runs.retryState("t1")?.failures, 2);
+
+  controller.abort(new Error("withdrawn"));
+  await rejected;
+  assert.equal(runs.retryState("t1"), null, "no retry state outlives its run");
+
+  const second = runs.run(request("verdict", "t1"), schedule());
+  await flush();
+  assert.equal(runs.retryState("t1")?.failures, 1, "the next run starts its backoff afresh");
+  t.mock.timers.tick(MINUTE);
+  await flush();
+  assert.equal((await second).output.greeting, "ok");
+});
