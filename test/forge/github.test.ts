@@ -143,3 +143,18 @@ test("createForge picks the adapter from the stated forge", () => {
   assert.ok(createForge(SETTING, transport) instanceof GitHubForge);
   assert.throws(() => createForge({ forge: "gitlab", host: "gitlab.com", path: "acme/tally" }, transport), /GitLab/);
 });
+
+for (const [name, cursor] of [
+  ["not JSON", "garbage{"],
+  ["the wrong shape", JSON.stringify({ issues: 1 })],
+  ["a since that is not a time", JSON.stringify({ issues: { since: "nope", etag: null }, comments: { since: null, etag: null } })],
+] as const) {
+  test(`a cursor that is ${name} costs a full re-scan`, async (t) => {
+    const { forge } = forgeOn(t, [
+      { request: { method: "GET", path: ISSUES }, response: { status: 200, body: [] } },
+      { request: { method: "GET", path: COMMENTS }, response: { status: 200, body: [] } },
+    ]);
+    const batch = await forge.changesSince(cursor);
+    assert.deepEqual(batch.changes, []);
+  });
+}

@@ -233,17 +233,22 @@ export class GitHubForge implements Forge {
 const EMPTY_LIST_CURSOR: ListCursor = { since: null, etag: null };
 
 function parseCursor(cursor: ChangeCursor): GitHubCursor {
-  const parsed: unknown = JSON.parse(cursor);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cursor);
+  } catch {
+    return { issues: EMPTY_LIST_CURSOR, comments: EMPTY_LIST_CURSOR };
+  }
   if (isObject(parsed) && isListCursor(parsed.issues) && isListCursor(parsed.comments)) {
     return { issues: parsed.issues, comments: parsed.comments };
   }
-  throw new Error("not a GitHub change cursor");
+  return { issues: EMPTY_LIST_CURSOR, comments: EMPTY_LIST_CURSOR };
 }
 
 function isListCursor(value: unknown): value is ListCursor {
   return (
     isObject(value) &&
-    (value.since === null || typeof value.since === "string") &&
+    (value.since === null || (typeof value.since === "string" && !Number.isNaN(Date.parse(value.since)))) &&
     (value.etag === null || typeof value.etag === "string")
   );
 }
