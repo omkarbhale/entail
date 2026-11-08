@@ -1,5 +1,6 @@
 import type { Forge, ForgeSetting } from "./forge.ts";
 import { GitHubForge } from "./github.ts";
+import { GitLabForge } from "./gitlab.ts";
 import { CliTransport, type Transport } from "./transport.ts";
 
 /**
@@ -12,6 +13,6 @@ export function createForge(setting: ForgeSetting, transport?: Transport): Forge
     case "github":
       return new GitHubForge(setting, transport ?? new CliTransport("gh"));
     case "gitlab":
-      throw new Error("the GitLab adapter is not built yet");
+      return new GitLabForge(setting, transport ?? new CliTransport("glab"));
   }
 }
