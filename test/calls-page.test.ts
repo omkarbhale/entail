@@ -209,6 +209,25 @@ test("the filters by repo, ticket, kind and date each narrow the list, and combi
   assert.ok(!hrefs.some((h) => h.includes(`from=${days[2]}`)), "only days with calls under the other filters are offered");
 });
 
+test("the vision change filter lists the calls one vision change caused, and offers each vision change", async (t) => {
+  const records = await serveRecords(t);
+  const { store, github, answered } = records;
+  const first = store.recordVisionChange({ repoId: github.id, commitSha: "c".repeat(40), blobSha: "b1", previousBlobSha: "b0", removed: [], added: ["Counts are exact."] });
+  const second = store.recordVisionChange({ repoId: github.id, commitSha: "d".repeat(40), blobSha: "b2", previousBlobSha: "b1", removed: [], added: ["Output is exact."] });
+  const stands = store.recordCall({ ticketId: answered.id, kind: "recheck", reason: "The call stands.", detail: { recheck: { outcome: "stands" }, visionChangeIds: [first.id] } });
+  const both = store.recordCall({ ticketId: answered.id, kind: "recheck", reason: "The call stands again.", detail: { recheck: { outcome: "stands" }, visionChangeIds: [first.id, second.id] } });
+
+  assert.deepEqual(listedCalls((await get(records, `${CALLS_PATH}?vision=${first.id}`)).body), [both.id, stands.id]);
+  assert.deepEqual(listedCalls((await get(records, `${CALLS_PATH}?vision=${second.id}&kind=recheck`)).body), [both.id]);
+  assert.equal((await get(records, `${CALLS_PATH}?vision=x`)).status, 400);
+
+  const page = parsePage((await get(records, `${CALLS_PATH}?kind=recheck`)).body);
+  const hrefs = page.links.map((l) => l.href);
+  assert.ok(hrefs.includes(`/calls?kind=recheck&vision=${first.id}`), "each vision change is offered, keeping the other filters");
+  assert.ok(hrefs.includes(`/calls?kind=recheck&vision=${second.id}`));
+  assert.match((await get(records, CALLS_PATH)).body, /Vision change:/);
+});
+
 test("a filter that is not one is refused, and a kind with no calls lists none", async (t) => {
   const records = await serveRecords(t);
   for (const query of ["repo=x", "ticket=0", "ticket=1.5", "from=2026-13-01", "to=yesterday"]) {

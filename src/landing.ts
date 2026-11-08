@@ -369,10 +369,28 @@ export interface MechanicalPass {
   stage: MechanicalStage;
 }
 
+/** A landing run as {@link recordLanding} records it, kept while its ticket is flagged. */
+export type HeldLanding = Parameters<typeof recordLanding>[1];
+
+/**
+ * Holds what a landing check would post while its ticket is flagged
+ * (ADR-0016): a run in progress when a flag lands finishes, but records and
+ * posts nothing until the re-check is recorded, and is kept so its result can
+ * be used then if the criteria version is unchanged.
+ */
+export interface LandingHold {
+  /** Whether the ticket is flagged now, read afresh. */
+  held(ticket: TicketRecord, pass: RepoPass): Promise<boolean>;
+  /** Keeps a run that was held, by its run key. */
+  keep(run: HeldLanding): void;
+}
+
 export interface LandingOptions {
   store: Store;
   log: OperationalLog;
   dataDirectory: string;
+  /** Holds landing runs while their ticket is flagged; with none wired in, nothing is held. */
+  hold?: LandingHold;
   /** The repo's mirror; its git mirror in the data directory by default. */
   mirrorFor?: (repo: RepoRecord) => Promise<LandingMirror>;
   /**
@@ -539,12 +557,13 @@ export function landingDetail(
  * the comment, which a restart settles by its hidden marker. Nothing is
  * recorded when the ticket moved since the step began, or the run was already
  * recorded. A passing run in a repo in shadow is recorded as a "would merge"
- * call.
+ * call. While the ticket is flagged, nothing is recorded or posted, and the
+ * run is kept by the hold (ADR-0016).
  *
  * @returns the call recorded, or null when nothing was.
  */
 export async function recordLanding(
-  options: Pick<LandingOptions, "store" | "log">,
+  options: Pick<LandingOptions, "store" | "log" | "hold">,
   run: {
     ticket: TicketRecord;
     pr: Pick<PullRequest, "number" | "headSha">;
@@ -566,6 +585,11 @@ export async function recordLanding(
   if (ownerName === null) throw new Error("the owner's display name is not set, so entail cannot attribute a comment");
   const body = composeComment(ownerName, ticket.id, run.text);
   const key: LandingRunKey = { pullRequest: detail.pullRequest, headSha: detail.headSha, evidence: detail.evidence?.key ?? null, criteriaVersion: detail.criteriaVersion };
+  if (options.hold !== undefined && (await options.hold.held(ticket, pass))) {
+    options.hold.keep(run);
+    log.info("landing-held-for-flag", { ticketId: ticket.id, pullRequest: pr.number, headSha: pr.headSha, criteriaVersion: key.criteriaVersion });
+    return null;
+  }
 
   const recorded = store.transaction(() => {
     if (!unmoved(store, ticket)) return null;

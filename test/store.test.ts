@@ -189,8 +189,9 @@ test("a store from schema 1 is migrated to the current schema and keeps its reco
     }
     db.exec(`DROP TABLE ${table}`);
   }
-  // Nor the item version an answer was given to.
+  // Nor the item version an answer was given to, nor an origin's raw trailer.
   db.exec("ALTER TABLE answers DROP COLUMN item_version");
+  db.exec("ALTER TABLE vision_line_origins DROP COLUMN raw_trailer");
   db.exec("PRAGMA user_version = 1");
   db.close();
 
@@ -677,11 +678,12 @@ test("an answer records the item version it was given to, and one from before sc
   assert.throws(() => first.recordAnswer({ boardItemId: raiseItem(2).id, itemVersion: 0, answeredBy: "Owner", shape: "dont-go-ahead" }), /CHECK/);
   first.close();
 
-  // Take the store back to schema 4, whose answers had no item version, and which had no fresh starts and no unenrollments.
+  // Take the store back to schema 4, whose answers had no item version, and which had no fresh starts, no unenrollments and no raw trailers.
   const db = new DatabaseSync(join(dir, STORE_FILE));
   dropTable(db, "unenrollments");
   db.exec("DROP TABLE fresh_starts");
   db.exec("ALTER TABLE answers DROP COLUMN item_version");
+  db.exec("ALTER TABLE vision_line_origins DROP COLUMN raw_trailer");
   db.exec("PRAGMA user_version = 4");
   db.close();
   const store = openStore(t, dir);
@@ -703,6 +705,7 @@ test("a store from before schema 8 lets an on-the-board ticket go back to landin
   const before = trigger.replace("('on-the-board', 'landing'), ", "");
   assert.notEqual(before, trigger);
   db.exec(before);
+  db.exec("ALTER TABLE vision_line_origins DROP COLUMN raw_trailer");
   db.exec("PRAGMA user_version = 7");
   db.close();
 

@@ -104,8 +104,8 @@ export interface PassSetup {
   log: OperationalLog;
   /** The operational log's lines, parsed. */
   logLines(): Record<string, unknown>[];
-  /** Enrolls a repo, recorded as enrolled at {@link ENROLLED_AT}, with `openIssueNumbers` open then. */
-  enroll(options?: { projectId?: number; host?: string; path?: string; openIssueNumbers?: number[] }): RepoRecord;
+  /** Enrolls a repo, recorded as enrolled at {@link ENROLLED_AT}, with `openIssueNumbers` open then, at VISION.md's `visionSha`. */
+  enroll(options?: { projectId?: number; host?: string; path?: string; openIssueNumbers?: number[]; visionSha?: string; visionLines?: string[] }): RepoRecord;
 }
 
 export function passSetup(t: TestContext): PassSetup {
@@ -136,8 +136,8 @@ export function passSetup(t: TestContext): PassSetup {
           },
           settings: enrollmentSettings("owner-stated", "squash"),
           savedBy: "Ada",
-          visionSha: "c0ffee",
-          visionLines: ["Tally counts words in text."],
+          visionSha: options.visionSha ?? "c0ffee",
+          visionLines: options.visionLines ?? ["Tally counts words in text."],
           visionOrigin: "owner-stated",
           openIssueNumbers: options.openIssueNumbers ?? [],
         }).repo;

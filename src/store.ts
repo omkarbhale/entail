@@ -349,6 +349,8 @@ export interface CallFilter {
   kind?: string;
   fromDay?: string;
   toDay?: string;
+  /** Calls made because of one vision change: the re-checks it caused (ADR-0016). */
+  visionChangeId?: number;
 }
 
 export interface NewWithdrawal {
@@ -366,6 +368,8 @@ export interface NewVisionLineOrigin {
   commitSha: string;
   /** A `Vision-Origin` trailer, a commit without one (stated by the owner), or the enrollment choice. */
   source: "trailer" | "no-trailer" | "enrollment";
+  /** The commit's `Vision-Origin` trailer values as written, kept whatever the origin; null when it had none (ADR-0004). */
+  rawTrailer?: string | null;
 }
 
 export interface VisionLineOriginRecord extends NewVisionLineOrigin {
@@ -976,13 +980,14 @@ export class Store {
 
   recordVisionLineOrigin(origin: NewVisionLineOrigin): VisionLineOriginRecord {
     const id = this.#insert(
-      "INSERT INTO vision_line_origins (repo_id, line, origin, commit_sha, source, recorded_at) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO vision_line_origins (repo_id, line, origin, commit_sha, source, recorded_at, raw_trailer) VALUES (?, ?, ?, ?, ?, ?, ?)",
       origin.repoId,
       origin.line,
       origin.origin,
       origin.commitSha,
       origin.source,
       this.#time(),
+      origin.rawTrailer ?? null,
     );
     return mapOrNull(this.#get("SELECT * FROM vision_line_origins WHERE id = ?", id), toOrigin)!;
   }
@@ -1007,6 +1012,24 @@ export class Store {
       this.#time(),
     );
     return mapOrNull(this.#get("SELECT * FROM vision_changes WHERE id = ?", id), toVisionChange)!;
+  }
+
+  /** A repo's vision changes, oldest first; with `since`, only those seen at or after that time. */
+  visionChanges(repoId: number, since?: string): VisionChangeRecord[] {
+    return this.#all(
+      "SELECT * FROM vision_changes WHERE repo_id = ? AND seen_at >= ? ORDER BY id",
+      repoId,
+      since ?? "",
+    ).map(toVisionChange);
+  }
+
+  /** Every repo's vision changes, newest first. */
+  listVisionChanges(): VisionChangeRecord[] {
+    return this.#all("SELECT * FROM vision_changes ORDER BY id DESC").map(toVisionChange);
+  }
+
+  getVisionChange(id: number): VisionChangeRecord | null {
+    return mapOrNull(this.#get("SELECT * FROM vision_changes WHERE id = ?", id), toVisionChange);
   }
 
   // Forge writes
@@ -1151,6 +1174,7 @@ function callWhere(filter: CallFilter): { sql: string; params: SQLInputValue[] }
   add("c.kind = ?", filter.kind);
   add("substr(c.made_at, 1, 10) >= ?", filter.fromDay);
   add("substr(c.made_at, 1, 10) <= ?", filter.toDay);
+  add("EXISTS (SELECT 1 FROM json_each(c.detail, '$.visionChangeIds') WHERE value = ?)", filter.visionChangeId);
   return { sql: parts.length === 0 ? "1" : parts.join(" AND "), params };
 }
 
@@ -1380,6 +1404,7 @@ function toOrigin(row: Row): VisionLineOriginRecord {
     origin: str(row.origin) as VisionOrigin,
     commitSha: str(row.commit_sha),
     source: str(row.source) as VisionLineOriginRecord["source"],
+    rawTrailer: strOrNull(row.raw_trailer),
     recordedAt: str(row.recorded_at),
   };
 }

@@ -1,7 +1,7 @@
 import { FINAL_STATES, INITIAL_STATE, TICKET_STATES, TICKET_TRANSITIONS } from "./ticket-states.ts";
 
 /** Bumped whenever the schema below changes; a store from a newer entail is refused. */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 /**
  * Every table of the store except `ticket_states`. The store itself refuses
@@ -337,7 +337,9 @@ CREATE TABLE vision_line_origins (
   origin TEXT NOT NULL CHECK (origin IN (${list(VISION_ORIGINS)})),
   commit_sha TEXT NOT NULL,
   source TEXT NOT NULL CHECK (source IN ('trailer', 'no-trailer', 'enrollment')),
-  recorded_at TEXT NOT NULL
+  recorded_at TEXT NOT NULL,
+  -- The commit's \`Vision-Origin\` trailer values as written, kept whatever the origin (ADR-0004).
+  raw_trailer TEXT
 ) STRICT;
 CREATE INDEX vision_line_origins_by_line ON vision_line_origins (repo_id, line);
 
@@ -525,4 +527,6 @@ export const MIGRATIONS: Readonly<Record<number, string>> = {
   6: [UNENROLLMENTS_TABLE, appendOnly("unenrollments"), UNENROLLMENTS_OF_LATEST, noReplace(["unenrollments", KEYS.unenrollments])].join(""),
   // 7 -> 8: on the board -> landing, for a landing pin item withdrawn by a new push or a merge on its answer that did not go through.
   7: `DROP TRIGGER ticket_states_transition;\n${TRANSITION_TRIGGER}`,
+  // 8 -> 9: the raw `Vision-Origin` trailer an origin was read from; origins before it kept none.
+  8: "ALTER TABLE vision_line_origins ADD COLUMN raw_trailer TEXT;",
 };

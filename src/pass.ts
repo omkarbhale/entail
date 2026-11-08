@@ -31,7 +31,7 @@ export const BACKOFF_MAX_MS = 15 * 60_000;
  * The steps a repo whose VISION.md is gone or empty does not start: nothing
  * new is decided and nothing lands there until a vision is back (spec §4).
  */
-export const VISION_HALTED_STEPS: ReadonlySet<string> = new Set(["verdict", "findings", "criteria", "landing-check", "merge"]);
+export const VISION_HALTED_STEPS: ReadonlySet<string> = new Set(["verdict", "findings", "criteria", "landing-check", "merge", "re-check", "withdraw-for-vision-change"]);
 
 /** A host none of whose repos has polled for this long is the host-not-answering halt (spec §16). */
 export const HOST_UNANSWERED_HALT_MS = 60 * 60_000;
@@ -68,6 +68,13 @@ export interface RepoPass {
  * next time, so a handler must be safe to run twice for one change.
  */
 export type ChangeHandler = (change: Change, pass: RepoPass) => Promise<void>;
+
+/**
+ * Runs once per pass for a repo, after its changes were read and before any
+ * owed step starts, such as recording a vision change (ADR-0016). A hook that
+ * throws fails the repo's pass.
+ */
+export type PassHook = (pass: RepoPass) => Promise<void>;
 
 /** One step a ticket is owed, started by the pass unless the ticket already has a step running. */
 export interface OwedStep {
@@ -107,6 +114,8 @@ export interface PassesOptions {
   planners?: readonly OwedStepPlanner[];
   /** Handle each change read from the forge, after taking in the owner's new issues; none by default. */
   changeHandlers?: readonly ChangeHandler[];
+  /** Run once per repo pass after its changes were handled and before its owed steps start; none by default. */
+  hooks?: readonly PassHook[];
   /** Counts forge writes in flight, so stopping can wait for them. */
   inFlight?: InFlightWrites;
   /**
@@ -239,6 +248,7 @@ export class Passes {
   readonly #defaultBranchFor: (repo: RepoRecord) => Promise<DefaultBranchSource>;
   readonly #planners: readonly OwedStepPlanner[];
   readonly #changeHandlers: readonly ChangeHandler[];
+  readonly #hooks: readonly PassHook[];
   readonly #inFlight: InFlightWrites;
   readonly #modelRuns: ModelRuns;
   readonly #recordsCheck: RecordsCheck | undefined;
@@ -306,6 +316,7 @@ export class Passes {
         }));
     this.#planners = options.planners ?? [];
     this.#changeHandlers = options.changeHandlers ?? [];
+    this.#hooks = options.hooks ?? [];
     this.#inFlight = options.inFlight ?? new InFlightWrites();
     this.#recordsCheck = options.recordsCheck;
     this.#toolCheck = options.toolCheck;
@@ -631,6 +642,12 @@ export class Passes {
     if (this.#backoff.delete(repoId)) this.#log.info("poll-recovered", { repoId });
     await this.#noteVision(repo, head.commit);
     this.#log.info("poll", { repoId, head: head.commit, fetched: head.fetched, takenIn: takenIn.length });
+
+    try {
+      for (const hook of this.#hooks) await hook(pass);
+    } catch (error) {
+      return this.#failed(repo, error);
+    }
 
     const started = this.#startOwedSteps(pass);
     if (resume !== null) this.#catchUp(repoId, resume.id);

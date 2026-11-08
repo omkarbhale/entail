@@ -5,6 +5,7 @@ import type { CriteriaDetail } from "./criteria.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import type { OwedStep, OwedStepPlanner, RepoPass } from "./pass.ts";
+import { cancelledAfterRecheckText, commentOnce, ONE_TIME_COMMENTS } from "./pull-requests.ts";
 import type { AnswerRecord, BoardItemRecord, CallRecord, Store, TicketRecord } from "./store.ts";
 
 /**
@@ -17,7 +18,9 @@ import type { AnswerRecord, BoardItemRecord, CallRecord, Store, TicketRecord } f
  *   criteria step writes criteria from the answer, which they cite, and the
  *   usual checks and challenge run (src/criteria.ts).
  * - "Don't go ahead" cancels the ticket, and entail comments and closes the
- *   issue, as not planned on GitHub.
+ *   issue, as not planned on GitHub. When a re-check raised the ticket, each
+ *   open PR for it also gets one comment saying so, and is not closed
+ *   (ADR-0016).
  * - "Merge this PR as it is", on an item raised at landing for a touched pin,
  *   is the merge's to act on (`merge.ts`), not this step's.
  *
@@ -74,10 +77,11 @@ export function verdictCallOfRaise(raise: CallRecord | null, calls: readonly Cal
     call = calls.findLast((c) => c.kind === "criteria" && (c.detail as Partial<CriteriaDetail> | null)?.version === version);
   }
   if (call === undefined) return null;
-  if (call.kind === "verdict") return call;
+  // A re-check that raised the ticket holds the call at its vision in a verdict's shape (ADR-0016).
+  if (call.kind === "verdict" || call.kind === "recheck") return call;
   if (call.kind === "criteria") {
     const verdictCallId = (call.detail as Partial<CriteriaDetail> | null)?.verdictCallId;
-    return calls.find((c) => c.id === verdictCallId && c.kind === "verdict") ?? null;
+    return calls.find((c) => c.id === verdictCallId && (c.kind === "verdict" || c.kind === "recheck")) ?? null;
   }
   return null;
 }
@@ -141,7 +145,7 @@ async function actOnAnswer(
   options: AfterAnswerOptions,
   ticket: TicketRecord,
   owed: { item: BoardItemRecord; answer: AnswerRecord },
-  pass: Pick<RepoPass, "repo" | "writer">,
+  pass: RepoPass,
 ): Promise<void> {
   const { store, log } = options;
   const { item, answer } = owed;
@@ -196,4 +200,17 @@ async function actOnAnswer(
   const write = { ticketId: ticket.id, callId: made.call.id };
   await writer.comment(write, "issue", ticket.issueNumber, made.body);
   await writer.closeIssue(write, ticket.issueNumber, DONT_GO_AHEAD_CLOSE);
+
+  if (!raisedByRecheck(store, item)) return;
+  const cancelled = store.getTicket(ticket.id)!;
+  for (const pr of await pass.forge.linkedPullRequests(ticket.issueNumber)) {
+    if (pr.state !== "open") continue;
+    await commentOnce(options, pass, cancelled, pr, ONE_TIME_COMMENTS.cancelledAfterRecheck, cancelledAfterRecheckText(pass, ticket.issueNumber));
+  }
+}
+
+/** Whether a board item was raised by a re-check after a vision change (ADR-0016). */
+function raisedByRecheck(store: Store, item: BoardItemRecord): boolean {
+  const basedOn = (store.getCall(item.callId)?.detail as { basedOnCallId?: unknown } | null)?.basedOnCallId;
+  return typeof basedOn === "number" && store.getCall(basedOn)?.kind === "recheck";
 }

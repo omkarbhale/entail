@@ -300,6 +300,8 @@ async function decide(
     log.warn("verdict-skipped", { ticketId: ticket.id, why: "no intake call records the issue's text" });
     return;
   }
+  // A vision change recorded while the run is in flight discards it, and the ticket is decided at the new vision (ADR-0016).
+  const visionChangeBefore = latestVisionChangeId(store, pass.repo.id);
   const mirror = await mirrorOf(pass.repo);
   const vision = await readVision(mirror.git, pass.head.commit);
   if (vision.status !== "present") {
@@ -345,6 +347,10 @@ async function decide(
   const now = store.getTicket(ticket.id);
   if (now === null || !owesVerdict(now, store.callsForTicket(ticket.id))) {
     log.info("verdict-discarded", { ticketId: ticket.id, state: now?.state ?? null });
+    return;
+  }
+  if (latestVisionChangeId(store, pass.repo.id) !== visionChangeBefore) {
+    log.info("verdict-discarded", { ticketId: ticket.id, why: "a vision change was recorded while the run was in flight" });
     return;
   }
 
@@ -417,6 +423,11 @@ async function decide(
     pinMatches: pinMatches.length,
     ...(checks === null ? {} : { checksPassed: checks.passed }),
   });
+}
+
+/** The id of the repo's latest vision change, or 0 when none is recorded. */
+function latestVisionChangeId(store: Store, repoId: number): number {
+  return store.visionChanges(repoId).at(-1)?.id ?? 0;
 }
 
 /**

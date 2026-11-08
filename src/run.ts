@@ -35,6 +35,7 @@ import { checkHostLogin, hostKey } from "./host-login.ts";
 import type { HostLoginHalt } from "./pass.ts";
 import { REPOS_PATH } from "./repos-page.ts";
 import { checkTools, type ToolCheck, type ToolProblem } from "./tool-check.ts";
+import { visionChanges } from "./recheck.ts";
 
 /** How long stopping waits for in-flight forge writes to confirm (ADR-0017). */
 export const STOP_WAIT_MS = 10_000;
@@ -43,7 +44,7 @@ export interface RunOptions {
   dataDirectory: string;
   log?: OperationalLogOptions;
   /** Replaces what the passes reach the forge and git through; the owner's own CLIs by default. */
-  passes?: Pick<PassesOptions, "forgeFor" | "defaultBranchFor" | "planners" | "changeHandlers" | "limiter">;
+  passes?: Pick<PassesOptions, "forgeFor" | "defaultBranchFor" | "planners" | "changeHandlers" | "hooks" | "limiter">;
   /** Makes every model run; `claude -p` on the owner's subscription by default. */
   modelRunner?: ModelRunner;
   /** How long stopping waits for in-flight forge writes; {@link STOP_WAIT_MS} by default. */
@@ -229,7 +230,10 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
   const pullRequests = pullRequestFollowing({ store, log });
   const closes = outsideCloses({ store, log });
   const landingPins = landingPinRaising({ store, log, dataDirectory: options.dataDirectory, notifier, boardOrigin: server.info.origin });
-  const merger = landingMerger({ store, log, dataDirectory: options.dataDirectory, raiseForPins: landingPins.raise });
+  // Vision changes: recorded each pass, they flag tickets for a re-check and hold their landing and merge (ADR-0016).
+  const vision = visionChanges({ store, log, dataDirectory: options.dataDirectory, board: { notifier, boardOrigin: server.info.origin } });
+  const hold = vision.hold;
+  const merger = landingMerger({ store, log, dataDirectory: options.dataDirectory, raiseForPins: landingPins.raise, hold, processChanges: vision.processChanges });
   const running = new Passes({
     store,
     log,
@@ -238,6 +242,8 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
     forgeFor,
     defaultBranchFor: options.passes?.defaultBranchFor,
     planners: options.passes?.planners ?? [
+      // First, so a flagged ticket's re-check is not held back by the merge or landing check it holds.
+      vision.planner,
       afterAnswerPlanner({ store, log }),
       deciderPlanner({ store, log, dataDirectory: options.dataDirectory }),
       criteriaPlanner({ store, log, dataDirectory: options.dataDirectory }),
@@ -251,13 +257,15 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
         store,
         log,
         dataDirectory: options.dataDirectory,
-        afterMechanical: merger.reusingHeld(landingGrader({ store, log, dataDirectory: options.dataDirectory, afterGrade: merger.afterGrade })),
+        hold,
+        afterMechanical: merger.reusingHeld(vision.reusingHeld(landingGrader({ store, log, dataDirectory: options.dataDirectory, hold, afterGrade: merger.afterGrade }))),
       }),
       findingsPlanner({ store, log }),
       // Last, so reading an issue live never delays a step the ticket owes.
       closes.planner,
     ],
     changeHandlers: options.passes?.changeHandlers ?? [pullRequests.onChange, closes.onChange],
+    hooks: options.passes?.hooks ?? [vision.hook],
     inFlight,
     modelRuns,
     recordsCheck,

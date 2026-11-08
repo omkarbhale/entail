@@ -20,6 +20,7 @@ import {
   type LandingCheckResult,
   type LandingChecks,
   type LandingDetail,
+  type LandingHold,
   type LandingRunKey,
   type MechanicalPass,
 } from "./landing.ts";
@@ -527,6 +528,8 @@ export interface LandingGradeOptions {
   store: Store;
   log: OperationalLog;
   dataDirectory: string;
+  /** Holds landing runs while their ticket is flagged (ADR-0016); with none wired in, nothing is held. */
+  hold?: LandingHold;
   /** The repo's mirror; its git mirror in the data directory by default. */
   mirrorFor?: (repo: RepoRecord) => Promise<GradeMirror>;
   /**

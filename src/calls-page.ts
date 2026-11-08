@@ -42,7 +42,7 @@ export const CALL_KIND_LABELS: Readonly<Record<(typeof CALL_KINDS)[number], stri
 };
 
 /** The query parameters the Calls page filters by. */
-export const CALL_FILTERS = { repo: "repo", ticket: "ticket", kind: "kind", from: "from", to: "to" } as const;
+export const CALL_FILTERS = { repo: "repo", ticket: "ticket", kind: "kind", from: "from", to: "to", visionChange: "vision" } as const;
 
 /** A ticket's page. */
 export function ticketPath(ticketId: number): string {
@@ -86,7 +86,8 @@ function pullRequestName(repo: Pick<RepoRecord, "forge">, number: number): strin
 /**
  * The Calls page and each model run's page (spec §14, ADR-0009). The Calls
  * page lists every call newest first, across all repos, and filters by repo,
- * ticket, kind and date, which combine. A shadow "would merge" call is one
+ * ticket, kind, date and vision change, which combine; a vision change lists
+ * the re-checks it caused (ADR-0016). A shadow "would merge" call is one
  * kind. Filters are plain links, because the page asks nothing and offers no
  * action: it has no form, and a wrong call is fixed through the issue, the
  * vision or a pin, never here.
@@ -113,6 +114,7 @@ export function parseCallFilter(query: URLSearchParams): FilterResult {
   for (const [key, name] of [
     ["repoId", CALL_FILTERS.repo],
     ["ticketId", CALL_FILTERS.ticket],
+    ["visionChangeId", CALL_FILTERS.visionChange],
   ] as const) {
     const value = query.get(name);
     if (value === null || value === "") continue;
@@ -149,6 +151,7 @@ function filterHref(filter: CallFilter, change: Partial<CallFilter>): string {
   if (next.kind !== undefined) query.set(CALL_FILTERS.kind, next.kind);
   if (next.fromDay !== undefined) query.set(CALL_FILTERS.from, next.fromDay);
   if (next.toDay !== undefined) query.set(CALL_FILTERS.to, next.toDay);
+  if (next.visionChangeId !== undefined) query.set(CALL_FILTERS.visionChange, String(next.visionChangeId));
   const text = query.toString();
   return text === "" ? CALLS_PATH : `${CALLS_PATH}?${text}`;
 }
@@ -222,11 +225,27 @@ function renderFilters(store: Store, filter: CallFilter): string {
     ticketLinks.push(`<span class="muted">pick a ticket from a call below</span>`);
   }
 
+  // A vision change lists every ticket it flagged and each re-check's outcome (ADR-0016).
+  const repoOf = new Map(repos.map((repo) => [repo.id, repo]));
+  const changes = store.listVisionChanges().filter((change) => filter.repoId === undefined || change.repoId === filter.repoId);
+  const visionLinks = [
+    option("any", { visionChangeId: undefined }, filter.visionChangeId === undefined),
+    ...changes.map((change) => {
+      const repo = repoOf.get(change.repoId);
+      const label = `${change.commitSha.slice(0, 7)}${repo === undefined ? "" : ` in ${repoLabel(repo)}`} (${change.seenAt.slice(0, 10)})`;
+      return option(label, { visionChangeId: change.id }, filter.visionChangeId === change.id);
+    }),
+  ];
+  if (filter.visionChangeId !== undefined && !changes.some((change) => change.id === filter.visionChangeId)) {
+    visionLinks.push(`<span aria-current="true">vision change ${filter.visionChangeId}</span>`);
+  }
+
   return `<nav class="filters" aria-label="Filter calls">
 ${row("Repo", repoLinks)}
 ${row("Ticket", ticketLinks)}
 ${row("Kind", kindLinks)}
 ${row("Date", dayLinks)}
+${row("Vision change", visionLinks)}
 </nav>`;
 }
 
