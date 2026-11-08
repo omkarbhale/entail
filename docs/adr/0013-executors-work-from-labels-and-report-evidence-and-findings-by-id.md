@@ -10,7 +10,7 @@ entail and an executor share no API. They meet on the issue and the PR, in the s
 
    entail removes the label when the ticket leaves that state: to the board, back to deciding, declined, cancelled or merged. An executor can trust the label alone. entail does not react to anyone else adding or removing its labels, because its records are the authority (ADR-0005).
 2. **What entail requires.** The intake comment (ADR-0007) lists criteria C1…Cn, or, for an investigation, the questions Q1…Qn that the investigation must establish. Its second section ends with one fixed line telling any executor how to report, so no executor needs an integration to learn the contract.
-3. **Who counts: anyone** (owner). Any PR linking a cleared issue, and any findings comment on an issue being investigated, is checked, whoever posted it. A PR that meets its criteria merges whoever opened it. The safeguards stay as they are:
+3. **Who counts: anyone, by default** (owner). Any PR linking a cleared issue, and any findings comment on an issue being investigated, is checked, whoever posted it. A PR that meets its criteria merges whoever opened it. The owner's reason: "I said Anyone because my projects are not popular rn... If it looks like anybody is using it, I'll change it perhaps." So this is a per-repo setting, **anyone** by default. Its alternative, **owner plus listed executors**, counts only the owner's own account and accounts listed for the repo. Under it, entail does not check another account's PR or findings and comments once that it lands work only from the repo's executors. Tightening a repo is then a settings change, not a redesign. The safeguards stay in both modes:
    - the landing check still verifies the ticket's criteria and the repo's generic criteria at the pinned head (point 8);
    - a diff that touches a pinned path still goes to the owner, and VISION.md is pinned in every repo (ADR-0004, ADR-0011).
 4. **Linking a PR.** The PR closes the issue with the forge's own closing keyword (`Fixes #n` or `Closes #n`). entail reads the link from the forge's linked-issue data: closing issue references on GitHub, and the issues a merge request closes on GitLab. It does not parse the text. A PR that only mentions the issue is not the ticket's PR. A PR linking an issue with no criteria in force (deciding, on the board or investigating) is not checked; entail comments once that the issue has no criteria yet.
@@ -21,7 +21,8 @@ entail and an executor share no API. They meet on the issue and the PR, in the s
 
 ## Considered options
 
-- **Only the owner's account and executors listed per repo**, or **only accounts with write access**: rejected by the owner, who chose anyone. A public `entail:cleared` label is an open offer, the criteria and generic criteria are checked either way, and pins still bring a touched path to the owner.
+- **Only the owner's account and executors listed per repo** as the fixed rule: not the default, because the owner chose anyone. A public `entail:cleared` label is an open offer, the criteria and generic criteria are checked either way, and pins still bring a touched path to the owner. It stays available as the per-repo alternative, so a repo that gains users can tighten without a redesign.
+- **Only accounts with write access**: rejected. It is neither the open offer the owner chose nor a list the owner controls.
 - **A firstmate-specific hand-off** (an inbox note or a task API): rejected by the owner. It would make entail depend on firstmate, which VISION.md resists.
 - **Evidence only in the PR description**: rejected, because a pipeline that owns the description would overwrite it.
 - **Parsing issue references from PR text**: rejected in favour of the forge's own link data, which both forges expose and which is what closes the issue on merge.
@@ -31,5 +32,6 @@ entail and an executor share no API. They meet on the issue and the PR, in the s
 
 - The intake comment gains the fixed reporting line, and the investigate comment numbers its questions Q1…Qn.
 - The same contract applies to any executor, including a person.
+- The "who counts" setting and its executor list are set where the other per-repo settings are, decided on [How is a repo enrolled, and what per-repo settings exist?](https://github.com/omkarbhale/entail/issues/25).
 - Several PRs for one ticket, generic criteria ids, and routing a failing PR belong to [How does entail verify a landed PR's evidence, and how is a failing PR routed?](https://github.com/omkarbhale/entail/issues/22).
 - Decided on [What is the contract between entail and any executor?](https://github.com/omkarbhale/entail/issues/30).

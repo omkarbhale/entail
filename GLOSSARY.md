@@ -19,7 +19,7 @@ A GitHub pull request or a GitLab merge request. entail may say "merge request" 
 _Avoid_: MR, merge request, pull request, change
 
 **Executor**:
-Whatever picks up a cleared issue and does its work, or picks up an issue marked for investigation and reports its findings, such as firstmate, a Claude Code action or a person. Anyone can be one: entail checks any PR that links a cleared issue, whoever opened it. entail never executes.
+Whatever picks up a cleared issue and does its work, or picks up an issue marked for investigation and reports its findings, such as firstmate, a Claude Code action or a person. By default anyone can be one, and entail checks any PR that links a cleared issue, whoever opened it; a repo can instead count only the owner and the executors listed for it. entail never executes.
 
 ### Judging a ticket
 
