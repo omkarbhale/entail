@@ -17,6 +17,7 @@ import { outsideCloses } from "./outside-close.ts";
 import { Passes, repoForge, type PassesOptions } from "./pass.ts";
 import { landingPlanner } from "./landing.ts";
 import { landingGrader } from "./landing-grade.ts";
+import { landingMerger } from "./merge.ts";
 import { pullRequestFollowing } from "./pull-requests.ts";
 import { boardPages } from "./board-page.ts";
 import { callsPages } from "./calls-page.ts";
@@ -183,6 +184,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
 
   const pullRequests = pullRequestFollowing({ store, log });
   const closes = outsideCloses({ store, log });
+  const merger = landingMerger({ store, log, dataDirectory: options.dataDirectory });
   const running = new Passes({
     store,
     log,
@@ -195,8 +197,15 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
       deciderPlanner({ store, log, dataDirectory: options.dataDirectory }),
       criteriaPlanner({ store, log, dataDirectory: options.dataDirectory }),
       boardPlanner({ store, log, dataDirectory: options.dataDirectory, notifier, boardOrigin: server.info.origin }),
+      // Before following PRs, so a merge entail began is recorded as its own, not as one by someone else.
+      merger.planner,
       pullRequests.planner,
-      landingPlanner({ store, log, dataDirectory: options.dataDirectory, afterMechanical: landingGrader({ store, log, dataDirectory: options.dataDirectory }) }),
+      landingPlanner({
+        store,
+        log,
+        dataDirectory: options.dataDirectory,
+        afterMechanical: merger.reusingHeld(landingGrader({ store, log, dataDirectory: options.dataDirectory, afterGrade: merger.afterGrade })),
+      }),
       findingsPlanner({ store, log }),
       // Last, so reading an issue live never delays a step the ticket owes.
       closes.planner,
