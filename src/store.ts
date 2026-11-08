@@ -1,6 +1,6 @@
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
 import { join } from "node:path";
-import { SCHEMA_SQL, SCHEMA_VERSION, type ANSWER_SHAPES, type FORGE_WRITE_KINDS, type VISION_ORIGINS } from "./store-schema.ts";
+import { MIGRATIONS, SCHEMA_SQL, SCHEMA_VERSION, type ANSWER_SHAPES, type FORGE_WRITE_KINDS, type VISION_ORIGINS } from "./store-schema.ts";
 import { assertTransition, type TicketState } from "./ticket-states.ts";
 
 /** The store's file in the data directory. */
@@ -53,6 +53,16 @@ export interface RepoRecord extends NewRepo {
 export interface SettingsVersionRecord {
   id: number;
   repoId: number;
+  version: number;
+  savedAt: string;
+  /** The owner's name as recorded with the save. */
+  savedBy: string;
+  settings: unknown;
+}
+
+/** One saved version of entail's global settings (spec §15). */
+export interface GlobalSettingsVersionRecord {
+  id: number;
   version: number;
   savedAt: string;
   /** The owner's name as recorded with the save. */
@@ -405,6 +415,37 @@ export class Store {
     );
   }
 
+  /**
+   * Saves a new version of the global settings. A save is not a call
+   * (ADR-0018), and older versions stay readable.
+   */
+  saveGlobalSettings(settings: object, savedBy: string): GlobalSettingsVersionRecord {
+    return this.transaction(() => {
+      const version = (this.latestGlobalSettings()?.version ?? 0) + 1;
+      this.#insert(
+        "INSERT INTO global_settings_versions (version, saved_at, saved_by, settings) VALUES (?, ?, ?, ?)",
+        version,
+        this.#time(),
+        savedBy,
+        JSON.stringify(settings),
+      );
+      return this.globalSettingsVersion(version)!;
+    });
+  }
+
+  latestGlobalSettings(): GlobalSettingsVersionRecord | null {
+    return mapOrNull(this.#get("SELECT * FROM global_settings_versions ORDER BY version DESC LIMIT 1"), toGlobalSettings);
+  }
+
+  globalSettingsVersion(version: number): GlobalSettingsVersionRecord | null {
+    return mapOrNull(this.#get("SELECT * FROM global_settings_versions WHERE version = ?", version), toGlobalSettings);
+  }
+
+  /** Every saved version of the global settings, newest first. */
+  globalSettingsHistory(): GlobalSettingsVersionRecord[] {
+    return this.#all("SELECT * FROM global_settings_versions ORDER BY version DESC").map(toGlobalSettings);
+  }
+
   // Tickets
 
   /** Takes an issue into intake as a new ticket, which starts deciding. */
@@ -705,12 +746,30 @@ function migrate(db: DatabaseSync, path: string): void {
   if (version > SCHEMA_VERSION) {
     throw new StoreOpenError(path, `it was written by a newer entail (schema ${version}, this entail reads ${SCHEMA_VERSION})`);
   }
-  const tables = num(db.prepare("SELECT count(*) AS n FROM sqlite_schema").get()?.n ?? 0);
-  if (tables > 0) throw new StoreOpenError(path, "it is not an entail store");
+  if (version === 0) {
+    const tables = num(db.prepare("SELECT count(*) AS n FROM sqlite_schema").get()?.n ?? 0);
+    if (tables > 0) throw new StoreOpenError(path, "it is not an entail store");
+    inTransaction(db, () => {
+      db.exec(SCHEMA_SQL);
+      db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    });
+    return;
+  }
+  // An older store is brought up to date one version at a time.
+  for (let from = version; from < SCHEMA_VERSION; from++) {
+    const step = MIGRATIONS[from];
+    if (step === undefined) throw new StoreOpenError(path, `no migration from schema ${from}`);
+    inTransaction(db, () => {
+      db.exec(step);
+      db.exec(`PRAGMA user_version = ${from + 1}`);
+    });
+  }
+}
+
+function inTransaction(db: DatabaseSync, fn: () => void): void {
   db.exec("BEGIN IMMEDIATE");
   try {
-    db.exec(SCHEMA_SQL);
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    fn();
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -763,6 +822,16 @@ function toSettings(row: Row): SettingsVersionRecord {
   return {
     id: num(row.id),
     repoId: num(row.repo_id),
+    version: num(row.version),
+    savedAt: str(row.saved_at),
+    savedBy: str(row.saved_by),
+    settings: parse(row.settings),
+  };
+}
+
+function toGlobalSettings(row: Row): GlobalSettingsVersionRecord {
+  return {
+    id: num(row.id),
     version: num(row.version),
     savedAt: str(row.saved_at),
     savedBy: str(row.saved_by),

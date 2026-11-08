@@ -2,6 +2,7 @@
 import { ensureDataDirectory, UnsupportedPlatformError } from "./data-directory.ts";
 import { LockHeldError } from "./lock.ts";
 import { startRun, type RunningEntail } from "./run.ts";
+import { BoardPortTakenError } from "./server.ts";
 import { StoreOpenError } from "./store.ts";
 
 const USAGE = `Usage: entail <command>
@@ -24,23 +25,34 @@ async function main(argv: string[]): Promise<number> {
 }
 
 async function runCommand(): Promise<number> {
-  // Handle the signals before announcing the start, so a stop requested as
-  // soon as entail says it started still releases the lock.
+  // Handle the signals before starting, so a stop requested while entail is
+  // still starting is kept and acted on once it has started, and still
+  // releases the lock.
   let running: RunningEntail | undefined;
-  const onSignal = (signal: NodeJS.Signals) => running?.stop(signal);
+  let requested: NodeJS.Signals | undefined;
+  const onSignal = (signal: NodeJS.Signals) => {
+    if (running) running.stop(signal);
+    else requested = signal;
+  };
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
   try {
-    running = startRun({ dataDirectory: ensureDataDirectory() });
+    running = await startRun({ dataDirectory: ensureDataDirectory() });
   } catch (error) {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
-    if (error instanceof LockHeldError || error instanceof UnsupportedPlatformError || error instanceof StoreOpenError) {
+    if (
+      error instanceof LockHeldError ||
+      error instanceof UnsupportedPlatformError ||
+      error instanceof StoreOpenError ||
+      error instanceof BoardPortTakenError
+    ) {
       process.stderr.write(`entail: ${error.message}\n`);
       return 1;
     }
     throw error;
   }
+  if (requested) running.stop(requested);
   await running.stopped;
   return 0;
 }

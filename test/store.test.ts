@@ -64,6 +64,7 @@ function fullStore(t: TestContext): Store {
   const store = openStore(t);
   const repo = enroll(store);
   const settings = store.saveSettings(repo.id, { shadow: false, pins: [] }, "Owner");
+  store.saveGlobalSettings({ ownerDisplayName: "Owner" }, "Owner");
   const ticket = store.takeIn({ repoId: repo.id, issueNumber: 1 });
   const toBoard = store.recordCall({
     ticketId: ticket.id,
@@ -129,6 +130,59 @@ test("a store written by a newer entail is refused", (t) => {
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
   db.close();
   assert.throws(() => Store.openIn(dir), /written by a newer entail/);
+});
+
+test("a store from schema 1 is migrated to the current schema and keeps its records", (t) => {
+  const dir = tempDirectory(t);
+  const first = Store.openIn(dir);
+  const repo = enroll(first);
+  first.close();
+  // Take the store back to schema 1, which had no global settings.
+  const db = new DatabaseSync(join(dir, STORE_FILE));
+  for (const { type, name } of db
+    .prepare("SELECT type, name FROM sqlite_schema WHERE tbl_name = 'global_settings_versions' AND type = 'trigger'")
+    .all() as { type: string; name: string }[]) {
+    db.exec(`DROP ${type} ${name}`);
+  }
+  db.exec("DROP TABLE global_settings_versions");
+  db.exec("PRAGMA user_version = 1");
+  db.close();
+
+  const store = openStore(t, dir);
+  assert.deepEqual(store.getRepo(repo.id), repo);
+  assert.equal(store.latestGlobalSettings(), null);
+  assert.equal(store.saveGlobalSettings({ model: "m" }, "Owner").version, 1);
+  const raw = rawConnection(t, store);
+  assert.equal(raw.prepare("PRAGMA user_version").get()?.user_version, SCHEMA_VERSION);
+  assert.throws(() => raw.exec("DELETE FROM global_settings_versions"), /append-only/);
+});
+
+test("global settings are saved as numbered versions with time and name, and older versions stay readable", (t) => {
+  const store = openStore(t);
+  assert.equal(store.latestGlobalSettings(), null);
+  assert.deepEqual(store.globalSettingsHistory(), []);
+
+  const first = store.saveGlobalSettings({ ownerDisplayName: "Ada", model: "claude-opus-5-5" }, "Ada");
+  const second = store.saveGlobalSettings({ ownerDisplayName: "Ada L.", model: "claude-opus-5-5" }, "Ada L.");
+  assert.equal(first.version, 1);
+  assert.equal(second.version, 2);
+  assert.equal(first.savedBy, "Ada");
+  assert.ok(first.savedAt < second.savedAt, "each save has its own time");
+  assert.deepEqual(store.latestGlobalSettings(), second);
+  assert.deepEqual(store.globalSettingsVersion(1), first);
+  assert.deepEqual(store.globalSettingsHistory(), [second, first]);
+  assert.equal(store.globalSettingsVersion(3), null);
+
+  const db = rawConnection(t, store);
+  assert.throws(
+    () => db.exec(`INSERT INTO global_settings_versions (version, saved_at, saved_by, settings) VALUES (5, 'x', 'Ada', '{}')`),
+    /must follow the latest version/,
+  );
+  assert.throws(
+    () => db.exec(`INSERT INTO global_settings_versions (version, saved_at, saved_by, settings) VALUES (3, 'x', '', '{}')`),
+    /CHECK constraint/,
+    "a save carries the owner's name",
+  );
 });
 
 test("every append-only table refuses UPDATE, DELETE and INSERT OR REPLACE from any connection", (t) => {

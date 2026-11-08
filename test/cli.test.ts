@@ -4,12 +4,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
+import { createServer } from "node:net";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { resolveDataDirectory } from "../src/data-directory.ts";
+import { DEFAULT_GLOBAL_SETTINGS } from "../src/global-settings.ts";
 import { LOCK_FILE } from "../src/lock.ts";
 import { OPERATIONAL_LOG_FILE } from "../src/operational-log.ts";
 import { STORE_FILE, Store } from "../src/store.ts";
+import { freePort, send } from "./http-client.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
@@ -29,8 +32,43 @@ function machine(t: TestContext): Machine {
 
 type Entry = Record<string, unknown>;
 
-/** Starts `entail run` and resolves once it has logged that it started. */
-async function startEntail(t: TestContext, m: Machine): Promise<{ child: ChildProcessWithoutNullStreams; entries: Entry[] }> {
+/** Saves global settings with this board port, so tests do not need port 7419. */
+function useBoardPort(m: Machine, port: number): void {
+  mkdirSync(m.dataDirectory, { recursive: true });
+  const store = Store.openIn(m.dataDirectory);
+  if (store.latestGlobalSettings()?.settings) {
+    store.close();
+    return;
+  }
+  store.saveGlobalSettings({ ...DEFAULT_GLOBAL_SETTINGS, ownerDisplayName: "Test", boardPort: port }, "Test");
+  store.close();
+}
+
+/** Whether a port on 127.0.0.1 can be listened on right now. */
+async function portIsFree(port: number): Promise<boolean> {
+  const server = createServer();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, "127.0.0.1", resolve);
+    });
+  } catch {
+    return false;
+  }
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return true;
+}
+
+/**
+ * Starts `entail run` and resolves once it has logged that it started. Unless
+ * told to keep the default board port, it first saves a free one.
+ */
+async function startEntail(
+  t: TestContext,
+  m: Machine,
+  { defaultPort = false } = {},
+): Promise<{ child: ChildProcessWithoutNullStreams; entries: Entry[] }> {
+  if (!defaultPort) useBoardPort(m, await freePort());
   const child = spawn(process.execPath, [CLI, "run"], { env: m.env });
   t.after(() => {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
@@ -67,10 +105,13 @@ function logEntries(m: Machine): Entry[] {
     .map((line) => JSON.parse(line) as Entry);
 }
 
-test("entail run creates the data directory, holds the lock and stops on SIGTERM", async (t) => {
+test("entail run creates the data directory, serves on port 7419, holds the lock and stops on SIGTERM", async (t) => {
+  if (!(await portIsFree(7419))) return t.skip("port 7419 is in use on this machine");
   const m = machine(t);
   assert.ok(!existsSync(m.dataDirectory));
-  const { child } = await startEntail(t, m);
+  const { child, entries } = await startEntail(t, m, { defaultPort: true });
+  assert.equal(entries.find((entry) => entry.event === "started")?.board, "http://127.0.0.1:7419/");
+  assert.equal((await send(7419, { path: "/settings" })).status, 200);
 
   const lock = JSON.parse(readFileSync(join(m.dataDirectory, LOCK_FILE), "utf8")) as { pid: number };
   assert.equal(lock.pid, child.pid);
@@ -110,6 +151,20 @@ test("entail run exits non-zero and releases the lock when the store cannot be o
   assert.match(result.stderr, /entail: cannot open the store at /);
   assert.ok(!existsSync(join(m.dataDirectory, LOCK_FILE)), "the lock is released");
   assert.ok(logEntries(m).some((entry) => entry.event === "store-open-failed"));
+});
+
+test("entail run exits non-zero with a clear message when the board port is taken", async (t) => {
+  const m = machine(t);
+  const other = createServer();
+  await new Promise<void>((resolve) => other.listen(0, "127.0.0.1", resolve));
+  t.after(() => other.close());
+  const { port } = other.address() as { port: number };
+  useBoardPort(m, port);
+
+  const result = spawnSync(process.execPath, [CLI, "run"], { env: m.env, encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, new RegExp(`entail: the board port ${port} on 127\\.0\\.0\\.1 is already in use`));
+  assert.ok(!existsSync(join(m.dataDirectory, LOCK_FILE)), "the lock is released");
 });
 
 test("entail run stops on SIGINT", async (t) => {

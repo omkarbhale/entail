@@ -1,7 +1,7 @@
 import { FINAL_STATES, INITIAL_STATE, TICKET_STATES, TICKET_TRANSITIONS } from "./ticket-states.ts";
 
 /** Bumped whenever the schema below changes; a store from a newer entail is refused. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * Every table of the store except `ticket_states`. The store itself refuses
@@ -10,6 +10,7 @@ export const SCHEMA_VERSION = 1;
 export const APPEND_ONLY_TABLES = [
   "repos",
   "settings_versions",
+  "global_settings_versions",
   "tickets",
   "calls",
   "model_runs",
@@ -50,6 +51,7 @@ const TRANSITIONS = Object.entries(TICKET_TRANSITIONS)
 const KEYS: Readonly<Record<(typeof APPEND_ONLY_TABLES)[number] | "ticket_states", readonly (readonly string[])[]>> = {
   repos: [["id"], ["forge", "host", "project_id"]],
   settings_versions: [["id"], ["repo_id", "version"]],
+  global_settings_versions: [["id"], ["version"]],
   tickets: [["id"]],
   ticket_states: [["ticket_id"]],
   calls: [["id"]],
@@ -76,6 +78,24 @@ CREATE TRIGGER ${table}_no_update BEFORE UPDATE ON ${table}
 BEGIN SELECT RAISE(ABORT, 'the store is append-only: ${table} rows cannot be updated'); END;
 CREATE TRIGGER ${table}_no_delete BEFORE DELETE ON ${table}
 BEGIN SELECT RAISE(ABORT, 'the store is append-only: ${table} rows cannot be deleted'); END;
+`;
+
+// Every save of the global settings is a new version (spec §15, ADR-0018).
+const GLOBAL_SETTINGS_TABLE = `
+CREATE TABLE global_settings_versions (
+  id INTEGER PRIMARY KEY,
+  version INTEGER NOT NULL UNIQUE CHECK (version > 0),
+  saved_at TEXT NOT NULL,
+  saved_by TEXT NOT NULL CHECK (saved_by <> ''),
+  settings TEXT NOT NULL CHECK (json_valid(settings) AND json_type(settings) = 'object')
+) STRICT;
+`;
+
+const GLOBAL_SETTINGS_IN_ORDER = `
+-- Global settings versions count up from 1.
+CREATE TRIGGER global_settings_versions_in_order BEFORE INSERT ON global_settings_versions
+WHEN NEW.version <> coalesce((SELECT max(version) FROM global_settings_versions), 0) + 1
+BEGIN SELECT RAISE(ABORT, 'a global settings version must follow the latest version'); END;
 `;
 
 /**
@@ -120,6 +140,7 @@ CREATE TABLE settings_versions (
   UNIQUE (repo_id, version)
 ) STRICT;
 
+${GLOBAL_SETTINGS_TABLE}
 CREATE TABLE tickets (
   id INTEGER PRIMARY KEY,
   repo_id INTEGER NOT NULL REFERENCES repos(id),
@@ -266,6 +287,7 @@ CREATE TRIGGER settings_versions_in_order BEFORE INSERT ON settings_versions
 WHEN NEW.version <> coalesce((SELECT max(version) FROM settings_versions WHERE repo_id = NEW.repo_id), 0) + 1
 BEGIN SELECT RAISE(ABORT, 'a settings version must follow the repo''s latest version'); END;
 
+${GLOBAL_SETTINGS_IN_ORDER}
 -- An issue has at most one ticket in flight; a ticket pulled in again links
 -- to the issue's latest ticket, and a first ticket links to none (ADR-0020).
 CREATE TRIGGER tickets_link_predecessor BEFORE INSERT ON tickets
@@ -374,3 +396,17 @@ BEGIN SELECT RAISE(ABORT, 'a comment is confirmed with its id and URL'); END;
 
 -- Created last so they are checked first, for the clearer refusal.
 ${Object.entries(KEYS).map(noReplace).join("")}`;
+
+/**
+ * The SQL that brings a store from the schema version it is keyed on to the
+ * next one. Each step runs in the transaction that sets the new version.
+ */
+export const MIGRATIONS: Readonly<Record<number, string>> = {
+  // 1 -> 2: global settings versions.
+  1: [
+    GLOBAL_SETTINGS_TABLE,
+    appendOnly("global_settings_versions"),
+    GLOBAL_SETTINGS_IN_ORDER,
+    noReplace(["global_settings_versions", KEYS.global_settings_versions]),
+  ].join(""),
+};
