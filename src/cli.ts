@@ -1,14 +1,20 @@
 #!/usr/bin/env node
+import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { ensureDataDirectory, UnsupportedPlatformError } from "./data-directory.ts";
 import { LockHeldError } from "./lock.ts";
 import { startRun, type RunningEntail } from "./run.ts";
 import { BoardPortTakenError } from "./server.ts";
+import { installService, machineServiceSystem, ServiceError, uninstallService, type ServiceInputs } from "./service.ts";
 import { StoreOpenError } from "./store.ts";
 
 const USAGE = `Usage: entail <command>
 
 Commands:
-  run    Run entail in the foreground until SIGINT or SIGTERM
+  run                Run entail in the foreground until SIGINT or SIGTERM
+  service install    Run entail as a per-user service that starts at login
+                     and restarts after a crash
+  service uninstall  Stop the service and remove it
 `;
 
 async function main(argv: string[]): Promise<number> {
@@ -19,6 +25,9 @@ async function main(argv: string[]): Promise<number> {
   }
   if (command === "run" && rest.length === 0) {
     return runCommand();
+  }
+  if (command === "service" && rest.length === 1 && (rest[0] === "install" || rest[0] === "uninstall")) {
+    return serviceCommand(rest[0]);
   }
   process.stderr.write(`entail: unknown command: ${argv.join(" ")}\n\n${USAGE}`);
   return 2;
@@ -55,6 +64,40 @@ async function runCommand(): Promise<number> {
   if (requested) running.stop(requested);
   await running.stopped;
   return 0;
+}
+
+async function serviceCommand(action: "install" | "uninstall"): Promise<number> {
+  const inputs: ServiceInputs = {
+    platform: process.platform,
+    env: process.env,
+    home: homedir(),
+    uid: process.getuid?.() ?? 0,
+    node: process.execPath,
+    cli: fileURLToPath(import.meta.url),
+  };
+  const system = machineServiceSystem(inputs);
+  try {
+    if (action === "install") {
+      const { definition, replaced } = await installService(inputs, system);
+      const kind = definition.manager === "systemd" ? "systemd user unit" : "launchd agent";
+      process.stdout.write(
+        `${replaced ? "Replaced" : "Installed"} the entail service, a ${kind} at ${definition.path}. ` +
+          "It is running now, starts at login and restarts after a crash.\n",
+      );
+    } else {
+      const { definition, removed } = uninstallService(inputs, system);
+      process.stdout.write(
+        removed ? `Stopped and removed the entail service at ${definition.path}.\n` : "The entail service is not installed.\n",
+      );
+    }
+    return 0;
+  } catch (error) {
+    if (error instanceof ServiceError || error instanceof UnsupportedPlatformError) {
+      process.stderr.write(`entail: ${error.message}\n`);
+      return 1;
+    }
+    throw error;
+  }
 }
 
 main(process.argv.slice(2)).then(
