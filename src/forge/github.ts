@@ -395,20 +395,39 @@ export class GitHubForge implements Forge {
     };
     const ref = branchSegment(branch);
 
-    const protection = await this.#getJson(`repos/${this.setting.path}/branches/${ref}`);
+    const protection = await this.#unlessPlanLacksIt(() => this.#getJson(`repos/${this.setting.path}/branches/${ref}`), null);
     const statusChecks = isObject(protection) && isObject(protection.protection) ? protection.protection.required_status_checks : undefined;
     if (isObject(statusChecks)) {
       for (const context of Array.isArray(statusChecks.contexts) ? statusChecks.contexts : []) add(context);
       for (const check of Array.isArray(statusChecks.checks) ? statusChecks.checks : []) add(isObject(check) ? check.context : undefined);
     }
 
-    const rules = await this.#readPages(`repos/${this.setting.path}/rules/branches/${ref}?per_page=${PAGE_SIZE}`, (body) => body);
+    const rules = await this.#unlessPlanLacksIt(
+      () => this.#readPages(`repos/${this.setting.path}/rules/branches/${ref}?per_page=${PAGE_SIZE}`, (body) => body),
+      [],
+    );
     for (const rule of rules) {
       if (!isObject(rule) || rule.type !== "required_status_checks" || !isObject(rule.parameters)) continue;
       const checks = rule.parameters.required_status_checks;
       for (const check of Array.isArray(checks) ? checks : []) add(isObject(check) ? check.context : undefined);
     }
     return required;
+  }
+
+  /**
+   * Reads branch protection or rulesets, or returns `none` when GitHub says
+   * the repo's plan has no such feature: a private repo on GitHub Free answers
+   * 403 "Upgrade to GitHub Pro or make this repository public to enable this
+   * feature." Such a repo can have no rules there, so they require no check;
+   * every check at the head still has to pass. Any other refusal still fails.
+   */
+  async #unlessPlanLacksIt<T>(read: () => Promise<T>, none: T): Promise<T> {
+    try {
+      return await read();
+    } catch (error) {
+      if (error instanceof ForgeRequestError && error.status === 403 && PLAN_LACKS_FEATURE.test(error.message)) return none;
+      throw error;
+    }
   }
 
   /** Every check run and commit status at the sha, the latest of each. */
@@ -955,6 +974,9 @@ function parseJson(response: ForgeResponse, host: string, path: string, method: 
 }
 
 /** GitHub's own message for an error response, or the start of its body. */
+/** GitHub's refusal of a feature the repo's plan does not have, such as rulesets on a private repo on GitHub Free. */
+const PLAN_LACKS_FEATURE = /Upgrade to GitHub Pro or make this repository public/i;
+
 function errorDetail(response: ForgeResponse): string {
   try {
     const body: unknown = JSON.parse(response.body);
