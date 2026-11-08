@@ -12,6 +12,7 @@ import { deciderPlanner } from "./decider.ts";
 import type { ModelRunner } from "./model-runner.ts";
 import { ModelRuns } from "./model-runs.ts";
 import { InFlightWrites, settleUnconfirmedWrites } from "./forge-writer.ts";
+import { outsideCloses } from "./outside-close.ts";
 import { Passes, repoForge, type PassesOptions } from "./pass.ts";
 import { landingPlanner } from "./landing.ts";
 import { pullRequestFollowing } from "./pull-requests.ts";
@@ -170,6 +171,7 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
   });
 
   const pullRequests = pullRequestFollowing({ store, log });
+  const closes = outsideCloses({ store, log });
   const running = new Passes({
     store,
     log,
@@ -184,8 +186,10 @@ export async function startRun(options: RunOptions): Promise<RunningEntail> {
       boardPlanner({ store, log, dataDirectory: options.dataDirectory, notifier, boardOrigin: server.info.origin }),
       pullRequests.planner,
       landingPlanner({ store, log, dataDirectory: options.dataDirectory }),
+      // Last, so reading an issue live never delays a step the ticket owes.
+      closes.planner,
     ],
-    changeHandlers: options.passes?.changeHandlers ?? [pullRequests.onChange],
+    changeHandlers: options.passes?.changeHandlers ?? [pullRequests.onChange, closes.onChange],
     inFlight,
     modelRuns,
   });

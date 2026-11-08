@@ -48,7 +48,7 @@ export type OneTimeComment = (typeof ONE_TIME_COMMENTS)[keyof typeof ONE_TIME_CO
 const INVESTIGATE_LABEL = "entail:investigate";
 
 /** The `entail:` label an issue carries while its ticket is in each state, if any (ADR-0013). */
-const LABEL_IN_STATE: Partial<Record<TicketState, string>> = {
+export const LABEL_IN_STATE: Partial<Record<TicketState, string>> = {
   cleared: CLEARED_LABEL,
   landing: CLEARED_LABEL,
   investigating: INVESTIGATE_LABEL,
@@ -176,6 +176,21 @@ function mergedForTicket(store: Store, ticket: TicketRecord, pr: PullRequest): b
     if (store.callsForTicket(id).some((call) => call.stateChange?.to === "merged" && recordsPullRequest(call, pr.number))) return false;
   }
   return true;
+}
+
+/**
+ * Whether one of the issue's PRs merged for this ticket, by anyone, entail
+ * included: the merge then ends the ticket as merged, so the issue closing
+ * with it is no outside close (spec §17).
+ */
+export function mergeEndsTicket(store: Store, ticket: TicketRecord, pullRequests: readonly PullRequest[]): boolean {
+  return pullRequests.some((pr) => {
+    if (pr.state !== "merged") return false;
+    const entailMerging = store
+      .forgeWritesOn(ticket.repoId, "pr", pr.number)
+      .some((write) => write.kind === "merge" && write.ticketId === ticket.id);
+    return entailMerging || mergedForTicket(store, ticket, pr);
+  });
 }
 
 function recordsPullRequest(call: CallRecord, number: number): boolean {
