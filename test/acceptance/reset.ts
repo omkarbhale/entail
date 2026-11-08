@@ -73,7 +73,7 @@ export interface ResetResult {
  * forge first and only removes or adds what differs, so running it again, or
  * after an interrupted run, ends in the same state.
  */
-export async function resetFixture(forge: Forge, log: Log = () => {}, options: SettleOptions = {}): Promise<ResetResult> {
+export async function resetFixture(forge: Forge, log: Log = () => {}, options: ResetOptions = {}): Promise<ResetResult> {
   const repo = await forge.repo();
   assertFixture(forge, repo);
   const where = `${forge.kind}:${repo.path}`;
@@ -112,17 +112,32 @@ export async function resetFixture(forge: Forge, log: Log = () => {}, options: S
 
   removed.comments = await forge.clearComments();
 
+  const issues = options.fileIssues === false ? [] : await fileFixtureIssues(forge, options);
+  if (options.fileIssues === false) await settled(forge, [], options);
+
+  const result = { forge: forge.kind, repo: where, startingSha: start.sha, pushed: start.pushed, issues, removed };
+  log({ event: "reset-finished", ...result });
+  return result;
+}
+
+export interface ResetOptions extends SettleOptions {
+  /**
+   * Whether to file T1–T13 again (the default). The acceptance run resets
+   * without them, enrolls the repo, then files them, because entail takes in
+   * only issues opened after it enrolled a repo.
+   */
+  fileIssues?: boolean;
+}
+
+/** Files T1–T13 in order under the logged-in account, and waits until the forge lists them. */
+export async function fileFixtureIssues(forge: Forge, options: SettleOptions = {}): Promise<ResetResult["issues"]> {
   const issues: ResetResult["issues"] = [];
   for (const fixture of FIXTURE_ISSUES) {
     const issue = await forge.createIssue(fixture.title, fixture.body);
     issues.push({ id: fixture.id, number: issue.number });
   }
-
   await settled(forge, issues.map((i) => i.number), options);
-
-  const result = { forge: forge.kind, repo: where, startingSha: start.sha, pushed: start.pushed, issues, removed };
-  log({ event: "reset-finished", ...result });
-  return result;
+  return issues;
 }
 
 export interface SettleOptions {

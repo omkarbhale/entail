@@ -6,7 +6,7 @@ import { test, type TestContext } from "node:test";
 import { FakeForge } from "./fake-forge.ts";
 import { FIXTURE_ISSUES } from "./fixture.ts";
 import { ForgeError } from "./forge.ts";
-import { buildStartingCommit, NotAFixtureError, resetFixture, setupFixture, startingStateDifferences } from "./reset.ts";
+import { buildStartingCommit, fileFixtureIssues, NotAFixtureError, resetFixture, setupFixture, startingStateDifferences } from "./reset.ts";
 import { git } from "./tree.ts";
 
 function fake(t: TestContext, options?: ConstructorParameters<typeof FakeForge>[0]): FakeForge {
@@ -112,5 +112,19 @@ test("setup creates a missing fixture repo privately, with the marker, then rese
   await setupFixture(forge);
   assert.deepEqual(forge.calls.slice(0, 1), ["createPrivateRepo"]);
   assert.equal(forge.repoInfo?.private, true);
+  assert.deepEqual(await startingStateDifferences(forge), []);
+});
+
+test("the acceptance run resets without the issues, then files T1–T13 once the repo is enrolled", async (t) => {
+  const forge = fake(t);
+  await dirty(forge);
+  const reset = await resetFixture(forge, () => {}, { fileIssues: false, delayMs: 1 });
+  assert.deepEqual(reset.issues, []);
+  assert.deepEqual(await forge.listIssues("all"), []);
+  const filed = await fileFixtureIssues(forge, { delayMs: 1 });
+  assert.deepEqual(
+    filed.map((i) => i.id),
+    FIXTURE_ISSUES.map((i) => i.id),
+  );
   assert.deepEqual(await startingStateDifferences(forge), []);
 });
