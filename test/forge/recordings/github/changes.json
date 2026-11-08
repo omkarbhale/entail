@@ -1,0 +1,481 @@
+{
+  "host": "github.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues?state=all&sort=updated&direction=desc&per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"i1\"",
+          "Link": "<https://api.github.com/repositories/5001/issues?state=all&sort=updated&direction=desc&per_page=100&page=2>; rel=\"next\", <https://api.github.com/repositories/5001/issues?state=all&sort=updated&direction=desc&per_page=100&page=2>; rel=\"last\""
+        },
+        "body": [
+          {
+            "url": "https://api.github.com/repos/acme/tally/issues/2",
+            "repository_url": "https://api.github.com/repos/acme/tally",
+            "comments_url": "https://api.github.com/repos/acme/tally/issues/2/comments",
+            "html_url": "https://github.com/acme/tally/issues/2",
+            "id": 9002,
+            "node_id": "I_9002",
+            "number": 2,
+            "title": "Word counts are sometimes one too high",
+            "user": {
+              "login": "reporter",
+              "id": 1002,
+              "node_id": "U_1002",
+              "url": "https://api.github.com/users/reporter",
+              "html_url": "https://github.com/reporter",
+              "type": "User",
+              "site_admin": false
+            },
+            "labels": [],
+            "state": "open",
+            "locked": false,
+            "assignee": null,
+            "assignees": [],
+            "milestone": null,
+            "comments": 0,
+            "created_at": "2026-11-01T11:00:00Z",
+            "updated_at": "2026-11-01T11:00:00Z",
+            "closed_at": null,
+            "author_association": "OWNER",
+            "type": null,
+            "active_lock_reason": null,
+            "body": "Sometimes the count is one more than it should be.",
+            "state_reason": null
+          },
+          {
+            "url": "https://api.github.com/repos/acme/tally/issues/4",
+            "repository_url": "https://api.github.com/repos/acme/tally",
+            "comments_url": "https://api.github.com/repos/acme/tally/issues/4/comments",
+            "html_url": "https://github.com/acme/tally/pull/4",
+            "id": 9004,
+            "node_id": "I_9004",
+            "number": 4,
+            "title": "Read standard input",
+            "user": {
+              "login": "reporter",
+              "id": 1002,
+              "node_id": "U_1002",
+              "url": "https://api.github.com/users/reporter",
+              "html_url": "https://github.com/reporter",
+              "type": "User",
+              "site_admin": false
+            },
+            "labels": [],
+            "state": "open",
+            "locked": false,
+            "assignee": null,
+            "assignees": [],
+            "milestone": null,
+            "comments": 0,
+            "created_at": "2026-11-01T10:30:00Z",
+            "updated_at": "2026-11-01T10:30:00Z",
+            "closed_at": null,
+            "author_association": "OWNER",
+            "type": null,
+            "active_lock_reason": null,
+            "body": "Closes #1",
+            "state_reason": null,
+            "draft": false,
+            "pull_request": {
+              "url": "https://api.github.com/repos/acme/tally/pulls/4",
+              "html_url": "https://github.com/acme/tally/pull/4",
+              "merged_at": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repositories/5001/issues?state=all&sort=updated&direction=desc&per_page=100&page=2"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "Link": "<https://api.github.com/repositories/5001/issues?state=all&sort=updated&direction=desc&per_page=100&page=1>; rel=\"prev\", <https://api.github.com/repositories/5001/issues?state=all&sort=updated&direction=desc&per_page=100&page=1>; rel=\"first\""
+        },
+        "body": [
+          {
+            "url": "https://api.github.com/repos/acme/tally/issues/1",
+            "repository_url": "https://api.github.com/repos/acme/tally",
+            "comments_url": "https://api.github.com/repos/acme/tally/issues/1/comments",
+            "html_url": "https://github.com/acme/tally/issues/1",
+            "id": 9001,
+            "node_id": "I_9001",
+            "number": 1,
+            "title": "Read from standard input when no file is given",
+            "user": {
+              "login": "owner",
+              "id": 1001,
+              "node_id": "U_1001",
+              "url": "https://api.github.com/users/owner",
+              "html_url": "https://github.com/owner",
+              "type": "User",
+              "site_admin": false
+            },
+            "labels": [],
+            "state": "open",
+            "locked": false,
+            "assignee": null,
+            "assignees": [],
+            "milestone": null,
+            "comments": 0,
+            "created_at": "2026-11-01T10:00:00Z",
+            "updated_at": "2026-11-01T10:00:00Z",
+            "closed_at": null,
+            "author_association": "OWNER",
+            "type": null,
+            "active_lock_reason": null,
+            "body": "tally should count standard input when it is given no file.",
+            "state_reason": null
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues/comments?sort=updated&direction=desc&per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"c1\""
+        },
+        "body": [
+          {
+            "url": "https://api.github.com/repos/acme/tally/issues/comments/7001",
+            "html_url": "https://github.com/acme/tally/issues/2#issuecomment-7001",
+            "issue_url": "https://api.github.com/repos/acme/tally/issues/2",
+            "id": 7001,
+            "node_id": "IC_7001",
+            "user": {
+              "login": "owner",
+              "id": 1001,
+              "node_id": "U_1001",
+              "url": "https://api.github.com/users/owner",
+              "html_url": "https://github.com/owner",
+              "type": "User",
+              "site_admin": false
+            },
+            "created_at": "2026-11-01T11:05:00Z",
+            "updated_at": "2026-11-01T11:05:00Z",
+            "body": "/entail",
+            "author_association": "OWNER",
+            "performed_via_github_app": null
+          },
+          {
+            "url": "https://api.github.com/repos/acme/tally/issues/comments/7002",
+            "html_url": "https://github.com/acme/tally/pull/4#issuecomment-7002",
+            "issue_url": "https://api.github.com/repos/acme/tally/issues/4",
+            "id": 7002,
+            "node_id": "IC_7002",
+            "user": {
+              "login": "owner",
+              "id": 1001,
+              "node_id": "U_1001",
+              "url": "https://api.github.com/users/owner",
+              "html_url": "https://github.com/owner",
+              "type": "User",
+              "site_admin": false
+            },
+            "created_at": "2026-11-01T10:45:00Z",
+            "updated_at": "2026-11-01T10:45:00Z",
+            "body": "Looks good.",
+            "author_association": "OWNER",
+            "performed_via_github_app": null
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues?state=all&sort=updated&direction=desc&per_page=100&since=2026-11-01T11%3A00%3A00Z"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"i2\""
+        },
+        "body": [
+          {
+            "url": "https://api.github.com/repos/acme/tally/issues/2",
+            "repository_url": "https://api.github.com/repos/acme/tally",
+            "comments_url": "https://api.github.com/repos/acme/tally/issues/2/comments",
+            "html_url": "https://github.com/acme/tally/issues/2",
+            "id": 9002,
+            "node_id": "I_9002",
+            "number": 2,
+            "title": "Word counts are sometimes one too high",
+            "user": {
+              "login": "reporter",
+              "id": 1002,
+              "node_id": "U_1002",
+              "url": "https://api.github.com/users/reporter",
+              "html_url": "https://github.com/reporter",
+              "type": "User",
+              "site_admin": false
+            },
+            "labels": [],
+            "state": "open",
+            "locked": false,
+            "assignee": null,
+            "assignees": [],
+            "milestone": null,
+            "comments": 0,
+            "created_at": "2026-11-01T11:00:00Z",
+            "updated_at": "2026-11-01T11:00:00Z",
+            "closed_at": null,
+            "author_association": "OWNER",
+            "type": null,
+            "active_lock_reason": null,
+            "body": "Sometimes the count is one more than it should be.",
+            "state_reason": null
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues/comments?sort=updated&direction=desc&per_page=100&since=2026-11-01T11%3A05%3A00Z"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"c2\""
+        },
+        "body": [
+          {
+            "url": "https://api.github.com/repos/acme/tally/issues/comments/7001",
+            "html_url": "https://github.com/acme/tally/issues/2#issuecomment-7001",
+            "issue_url": "https://api.github.com/repos/acme/tally/issues/2",
+            "id": 7001,
+            "node_id": "IC_7001",
+            "user": {
+              "login": "owner",
+              "id": 1001,
+              "node_id": "U_1001",
+              "url": "https://api.github.com/users/owner",
+              "html_url": "https://github.com/owner",
+              "type": "User",
+              "site_admin": false
+            },
+            "created_at": "2026-11-01T11:05:00Z",
+            "updated_at": "2026-11-01T11:05:00Z",
+            "body": "/entail",
+            "author_association": "OWNER",
+            "performed_via_github_app": null
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues?state=all&sort=updated&direction=desc&per_page=100&since=2026-11-01T11%3A00%3A00Z",
+        "headers": {
+          "If-None-Match": "W/\"i2\""
+        }
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"i2\""
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues/comments?sort=updated&direction=desc&per_page=100&since=2026-11-01T11%3A05%3A00Z",
+        "headers": {
+          "If-None-Match": "W/\"c2\""
+        }
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"c2\""
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues?state=all&sort=updated&direction=desc&per_page=100&since=2026-11-01T11%3A00%3A00Z",
+        "headers": {
+          "If-None-Match": "W/\"i2\""
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"i3\""
+        },
+        "body": [
+          {
+            "url": "https://api.github.com/repos/acme/tally/issues/3",
+            "repository_url": "https://api.github.com/repos/acme/tally",
+            "comments_url": "https://api.github.com/repos/acme/tally/issues/3/comments",
+            "html_url": "https://github.com/acme/tally/issues/3",
+            "id": 9003,
+            "node_id": "I_9003",
+            "number": 3,
+            "title": "Add a --json flag",
+            "user": {
+              "login": "owner-renamed",
+              "id": 1001,
+              "node_id": "U_1001",
+              "url": "https://api.github.com/users/owner-renamed",
+              "html_url": "https://github.com/owner-renamed",
+              "type": "User",
+              "site_admin": false
+            },
+            "labels": [],
+            "state": "open",
+            "locked": false,
+            "assignee": null,
+            "assignees": [],
+            "milestone": null,
+            "comments": 0,
+            "created_at": "2026-11-02T09:30:00Z",
+            "updated_at": "2026-11-02T09:30:00Z",
+            "closed_at": null,
+            "author_association": "OWNER",
+            "type": null,
+            "active_lock_reason": null,
+            "body": "Print the counts as JSON.",
+            "state_reason": null
+          },
+          {
+            "url": "https://api.github.com/repos/acme/tally/issues/2",
+            "repository_url": "https://api.github.com/repos/acme/tally",
+            "comments_url": "https://api.github.com/repos/acme/tally/issues/2/comments",
+            "html_url": "https://github.com/acme/tally/issues/2",
+            "id": 9002,
+            "node_id": "I_9002",
+            "number": 2,
+            "title": "Word counts are one too high after a leading space",
+            "user": {
+              "login": "reporter",
+              "id": 1002,
+              "node_id": "U_1002",
+              "url": "https://api.github.com/users/reporter",
+              "html_url": "https://github.com/reporter",
+              "type": "User",
+              "site_admin": false
+            },
+            "labels": [
+              {
+                "id": 3001,
+                "node_id": "LA_3001",
+                "url": "https://api.github.com/repos/acme/tally/labels/entail:deciding",
+                "name": "entail:deciding",
+                "color": "ededed",
+                "default": false,
+                "description": null
+              }
+            ],
+            "state": "open",
+            "locked": false,
+            "assignee": null,
+            "assignees": [],
+            "milestone": null,
+            "comments": 0,
+            "created_at": "2026-11-01T11:00:00Z",
+            "updated_at": "2026-11-02T09:00:00Z",
+            "closed_at": null,
+            "author_association": "OWNER",
+            "type": null,
+            "active_lock_reason": null,
+            "body": "Sometimes the count is one more than it should be.",
+            "state_reason": null
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues/comments?sort=updated&direction=desc&per_page=100&since=2026-11-01T11%3A05%3A00Z",
+        "headers": {
+          "If-None-Match": "W/\"c2\""
+        }
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"c2\""
+        }
+      }
+    }
+  ]
+}
