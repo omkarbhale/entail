@@ -32,7 +32,7 @@ One line of the vision of record, normally one sentence, identified by its exact
 _Avoid_: Clause, rule
 
 **Origin**:
-How a vision line came to be in the vision: stated by the owner, proposed by an agent and approved by the owner, or added automatically with the owner notified. It is kept in entail's records, never in the vision's prose.
+How a vision line came to be in the vision: stated by the owner, proposed by an agent and approved by the owner, or added automatically with the owner notified. Whoever writes a line records its origin when they write it, and a line that arrives with no record is stated by the owner. It is kept in entail's records, never in the vision's prose.
 _Avoid_: Provenance, author
 
 **Vision change**:
