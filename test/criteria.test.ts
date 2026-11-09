@@ -691,6 +691,73 @@ test("a challenge that misses no reading but finds a touched pin names it on the
   assert.deepEqual(snapshot.why.pins, [{ pin: "the output format", why: "JSON output changes the output format" }]);
 });
 
+test("a pin the ticket's outcome does not alter is not touched: a colour ticket clears beside the format pin (issue #156, T5)", async (t) => {
+  const h = await harness(t, { pins: [FORMAT_PIN] });
+  const ticket = await decided(h, unopposed({ vision_check: [{ line: "Output is plain text, one count per line.", mark: "matches" }] }), unopposedCriteria(), UPHELD);
+  assert.equal(ticket.state, "cleared");
+  assert.equal(h.setup.store.boardItemsForTicket(ticket.id).length, 0);
+});
+
+test("a challenge that only says the ticket could be read differently does not send it to the board (issue #156, T1 T2 T3)", async (t) => {
+  const generic: ChallengeOutput = {
+    outcome: "overturned",
+    objections: [],
+    reason: "The request could be read differently.",
+  };
+  const h = await harness(t);
+  const ticket = await decided(h, settled(), settledCriteria(), generic);
+  assert.equal(ticket.state, "cleared", "an overturned outcome with no objection to point at does not count");
+  const challenge = criteriaCall(h).challenge as RecordedChallenge;
+  assert.equal(challenge.overturned, false);
+});
+
+test("a challenge whose second reading has the same observable outcome as a listed one does not count", async (t) => {
+  const restated: ChallengeOutput = {
+    outcome: "overturned",
+    objections: [
+      {
+        kind: "missed_reading",
+        objection: "The ticket could mean the other thing.",
+        lines: [],
+        pin: null,
+        reading: { reading: "Hyphenated words are one word.", observed_outcome: "`tally` counts `a-b` as one word" },
+        criterion: null,
+      },
+      { kind: "contradicted_line", objection: "Moving code contradicts something.", lines: [], pin: null, reading: null, criterion: null },
+      { kind: "touched_pin", objection: "It might touch a pin.", lines: [], pin: null, reading: null, criterion: null },
+    ],
+    reason: "Unsure.",
+  };
+  const h = await harness(t);
+  const ticket = await decided(h, settled(), settledCriteria(), restated);
+  assert.equal(ticket.state, "cleared");
+  const challenge = criteriaCall(h).challenge as RecordedChallenge;
+  assert.equal(challenge.overturned, false);
+  assert.deepEqual(challenge.objections, []);
+  assert.equal(challenge.vague?.length, 3, "what was set aside stays on the record");
+});
+
+test("a challenge that names a second reading with a different observable outcome still sends the ticket to the board", async (t) => {
+  const concrete: ChallengeOutput = {
+    outcome: "overturned",
+    objections: [
+      {
+        kind: "missed_reading",
+        objection: "The issue could ask for hyphens to split words",
+        lines: [],
+        pin: null,
+        reading: { reading: "Hyphens split words.", observed_outcome: "`tally` counts `a-b` as two words." },
+        criterion: null,
+      },
+    ],
+    reason: "A reading with a different outcome is open.",
+  };
+  const h = await harness(t);
+  const ticket = await decided(h, settled({ readings: [R1] }), settledCriteria(), concrete);
+  assert.equal(ticket.state, "on-the-board");
+  assert.equal((criteriaCall(h).challenge as RecordedChallenge).overturned, true);
+});
+
 test("a machine failure of the challenge leaves the ticket deciding and is retried, never raised", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const h = await harness(t);

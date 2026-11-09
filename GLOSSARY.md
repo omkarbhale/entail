@@ -99,7 +99,7 @@ The vision passage that a settled verdict, or any call that says the vision sett
 A topic the owner has said must always come to them, even where the vision settles it or no decision exists yet, optionally with paths and keywords that also mark it as touched. The vision itself is always pinned, in every repo.
 
 **Challenge**:
-An independent second judgment that tries to overturn an automatic verdict by finding a vision line the ticket contradicts, a touched pin, a consequential reading or an uncited assumption; if it succeeds, the ticket needs the owner.
+An independent second judgment that tries to overturn an automatic verdict by finding a vision line the ticket contradicts, a touched pin, a consequential reading or an uncited assumption; if it succeeds with a concrete objection (a second reading with a different observable outcome, a pin by its topic, or a quoted line), the ticket needs the owner.
 
 **Criteria**:
 What one ticket's PR must contain, written by entail because an issue carries no implementation idea: a few numbered outcomes, namely what is true once the issue is resolved and any vision constraint the change must respect. Each outcome is traced to its source (the issue, an entry of its findings, a vision line or the owner's answer) and may carry mechanical checks. They are published on the issue when the ticket is cleared and are frozen from then on; only a new version written by a new call changes them.

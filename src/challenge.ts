@@ -17,6 +17,13 @@ import { VISION_PATH } from "./vision.ts";
  * their mechanical checks (spec §7, ADR-0005), and for criteria also looks
  * for one that decides something its source does not.
  *
+ * An objection overturns only when it is concrete (issue #156): it names a
+ * second defensible reading whose observable outcome differs from every reading
+ * the decider listed, or a touched pin by its topic, or the vision line it
+ * quotes. A bare "this could be read differently", or an objection with nothing
+ * to point at, is set aside and kept on the record. "When unsure, ask" stays,
+ * but unsure must be specific.
+ *
  * After the owner's answer lets a ticket go ahead, the verdict is not run
  * again and the answer settles what it raised (ADR-0008). The challenge then
  * tests only the criteria written from the answer, and a pin the owner has
@@ -24,7 +31,7 @@ import { VISION_PATH } from "./vision.ts";
  */
 
 /** Bumped whenever the challenge prompt changes, and recorded with every challenge run (ADR-0009). */
-export const CHALLENGE_PROMPT_VERSION = "challenge-3";
+export const CHALLENGE_PROMPT_VERSION = "challenge-4";
 
 /** What a challenge may object to (spec §6). */
 export const OBJECTION_KINDS = ["contradicted_line", "touched_pin", "missed_reading", "uncited_assumption", "criterion_beyond_source"] as const;
@@ -61,7 +68,10 @@ export type ChallengeOutput = Infer<typeof challengeSchema>;
  * overturned the verdict, and what entail adds about the run.
  */
 export type RecordedChallenge = ChallengeOutput & {
+  /** Whether a concrete objection stands. `objections` then holds only the concrete ones. */
   overturned: boolean;
+  /** Objections that pointed at nothing concrete, set aside and kept for the audit log (issue #156). */
+  vague?: ChallengeOutput["objections"];
   model: string;
   session_id: string | null;
   duration_ms: number;
@@ -69,20 +79,74 @@ export type RecordedChallenge = ChallengeOutput & {
   usage: Record<string, unknown> | null;
 };
 
-/**
- * Whether a challenge overturned the verdict. An objection overturns it
- * whatever the outcome says: an extra question is cheap, a wrong clear is
- * not (VISION.md).
- */
-export function overturns(output: ChallengeOutput): boolean {
-  return output.outcome === "overturned" || output.objections.length > 0;
+/** One objection of a challenge. */
+export type Objection = ChallengeOutput["objections"][number];
+
+/** What a challenge's objections are tested against: the readings the decider listed and the ids of the criteria under challenge. */
+export interface ChallengeContext {
+  /** The readings of the verdict under challenge; a missed reading must differ from every one of them. */
+  readings?: readonly { observed_outcome: string }[];
+  /** The ids of the criteria under challenge; a criterion objection must name one of them. */
+  criteria?: readonly { id: string }[];
 }
 
-/** The challenge with what entail adds about its run. */
-export function recordedChallenge(run: ScheduledRun<ChallengeOutput>): RecordedChallenge {
+/** An outcome as compared: case, whitespace and closing punctuation do not make a different outcome. */
+function sameOutcome(outcome: string): string {
+  return outcome.toLowerCase().replace(/\s+/gu, " ").trim().replace(/[.!?]+$/u, "");
+}
+
+/**
+ * Whether an objection is concrete enough to send a ticket to the owner
+ * (issue #156): it has something to point at, not only a doubt.
+ *
+ * - `contradicted_line` and `uncited_assumption` quote the vision line they
+ *   rest on;
+ * - `touched_pin` names the pin by its topic;
+ * - `missed_reading` gives a reading and the outcome a user would observe, and
+ *   that outcome differs from every reading the decider already listed;
+ * - `criterion_beyond_source` names a criterion that is under challenge.
+ */
+export function isConcrete(objection: Objection, context: ChallengeContext = {}): boolean {
+  if (objection.objection.trim() === "") return false;
+  const quoted = objection.lines.some((line) => line.trim() !== "");
+  switch (objection.kind) {
+    case "contradicted_line":
+    case "uncited_assumption":
+      return quoted;
+    case "touched_pin":
+      return objection.pin !== null && objection.pin.trim() !== "";
+    case "missed_reading": {
+      const reading = objection.reading;
+      if (reading === null || reading.reading.trim() === "" || reading.observed_outcome.trim() === "") return false;
+      const outcome = sameOutcome(reading.observed_outcome);
+      return !(context.readings ?? []).some((known) => sameOutcome(known.observed_outcome) === outcome);
+    }
+    case "criterion_beyond_source": {
+      const id = objection.criterion?.trim() ?? "";
+      return id !== "" && (context.criteria === undefined || context.criteria.some((criterion) => criterion.id === id));
+    }
+  }
+}
+
+/**
+ * Whether a challenge overturned the verdict: a concrete objection stands. A
+ * vague one, or an "overturned" outcome with no objection to point at, does
+ * not (issue #156); an extra question is cheap, but only a specific one is
+ * worth asking (VISION.md).
+ */
+export function overturns(output: ChallengeOutput, context: ChallengeContext = {}): boolean {
+  return output.objections.some((objection) => isConcrete(objection, context));
+}
+
+/** The challenge with what entail adds about its run, and objections that point at nothing set aside. */
+export function recordedChallenge(run: ScheduledRun<ChallengeOutput>, context: ChallengeContext = {}): RecordedChallenge {
+  const standing = run.output.objections.filter((objection) => isConcrete(objection, context));
+  const vague = run.output.objections.filter((objection) => !isConcrete(objection, context));
   return {
     ...run.output,
-    overturned: overturns(run.output),
+    objections: standing,
+    ...(vague.length === 0 ? {} : { vague }),
+    overturned: standing.length > 0,
     model: run.facts.model,
     session_id: run.facts.sessionId,
     duration_ms: run.facts.durationMs,
@@ -182,7 +246,7 @@ export function challengePrompt(input: {
       : criteria === null
         ? ""
         : " Criteria a PR for the issue must meet were then written for it.";
-  const pinObjection = `- "touched_pin": a pin the ticket touches: its change would touch the pin's topic, or the issue names one of its paths or keywords. When unsure, it is touched. Give the pin's topic sentence word for word in "pin".${
+  const pinObjection = `- "touched_pin": a pin the ticket touches: carrying out the ticket's outcome would actually alter what the pin names, or the issue names one of its paths or keywords. Judge the outcome the ticket asks for, not whether it mentions the pin's topic or a word near it: a ticket about colour does not touch a pin on the output format unless the colour change alters that format, and a ticket the vision settles so that the pinned thing stays as it is does not touch the pin. Give the pin's topic sentence word for word in "pin", and say in "objection" what the change would alter in it.${
     seen.length === 0 ? "" : ` The owner has seen these pins for this ticket, so they are no objection: ${seen.map((pin) => `"${pin}"`).join(", ")}.`
   }`;
   const verdictObjections =
@@ -192,11 +256,11 @@ export function challengePrompt(input: {
 ${pinObjection}`
       : `- "contradicted_line": a vision line the ticket contradicts under the reading the verdict goes ahead with. Quote the line whole and word for word in "lines".
 ${pinObjection}
-- "missed_reading": a consequential reading the verdict missed: a defensible reading whose outcome for users differs from the verdict's reading, where a vision line or pin bears on that difference and nothing in the vision chooses between them. Give it in "reading" with the outcome a user would observe.
-- "uncited_assumption": a settled verdict's citation that chooses its reading only through an assumption the cited lines do not state. Quote the cited lines in "lines".`;
+- "missed_reading": a consequential reading the verdict missed: a second defensible reading whose observable outcome for users differs from the outcome of every reading the verdict lists, where a vision line or pin bears on that difference and nothing in the vision chooses between them. Give it in "reading", with the different outcome a user would observe in "observed_outcome", such as what a command prints or what a user sees. A change that alters nothing a user observes, such as moving code into its own module, has no such reading.
+- "uncited_assumption": a settled verdict's citation that chooses its reading only through an assumption the cited lines do not state. Name the assumption in "objection" and quote the cited lines in "lines".`;
   return `You are entail's challenger. Another model judged the issue below against the vision of record and the repo's pins, and proposed the verdict "${input.verdict.verdict}".${told} Your job is to overturn ${subject} if you can. You can only read: your working directory is a read-only checkout of the repo's default branch at commit ${input.visionSha}, and you may read any file in it.
 
-A wrong clear is costly and an extra question for the owner is cheap, so look hard. Object when you find any of these:
+A wrong clear is costly and an extra question for the owner is cheap, but a question must be specific. Object only when you can point at what is wrong, in one of these ways:
 
 ${verdictObjections}
 ${
@@ -205,7 +269,9 @@ ${
     : `- "criterion_beyond_source": a criterion that decides something its source does not: it fixes something users can observe (behavior, wording, appearance, a default) that the issue, the vision line, the findings entry or the owner's answer it is traced to does not choose, or that goes beyond the reading ${answers === null ? "the verdict goes ahead with" : "the owner chose"}. Give its id in "criterion".
 `
 }
-Readings that differ only in detail the vision does not speak to are not consequential, and are no objection. Do not object to wording, only to what is decided.
+Readings that differ only in detail the vision does not speak to are not consequential, and are no objection. Neither is "this could be read differently" without a second reading and the different outcome a user would observe: an objection with nothing concrete to point at does not count, and entail sets it aside. Do not object to wording, only to what is decided.
+
+When a whole vision line chooses the reading, or the ticket changes nothing a user observes, there is nothing to ask the owner: uphold it. When a real ambiguity or a touched pin remains, object, and be specific about it.
 
 If any objection stands, "outcome" is "overturned" and "objections" lists every one. Otherwise "outcome" is "upheld" and "objections" is empty. Give "reason", one or two sentences for the audit log.
 

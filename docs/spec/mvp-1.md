@@ -71,7 +71,7 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 ### Judging a ticket
 
 27. As the owner, I want a plainly oversized ticket declined, with a logged reason and an issue comment and no board item, and its issue left open, because splitting is not in MVP-1 and I may narrow the issue and pull it in again. [#19], [#12], [GLOSSARY.md](../../GLOSSARY.md), [ADR-0007]
-28. As the owner, I want any ticket that touches a pin to come to me, with generous matching (the model's judgment, a keyword or a path), so that pinned topics are never decided without me. [#19], [ADR-0011]
+28. As the owner, I want any ticket that touches a pin to come to me, matched by a keyword or a path, or by the model's judgment that the ticket's change would actually alter what the pin names, so that pinned topics are never decided without me. [#19], [ADR-0011]
 29. As the owner, I want a ticket whose every reading contradicts a vision line to come to me with that line cited, so that entail never refuses or cancels a ticket on its own reading of the vision. [ADR-0011], [#21]
 30. As the owner, I want a ticket the vision settles cleared with a citation of whole vision lines, quoted word for word at the vision's commit with a permalink, so that I can audit what it relied on. [ADR-0003], [#19]
 31. As the owner, I want a ticket the vision does not contradict, that touches no pin and has no consequential readings, cleared as unopposed, with "no contradiction found" recorded and the chosen reading stated in its criteria, so that minor work never waits for me. [ADR-0011]
@@ -282,7 +282,7 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 
 - **Order of judgment.** [ADR-0011], [#19]
   1. **Size.** Decline only when the ticket is plainly oversized (several independent deliverables, or not reviewable as one PR). When unsure, it fits. A declined ticket gets no verdict, and its issue is left open (section 9).
-  2. **Pins.** A touched pin needs the owner. A pin counts as touched if the model judges its topic touched, or a keyword or path matches. When unsure, it counts as touched.
+  2. **Pins.** A touched pin needs the owner. A pin counts as touched if a keyword or path matches, or the model judges that carrying out the ticket would actually alter what the pin names, judged on the outcome the ticket asks for and not on any mention of the topic. If the model cannot tell, it names what the change might alter; a vague worry is not a touch. [#156]
   3. **Contradiction.** If every reading contradicts a vision line, the ticket needs the owner, with the line cited. A reading that would contradict a line is not a defensible reading.
   4. **Readings.** If cited lines choose one reading, the verdict is **settled**. If the readings are consequential, the ticket needs the owner. Otherwise the verdict is **unopposed**, with the more conventional reading chosen.
 - **Investigating.** After the size check, the decider may choose investigation in place of a verdict when the cause or validity of the issue is unknown, naming numbered questions Q1…Qn (section 8). [ADR-0006]
@@ -304,7 +304,7 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
   - with several readings, a cited passage chooses one;
   - no line is marked "contradicts";
   - no pin is touched, by the model's judgment or by a keyword or path match.
-- **The challenge.** A fresh model session, given the ticket, vision, pins and proposed verdict, tries to overturn it by finding a contradicted vision line, a touched pin, a consequential reading the decider missed, or an uncited assumption behind a citation. It runs only on settled and unopposed verdicts, and once over the verdict and the criteria together. [ADR-0002], [ADR-0011], [ADR-0005]
+- **The challenge.** A fresh model session, given the ticket, vision, pins and proposed verdict, tries to overturn it by finding a contradicted vision line, a touched pin, a consequential reading the decider missed, or an uncited assumption behind a citation. An objection counts only when it is concrete: a second reading with an observable outcome that differs from every reading the decider listed, a pin by its topic, or the vision line it quotes. "This could be read differently" does not count, and is kept on the record as set aside. [#156] It runs only on settled and unopposed verdicts, and once over the verdict and the criteria together. [ADR-0002], [ADR-0011], [ADR-0005]
 - **Failures.** A failed mechanical check or a successful challenge makes the ticket need the owner, with the failure as `why_raised`. A citation that fails the word-for-word check is a product failure. Machine failures (no structured output, an error, a timeout, a refusal, a usage limit) leave the ticket deciding, retried. [ADR-0002]
 - **Several passages.** A settled verdict may cite several passages, which together must choose one reading. If cited passages point to different readings, the vision does not settle the ticket, and the board item quotes both. [#19]
 - **How a model run is made.** [#19], [#21], [#15]

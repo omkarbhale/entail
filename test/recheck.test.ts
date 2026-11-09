@@ -448,7 +448,7 @@ test("outcome 1, stands: a line added elsewhere flags the ticket, and the re-che
   assert.deepEqual(call.detail.visionChangeIds, [change!.id]);
   assert.deepEqual([call.citation?.visionSha, call.citation?.lines], [sha, [WORD_LINE]]);
   assert.equal(call.inputs?.visionSha, sha);
-  assert.deepEqual(call.modelRuns.map((run) => [run.purpose, run.promptVersion]), [["re-check", RECHECK_PROMPT_VERSION], ["challenge", "challenge-3"]]);
+  assert.deepEqual(call.modelRuns.map((run) => [run.purpose, run.promptVersion]), [["re-check", RECHECK_PROMPT_VERSION], ["challenge", "challenge-4"]]);
   const prompt = h.runner.requests.find((request) => request.kind === "re-check")!.prompt;
   assert.match(prompt, /Added lines, each with its recorded origin:\n- "Counts are exact\." \(origin: agent-proposed-owner-approved\)/);
   assert.match(prompt, /"reading_chosen": null/);

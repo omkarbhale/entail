@@ -745,7 +745,8 @@ async function writeCriteria(options: CriteriaOptions, ticket: TicketRecord, owe
     return;
   }
   // A pin the owner has seen for the ticket does not raise it again (ADR-0008).
-  const challenge = basis.pinsSeen.length === 0 ? recordedChallenge(challengeRun) : withSeenPinsSetAside(recordedChallenge(challengeRun), basis.pinsSeen);
+  const challenged = recordedChallenge(challengeRun, { readings: verdict.readings, criteria });
+  const challenge = basis.pinsSeen.length === 0 ? challenged : withSeenPinsSetAside(challenged, basis.pinsSeen);
   modelRuns.push(modelRunRecord(challengeRequest, challengeRun));
 
   if (challenge.overturned) {
