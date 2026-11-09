@@ -105,7 +105,7 @@ function prAtHead(body = EVIDENCE, comments: PullRequestComment[] = []) {
 }
 
 function stageIds() {
-  return mechanicalStage({ pr: { conflicts: false }, criteria: criteriaDetail(1), report: { sha: "s", checks: [check("test", "passed")], required: [] }, changedPaths: ["src/cli.js"] }).ids;
+  return mechanicalStage({ pr: { conflicts: false }, criteria: criteriaDetail(1), report: { sha: "s", checks: [check("test", "passed")], required: [] }, changedPaths: ["src/cli.js"], headPaths: ["src/cli.js"] }).ids;
 }
 
 function evidenceOf(body = EVIDENCE) {
@@ -317,6 +317,7 @@ function harness(t: TestContext, options: { merge?: boolean } = {}): Harness {
   const mirror: LandingMirror & GradeMirror = {
     fetchPullRequestHead: async (_number, expected) => ({ commit: expected!, fetched: false }),
     pullRequestChangedPaths: async () => ["src/cli.js"],
+    pullRequestHeadPaths: async () => ["README.md", "src/cli.js", "src/count.js", "test/count.test.js"],
     pullRequestDiff: async (base, head) => {
       assert.equal(base, "c0ffee", "the diff is taken against the default branch head the pass saw");
       assert.equal(head, headOf(12));

@@ -439,7 +439,7 @@ Write one to five criteria C1, C2, … in "criteria", with "outcome" "criteria":
 - Each is traced to its source in "source": ${sources}
 ${readingRule}
 - Never prescribe implementation: say what is true for users or the repo, not how the code does it. Never restate a generic criterion: the repo's generic criteria apply to every PR anyway.
-- Where a criterion allows, give it mechanical checks from this closed list, and only these: "changes_path" (the PR changes a file matching a glob), "leaves_path" (the PR changes no file matching a glob), "check_passes" (a named check is green at the PR's head). Globs are relative to the repository root. ${checks}${fences}
+- Where a criterion allows, give it mechanical checks from this closed list, and only these: "changes_path" (the PR changes a file matching a glob), "leaves_path" (the PR changes no file matching a glob), "check_passes" (a named check is green at the PR's head). Globs are relative to the repository root. Never pin one implementation file in a changes_path glob (not "src/cli.js"): another ticket may move that code before this PR lands, and no PR could then meet the check. Use a directory or role glob such as "src/**" or "test/**" that holds wherever the code moves. ${checks}${fences}
 - No line of any text may start with "/".
 
 ${productCall}

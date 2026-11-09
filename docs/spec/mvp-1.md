@@ -322,7 +322,7 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 - **Form.** One to five numbered outcomes, C1…Cn. Each is one sentence: what is true once the issue is resolved, or a vision constraint the change must respect (which may restate a vision line). Each is traced to its source: the issue, an entry of its investigation findings (by question id), a vision line or the owner's answer. A criterion stating the reading entail chose is traced to the issue. Criteria never prescribe implementation and never restate generic criteria. [ADR-0005], [#21], [GLOSSARY.md](../../GLOSSARY.md)
 - **Findings as a source.** A ticket cleared after investigation has a fix that only the findings make known, as with T11, so its criteria may cite the findings entry that established it. Findings are issue text like the issue itself, so they are judged and never the owner's word, and the product-call rule below applies to them unchanged: a findings entry can say what is wrong, but it cannot choose something users observe that the issue, the vision or an answer does not choose. [ADR-0005], [ADR-0006]
 - **Mechanical checks** come from a closed list that grows only by a recorded decision: [ADR-0005], [#21]
-  - **changes path**: the diff changes a file matching a glob;
+  - **changes path**: the diff changes a file matching a glob. The glob names a directory or role (`src/**`), never one implementation file. A glob that matches no file in the repo at the PR's head does not fail at landing: the check does not apply and the criterion is graded;
   - **leaves path**: the diff changes no file matching a glob;
   - **check passes**: a named check is green at the PR's head.
 - **Checks before clearing.** [ADR-0005], [#21], [ADR-0011]

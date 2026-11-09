@@ -45,6 +45,9 @@ const C2: Criterion = {
 const C3: Criterion = { id: "C3", sentence: "The help text names the new flag.", source: { kind: "issue", ref: null }, checks: [], states_reading: null };
 const G1: GenericCriterion = { id: "G1", sentence: "The check `test` passes.", check: { kind: "check_passes", argument: "test" }, source: ".github/workflows/ci.yml" };
 
+/** Every path in the repo at a PR's head. */
+const HEAD_PATHS = ["README.md", "VISION.md", "docs/a.md", "src/a.js", "src/count.js"];
+
 function criteriaDetail(version: number, settingsVersionId: number, criteria: Criterion[] = [C1, C2, C3], genericCriteria: GenericCriterion[] = [G1]): CriteriaDetail {
   return {
     outcome: "criteria",
@@ -129,7 +132,7 @@ test("stage one runs every criterion's and generic criterion's mechanical checks
   const criteria = criteriaDetail(1, 1);
   assert.deepEqual(namedChecks(criteria), ["test"]);
 
-  const passing = mechanicalStage({ pr: { conflicts: false }, criteria, report: report("s", [check("test", "passed")]), changedPaths: ["README.md", "src/count.js"] });
+  const passing = mechanicalStage({ pr: { conflicts: false }, criteria, report: report("s", [check("test", "passed")]), changedPaths: ["README.md", "src/count.js"], headPaths: HEAD_PATHS });
   assert.equal(passing.checks.passed, true);
   assert.deepEqual(
     passing.ids.map((id) => [id.id, id.met, id.checks.map((c) => c.passed)]),
@@ -142,7 +145,7 @@ test("stage one runs every criterion's and generic criterion's mechanical checks
     "nothing is met before grading; mechanical checks only fail ids",
   );
 
-  const failing = mechanicalStage({ pr: { conflicts: null }, criteria, report: report("s", [check("test", "failed")]), changedPaths: ["VISION.md", "docs/a.md"] });
+  const failing = mechanicalStage({ pr: { conflicts: null }, criteria, report: report("s", [check("test", "failed")]), changedPaths: ["VISION.md", "docs/a.md"], headPaths: HEAD_PATHS });
   assert.equal(failing.checks.passed, false);
   assert.deepEqual(
     failing.ids.map((id) => [id.id, id.met]),
@@ -159,14 +162,29 @@ test("stage one runs every criterion's and generic criterion's mechanical checks
   assert.match(byName.get(LANDING_CHECKS.criteria)!.failure!, /C1: the PR changes no file matching `src\/\*\*`\. C2: the PR changes `VISION\.md`, which matches `VISION\.md`\./);
   assert.match(byName.get(LANDING_CHECKS.genericCriteria)!.failure!, /G1: the check `test` failed at this head\./);
 
-  const conflicted = mechanicalStage({ pr: { conflicts: true }, criteria, report: report("s", [check("test", "passed")]), changedPaths: ["src/a.js"] });
+  const conflicted = mechanicalStage({ pr: { conflicts: true }, criteria, report: report("s", [check("test", "passed")]), changedPaths: ["src/a.js"], headPaths: HEAD_PATHS });
   assert.equal(conflicted.checks.passed, false);
   assert.deepEqual(conflicted.ids.map((id) => id.met), [null, null, null, null]);
 });
 
+test("a changes-path glob that matches no file in the repo at the head does not fail; the criterion falls to grading (#155)", () => {
+  // C1 pinned src/cli.js; another ticket moved the code into src/count.js before the PR landed.
+  const pinned = criteriaDetail(1, 1, [{ ...C1, checks: [{ kind: "changes_path", argument: "src/cli.js" }, { kind: "check_passes", argument: "test" }] }], []);
+  const headPaths = ["README.md", "src/count.js"];
+  const stale = mechanicalStage({ pr: { conflicts: false }, criteria: pinned, report: report("s", [check("test", "passed")]), changedPaths: ["src/count.js"], headPaths });
+  assert.equal(stale.checks.passed, true);
+  assert.deepEqual(stale.ids.map((id) => [id.id, id.met, id.checks.map((c) => c.passed)]), [["C1", null, [true, true]]], "not failed, and not met until graded");
+  assert.match(stale.ids[0]!.checks[0]!.detail, /no file in the repo at this head matches `src\/cli\.js`, so this check does not apply and the criterion is graded/);
+
+  // The glob still names a file at the head that the PR leaves alone: the check fails as before.
+  const live = mechanicalStage({ pr: { conflicts: false }, criteria: pinned, report: report("s", [check("test", "passed")]), changedPaths: ["README.md"], headPaths: [...headPaths, "src/cli.js"] });
+  assert.equal(live.checks.passed, false);
+  assert.match(live.checks.results.find((r) => r.check === LANDING_CHECKS.criteria)!.failure!, /C1: the PR changes no file matching `src\/cli\.js`\./);
+});
+
 test("the failing landing comment names the unmet ids and the head sha, and says a new push or evidence section gets it checked again", () => {
   const sha = "d".repeat(40);
-  const stage = mechanicalStage({ pr: { conflicts: false }, criteria: criteriaDetail(2, 1), report: report(sha, [check("test", "passed")]), changedPaths: ["docs/a.md"] });
+  const stage = mechanicalStage({ pr: { conflicts: false }, criteria: criteriaDetail(2, 1), report: report(sha, [check("test", "passed")]), changedPaths: ["docs/a.md"], headPaths: HEAD_PATHS });
   const text = failingLandingText({ wording: { pullRequest: "merge request" }, issueNumber: 7, headSha: sha, criteriaVersion: 2, stage });
   assert.match(text, new RegExp(`^Landing check of this merge request at \`${sha}\`: it does not pass, and C1 is not met\\.`));
   assert.match(text, /\*\*Criteria for #7\*\* \(version 2\)/);
@@ -310,6 +328,7 @@ function harness(t: TestContext, options: { handOn?: boolean } = {}): Harness {
       assert.equal(base, "c0ffee", "the diff is taken against the default branch head the pass saw");
       return changed.get(head) ?? [];
     },
+    pullRequestHeadPaths: async () => HEAD_PATHS,
   };
   let engine: Passes;
   const start = () => {
