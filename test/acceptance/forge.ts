@@ -141,12 +141,12 @@ export function createForge(options: ForgeOptions): Forge {
 }
 
 // Forge responses are read field by field.
-type Json = any;
+export type Json = any;
 
 const PAGE_SIZE = 100;
 
 /** Calls `<cli> api` and parses the JSON it prints. */
-abstract class ApiForge {
+export abstract class ApiForge {
   readonly host: string;
   readonly path: string;
   readonly #cli: string;

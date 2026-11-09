@@ -287,6 +287,54 @@ test("check runs count as passed only when successful, neutral or skipped, and a
   assert.deepEqual(report.required, []);
 });
 
+const PLAN_REFUSAL = {
+  status: 403,
+  body: {
+    message: "Upgrade to GitHub Pro or make this repository public to enable this feature.",
+    documentation_url: "https://docs.github.com/rest/repos/rules#get-rules-for-a-branch",
+    status: "403",
+  },
+};
+
+function noCheckRuns(): Exchange[] {
+  return [
+    {
+      request: { method: "GET", path: `repos/acme/tally/commits/${SHA}/check-runs?filter=latest&per_page=100` },
+      response: { status: 200, body: { total_count: 1, check_runs: [run("test", "completed", "success")] } },
+    },
+    { request: { method: "GET", path: `repos/acme/tally/commits/${SHA}/status?per_page=100` }, response: { status: 200, body: { state: "success", statuses: [] } } },
+  ];
+}
+
+test("a private repo whose plan has no rulesets or branch protection requires no check from them", async (t) => {
+  // Recorded from a private repo on GitHub Free: both reads answer 403 for the plan.
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: "repos/acme/tally" }, response: { status: 200, body: { id: 5001, default_branch: "main" } } },
+    { request: { method: "GET", path: "repos/acme/tally/branches/main" }, response: PLAN_REFUSAL },
+    { request: { method: "GET", path: "repos/acme/tally/rules/branches/main?per_page=100" }, response: PLAN_REFUSAL },
+    ...noCheckRuns(),
+  ]);
+  const report = await forge.checks(4, SHA, []);
+  assert.deepEqual(report.required, []);
+  assert.deepEqual(
+    report.checks.map((check) => `${check.name} ${check.status}`),
+    ["test passed"],
+    "the checks at the head are still read and still gate",
+  );
+});
+
+test("any other refusal to read the rules still fails the read", async (t) => {
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: "repos/acme/tally" }, response: { status: 200, body: { id: 5001, default_branch: "main" } } },
+    { request: { method: "GET", path: "repos/acme/tally/branches/main" }, response: { status: 200, body: { name: "main", protected: false } } },
+    {
+      request: { method: "GET", path: "repos/acme/tally/rules/branches/main?per_page=100" },
+      response: { status: 403, body: { message: "Resource not accessible by integration" } },
+    },
+  ]);
+  await assert.rejects(forge.checks(4, SHA, []), /HTTP 403: Resource not accessible by integration/);
+});
+
 test("a sha that is not a commit sha never reaches a path", async (t) => {
   const { forge } = forgeOn(t, []);
   await assert.rejects(forge.checks(4, "../../user", []), /not a commit sha/);
