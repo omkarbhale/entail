@@ -321,7 +321,7 @@ test("check 9: no restart, a lost ticket and a comment posted twice fail", () =>
   assert.match(failures, /T1 \(issue #1\) has 0 tickets, not 1/);
 });
 
-function report(forge: string, run: number, cleared: TicketId[], options: { wrong?: TicketId; failCheck?: number } = {}): RunReport {
+function report(forge: string, run: number, cleared: TicketId[], options: { wrong?: TicketId; failCheck?: number; missed?: TicketId[] } = {}): RunReport {
   return {
     forge,
     repo: "r",
@@ -339,12 +339,12 @@ function report(forge: string, run: number, cleared: TicketId[], options: { wron
       clearedAs: null,
       wrongClear: options.wrong === f.id,
       extraItems: 0,
-      endsAsExpected: true,
-      why: [],
+      endsAsExpected: !options.missed?.includes(f.id),
+      why: options.missed?.includes(f.id) ? [`${f.id} ended on-the-board, not merged`] : [],
       modelRuns: 1,
       costUsd: 1,
     })),
-    checks: Array.from({ length: 9 }, (_, i) => ({ id: i + 1, name: "", passed: options.failCheck !== i + 1, failures: [] })),
+    checks: Array.from({ length: 9 }, (_, i) => ({ id: i + 1, name: "", passed: options.failCheck !== i + 1 && !(i === 0 && options.missed), failures: [] })),
     extraBoardItems: [],
     modelRuns: 11,
     costUsd: 11,
@@ -382,6 +382,21 @@ test("passing: a failed pass check fails its forge", () => {
   const verdict = judge([report("github", 1, ALL, { failCheck: 9 }), report("github", 2, ALL), report("github", 3, ALL)], { githubRuns: 3, gitlabRuns: 0 });
   assert.equal(verdict.github, "failed");
   assert.ok(verdict.reasons.includes("github run 1: pass check 9 failed"));
+});
+
+test("passing: an expected clear that misses in one GitHub run is not a run failure by itself", () => {
+  const plan = { githubRuns: 3, gitlabRuns: 0 };
+  const verdict = judge([report("github", 1, ALL.filter((t) => t !== "T3"), { missed: ["T3"] }), report("github", 2, ALL), report("github", 3, ALL)], plan);
+  assert.equal(verdict.github, "passed");
+  assert.deepEqual(verdict.clears.T3, { cleared: 2, runs: 3 });
+});
+
+test("passing: a check 1 failure of a ticket not expected to clear fails the run", () => {
+  for (const id of ["T7", "T8", "T10"] as const) {
+    const verdict = judge([report("github", 1, ALL, { missed: [id] }), report("github", 2, ALL), report("github", 3, ALL)], { githubRuns: 3, gitlabRuns: 0 });
+    assert.equal(verdict.github, "failed", id);
+    assert.ok(verdict.reasons.includes("github run 1: pass check 1 failed"));
+  }
 });
 
 test("passing: gitlab.com pending without glab is reported, not failed", () => {

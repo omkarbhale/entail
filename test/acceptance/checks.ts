@@ -662,8 +662,9 @@ export interface Plan {
 
 /**
  * The passing rule (MVP-1 spec, Testing Decisions: Passing): no wrong clear in
- * any run, each expected clear in at least 2 of the 3 GitHub runs, every pass
- * check in every run, and on gitlab.com every ticket at its expected outcome
+ * any run, each expected clear in at least 2 of the 3 GitHub runs (a miss of
+ * one counts only there, not as a failure of check 1), every other pass check
+ * in every run, and on gitlab.com every ticket at its expected outcome
  * or differing only by an extra question (check 1).
  */
 export function judge(reports: readonly RunReport[], plan: Plan): Verdict {
@@ -688,7 +689,9 @@ export function judge(reports: readonly RunReport[], plan: Plan): Verdict {
     }
   }
   for (const report of github) {
+    const onlyMissedClears = report.tickets.every((t) => t.endsAsExpected || (EXPECTED_CLEARS.includes(t.id) && !t.wrongClear));
     for (const check of report.checks.filter((c) => !c.passed)) {
+      if (check.id === 1 && onlyMissedClears) continue;
       githubVerdict = "failed";
       reasons.push(`github run ${report.run}: pass check ${check.id} failed`);
     }

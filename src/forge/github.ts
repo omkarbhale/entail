@@ -973,10 +973,10 @@ function parseJson(response: ForgeResponse, host: string, path: string, method: 
   }
 }
 
-/** GitHub's own message for an error response, or the start of its body. */
 /** GitHub's refusal of a feature the repo's plan does not have, such as rulesets on a private repo on GitHub Free. */
 const PLAN_LACKS_FEATURE = /Upgrade to GitHub Pro or make this repository public/i;
 
+/** GitHub's own message for an error response, or the start of its body. */
 function errorDetail(response: ForgeResponse): string {
   try {
     const body: unknown = JSON.parse(response.body);
