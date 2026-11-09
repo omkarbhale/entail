@@ -334,6 +334,8 @@ async function main(argv: string[]): Promise<number> {
   }
   const kinds: ForgeKind[] = values.forge === "both" ? ["github", "gitlab"] : [values.forge as ForgeKind];
   if (!kinds.every((k) => k === "github" || k === "gitlab")) throw new Error(`unknown forge: ${values.forge}`);
+  const port = Number(values.port);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error(`--port must be an integer from 1024 to 65535, got: ${values.port}`);
   const plan: Plan = {
     githubRuns: kinds.includes("github") ? Number(values["github-runs"]) : 0,
     gitlabRuns: kinds.includes("gitlab") ? Number(values["gitlab-runs"]) : 0,
