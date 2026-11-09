@@ -31,6 +31,7 @@ import {
 import { ScriptedExecutor, Workspace } from "./executor.ts";
 import { DEFAULT_BRANCH, FIXTURE_ISSUES, FIXTURE_REPO_NAME, startingTree, type TicketId } from "./fixture.ts";
 import { createForge, type ForgeKind } from "./forge.ts";
+import { acquireFixtureLock, refuseInsidePipeline } from "./lock.ts";
 import { renderReport, renderRun } from "./report.ts";
 import { fileFixtureIssues, resetFixture, type HarnessEvent, type Log } from "./reset.ts";
 
@@ -62,7 +63,12 @@ Options:
                                 for this long after the restart (default: 30)
   --restart-after <minutes>     Restart entail by then even if no ticket is landing yet (default: 30)
   --recheck <dir>               Run the pass checks again on the evidence saved in <dir>, without running
+  --break-lock                  Take a fixture repo's lock even though it is held, when its holder is gone
   --verbose                     Print every harness event
+
+The test holds each fixture repo's lock from before its first reset to the
+end, and refuses to start while another run or reset holds it. It never runs
+inside a review pipeline (NO_MISTAKES_GATE set); --recheck does.
 
 Exit status: 0 when the test passed on both forges, 1 when it failed, 3 when
 it passed on GitHub and the gitlab.com run is pending (glab missing or
@@ -85,6 +91,7 @@ const options = {
   port: { type: "string", default: String(DEFAULT_BOARD_PORT) },
   "restart-after": { type: "string", default: "30" },
   recheck: { type: "string" },
+  "break-lock": { type: "boolean", default: false },
   verbose: { type: "boolean", default: false },
   help: { type: "boolean", short: "h", default: false },
 } as const;
@@ -192,6 +199,7 @@ async function acceptanceRun(ctx: RunContext): Promise<{ evidence: RunEvidence; 
   await resetFixture(forge, log, { fileIssues: false });
 
   const entail = new EntailProcess({ dataHome: join(directory, "data-home"), logFile: join(directory, "entail.log"), port: Number(values.port) });
+  runningEntail = entail;
   const issueNumbers: Partial<Record<TicketId, number>> = {};
   let restart: RestartRecord | null = null;
   let settled = false;
@@ -349,10 +357,9 @@ async function main(argv: string[]): Promise<number> {
     const saved = join(out, "plan.json");
     if (existsSync(saved)) Object.assign(plan, JSON.parse(readFileSync(saved, "utf8")));
   } else {
-    out = values.out ?? join(tmpdir(), `entail-acceptance-${new Date().toISOString().replace(/[:.]/g, "-")}`);
-    mkdirSync(out, { recursive: true });
-    say(`acceptance output: ${out}`);
-    reports = [];
+    refuseInsidePipeline("npm run acceptance");
+    // Every fixture this test runs on, found and locked before anything is reset.
+    const targets: { kind: ForgeKind; runs: number; path: string; login: string }[] = [];
     for (const kind of kinds) {
       const runs = kind === "github" ? plan.githubRuns : plan.gitlabRuns;
       if (runs === 0) continue;
@@ -365,11 +372,21 @@ async function main(argv: string[]): Promise<number> {
         }
         throw new Error(problem);
       }
-      let path = kind === "github" ? values["github-repo"] : values["gitlab-repo"];
       const me = await createForge({ kind, host: HOSTS[kind], path: "" }).whoami();
-      path ??= `${me.login}/${FIXTURE_REPO_NAME}`;
+      const path = (kind === "github" ? values["github-repo"] : values["gitlab-repo"]) ?? `${me.login}/${FIXTURE_REPO_NAME}`;
+      targets.push({ kind, runs, path, login: me.login });
+    }
+    for (const { kind, path } of targets) {
+      const lock = acquireFixtureLock({ kind, host: HOSTS[kind], path }, { breakStale: values["break-lock"] });
+      say(`holding the lock on ${lock.holder.fixture} (${lock.file})`);
+    }
+    out = values.out ?? join(tmpdir(), `entail-acceptance-${new Date().toISOString().replace(/[:.]/g, "-")}`);
+    mkdirSync(out, { recursive: true });
+    say(`acceptance output: ${out}`);
+    reports = [];
+    for (const { kind, runs, path, login } of targets) {
       for (let run = 1; run <= runs; run += 1) {
-        const { report } = await acceptanceRun({ kind, run, path, out, values, ownerName: values["owner-name"] ?? me.login });
+        const { report } = await acceptanceRun({ kind, run, path, out, values, ownerName: values["owner-name"] ?? login });
         reports.push(report);
         say(renderRun(report));
       }
@@ -387,6 +404,17 @@ async function main(argv: string[]): Promise<number> {
   if (verdict.status === "failed") return 1;
   if (verdict.github === "passed" && verdict.gitlab === "pending") return 3;
   return 4;
+}
+
+let runningEntail: EntailProcess | undefined;
+
+for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
+  let signalled = false;
+  process.on(signal, () => {
+    if (signalled) process.exit(code);
+    signalled = true;
+    (runningEntail?.stop() ?? Promise.resolve()).catch(() => {}).finally(() => process.exit(code));
+  });
 }
 
 // Exits explicitly: idle keep-alive connections to entail's pages and the forge would otherwise hold the process open.
