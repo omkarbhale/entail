@@ -240,6 +240,15 @@ export class Mirror {
       .sort();
   }
 
+  /** Every file path in the repo at a commit, as git reports them, sorted. */
+  async pullRequestHeadPaths(head: string): Promise<string[]> {
+    const out = await this.git.text(["ls-tree", "-r", "-z", "--name-only", "--end-of-options", head]);
+    return out
+      .split("\0")
+      .filter((path) => path !== "")
+      .sort();
+  }
+
   /**
    * A read-only checkout of the repo at a commit, for a model run to read. It
    * is kept in the data directory and reused for the same commit; its files

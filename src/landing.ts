@@ -205,15 +205,22 @@ function matches(path: string, glob: string): boolean {
   return posix.matchesGlob(path, glob);
 }
 
-/** Runs one mechanical check at the head against the changed paths and the check results. */
-export function runMechanicalCheck(check: MechanicalCheck, changedPaths: readonly string[], report: CheckReport): MechanicalResult {
+/**
+ * Runs one mechanical check at the head against the changed paths, the check
+ * results and every path in the repo at the head. A changes-path glob that
+ * matches no file in the repo at the head is stale (another ticket moved the
+ * code it named, ADR-0005): it does not fail, and the criterion is graded.
+ */
+export function runMechanicalCheck(check: MechanicalCheck, changedPaths: readonly string[], report: CheckReport, headPaths: readonly string[]): MechanicalResult {
   const { kind, argument } = check;
   switch (kind) {
     case "changes_path": {
       const hit = changedPaths.find((path) => matches(path, argument));
-      return hit === undefined
-        ? { kind, argument, passed: false, detail: `the PR changes no file matching ${code(argument)}` }
-        : { kind, argument, passed: true, detail: `the PR changes ${code(hit)}` };
+      if (hit !== undefined) return { kind, argument, passed: true, detail: `the PR changes ${code(hit)}` };
+      if (!headPaths.some((path) => matches(path, argument))) {
+        return { kind, argument, passed: true, detail: `no file in the repo at this head matches ${code(argument)}, so this check does not apply and the criterion is graded` };
+      }
+      return { kind, argument, passed: false, detail: `the PR changes no file matching ${code(argument)}` };
     }
     case "leaves_path": {
       const hits = changedPaths.filter((path) => matches(path, argument));
@@ -251,14 +258,16 @@ export function mechanicalStage(input: {
   criteria: Pick<CriteriaDetail, "criteria" | "genericCriteria">;
   report: CheckReport;
   changedPaths: readonly string[];
+  /** Every path in the repo at the PR's head. */
+  headPaths: readonly string[];
 }): MechanicalStage {
-  const { report, changedPaths } = input;
+  const { report, changedPaths, headPaths } = input;
   const failedChecks = report.checks.filter((check) => check.status === "failed").map((check) => check.name);
   const checksPassed = result(LANDING_CHECKS.checksPassed, failedChecks.length === 0 ? [] : [`${failedChecks.map(code).join(", ")} failed at this head.`]);
   const noConflicts = result(LANDING_CHECKS.noConflicts, input.pr.conflicts === true ? ["The PR conflicts with its base."] : []);
 
   const idResult = (id: string, sentence: string, checks: readonly MechanicalCheck[]): IdResult => {
-    const results = checks.map((check) => runMechanicalCheck(check, changedPaths, report));
+    const results = checks.map((check) => runMechanicalCheck(check, changedPaths, report, headPaths));
     return { id, sentence, checks: results, met: results.some((r) => !r.passed) ? false : null };
   };
   const criteria = input.criteria.criteria.map((c) => idResult(c.id, c.sentence, c.checks));
@@ -351,6 +360,7 @@ export function failingLandingText(input: {
 export interface LandingMirror {
   fetchPullRequestHead(number: number, expectedHead?: string): Promise<{ commit: string; fetched: boolean }>;
   pullRequestChangedPaths(base: string, head: string): Promise<string[]>;
+  pullRequestHeadPaths(head: string): Promise<string[]>;
 }
 
 /** Everything a passing stage one hands to the later stages. */
@@ -490,7 +500,8 @@ async function checkPullRequest(
   if (head.commit !== pr.headSha) return;
   const baseSha = pass.head.commit;
   const changedPaths = await git.pullRequestChangedPaths(baseSha, pr.headSha);
-  const stage = mechanicalStage({ pr, criteria, report, changedPaths });
+  const headPaths = await git.pullRequestHeadPaths(pr.headSha);
+  const stage = mechanicalStage({ pr, criteria, report, changedPaths, headPaths });
 
   if (stage.checks.passed) {
     log.info("landing-mechanical-passed", { ticketId: ticket.id, pullRequest: pr.number, headSha: pr.headSha, criteriaVersion: key.criteriaVersion });

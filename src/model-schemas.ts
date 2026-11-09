@@ -136,7 +136,7 @@ export const criteriaSchema = object({
       checks: arrayOf(
         object({
           kind: oneOf(MECHANICAL_CHECK_KINDS),
-          argument: string("A path glob for changes_path and leaves_path, a check name for check_passes."),
+          argument: string("A path glob for changes_path and leaves_path, a check name for check_passes. A changes_path glob names a directory or role (src/**, tests/**), never one implementation file, which another ticket may move."),
         }),
       ),
       states_reading: nullable(string(), "The id of the reading this criterion states, when it states the reading chosen. null otherwise."),

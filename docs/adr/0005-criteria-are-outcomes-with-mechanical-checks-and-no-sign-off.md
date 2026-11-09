@@ -35,3 +35,10 @@ A ticket cleared after investigation (ADR-0006) has a fix that only its findings
 - Findings are issue text like the issue itself (ADR-0001): judged, never the owner's word. The product-call rule applies to them unchanged. A findings entry can say what is wrong, but a criterion that fixes something users can observe, which the issue, the vision or an answer does not choose, still sends the ticket to the board.
 - "Each has a source that exists" means, for findings, that the findings comment the ticket was decided from has an entry for that question id.
 - Settled after the MVP-1 spec was assembled, as an engineering call the owner delegated (open point 3 of `docs/spec/mvp-1.md`). Requiring every criterion to trace to the issue alone was passed over, because it would leave T11's criteria too vague to check, against ADR-0006's "a real problem whose fix is now known gets its criteria".
+
+## Amendment: a changes-path check names a role, and a stale one falls to grading
+
+A `changes_path` check that pins one implementation file goes stale when another ticket moves that code: the `tally` fixture's T11 required a change to `src/cli.js` after T3 moved the counting code into `src/count.js`, and no PR could meet it ([#155](https://github.com/omkarbhale/entail/issues/155)). Two rules follow, with no new kind of check.
+
+- **Writing.** The criteria writer is told never to pin one implementation file in a `changes_path` glob, and to use a directory or role glob such as `src/**` or `tests/**`.
+- **Landing.** A `changes_path` glob that matches no file in the repo at the PR's head does not fail mechanically: the check does not apply, and the criterion is graded like one with no mechanical check. A glob that matches a file at the head, which the PR leaves alone, fails as before. `leaves_path` and `check_passes` are unchanged.

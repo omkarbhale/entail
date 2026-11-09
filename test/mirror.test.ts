@@ -137,6 +137,7 @@ test("a PR's diff and changed paths come from git at the head ref, identically f
     results.push({
       diff: await mirror.pullRequestDiff(base.commit, fetched.commit),
       paths: await mirror.pullRequestChangedPaths(base.commit, fetched.commit),
+      headPaths: await mirror.pullRequestHeadPaths(fetched.commit),
     });
   }
   const [github, gitlab] = results;
@@ -148,6 +149,8 @@ test("a PR's diff and changed paths come from git at the head ref, identically f
   assert.ok(github.paths.includes("src/count.js"));
   assert.ok(github.paths.includes("src/old name.js") && github.paths.includes("src/névé name.js"), "a rename changes both paths");
   assert.ok(!github.paths.includes("README.md"), "what main did after the PR branched is not the PR's change");
+  assert.deepEqual(github.headPaths, gitlab.headPaths);
+  assert.ok(github.headPaths.includes("src/count.js") && github.headPaths.includes("src/névé name.js"), "every file at the head, whether the PR changed it or not");
   assert.equal(github.diff.match(/^diff --git /gmu)?.length, 303);
   assert.ok(github.diff.includes("+line 2999\n"), "the diff is whole");
 });

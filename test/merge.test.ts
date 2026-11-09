@@ -273,6 +273,7 @@ function harness(t: TestContext, options: { processChanges?: ProcessChanges; noF
   const mirror: LandingMirror & GradeMirror & MergeMirror = {
     fetchPullRequestHead: async (_number, expected) => ({ commit: expected!, fetched: false }),
     pullRequestChangedPaths: async () => ["src/cli.js"],
+    pullRequestHeadPaths: async () => ["README.md", "src/cli.js", "src/count.js", "test/count.test.js"],
     pullRequestDiff: async () => "diff --git a/src/cli.js b/src/cli.js\n+const input = readStdin();\n",
     checkout: async (commit) => ({ directory: `/checkouts/${commit}`, commit, dropped: [] }),
     updateDefaultBranch: async () => ({ branch: "main", commit: vision.head }),

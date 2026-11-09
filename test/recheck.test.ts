@@ -308,6 +308,7 @@ async function harness(t: TestContext): Promise<Harness> {
   const landingMirror: LandingMirror & GradeMirror = {
     fetchPullRequestHead: async (_number, expected) => ({ commit: expected!, fetched: false }),
     pullRequestChangedPaths: async () => ["src/count.js"],
+    pullRequestHeadPaths: async () => ["README.md", "src/cli.js", "src/count.js", "test/count.test.js"],
     pullRequestDiff: async () => "diff --git a/src/count.js b/src/count.js\n+const words = text.split(/\\s+/);\n",
     checkout: async (commit) => ({ directory: `/checkouts/${commit}`, commit, dropped: [] }),
   };
