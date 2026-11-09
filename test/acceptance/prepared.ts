@@ -175,6 +175,13 @@ test('a missing file prints an error to standard error and exits non-zero', () =
   assert.doesNotMatch(result.stderr, /\\bat /);
   assert.equal(result.stdout, '');
 });
+
+test('a readable file still prints the same line of counts', () => {
+  const path = file('one two\\n');
+  const result = tally([path]);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, \`      1       2       8 \${path}\\n\`);
+});
 `,
         );
       },
@@ -188,6 +195,10 @@ test('a missing file prints an error to standard error and exits non-zero', () =
     {
       keywords: ["status", "exit", "non-zero"],
       text: "test/missing-file.test.js checks the exit status is 1",
+    },
+    {
+      keywords: ["format", "readable", "count line", "line of counts", "current", "unchanged", "as before", "plain text"],
+      text: "test/missing-file.test.js checks that a readable file still prints exactly the line of counts it printed before, `      1       2       8 <file>`, and the diff leaves src/format.js untouched",
     },
   ],
 };
@@ -302,6 +313,15 @@ test('output to a terminal is in colour', (t) => {
   assert.equal(result.status, 0);
   assert.match(result.stdout, /\\x1b\\[36m +1 +2 +8\\x1b\\[0m /);
 });
+
+test('no configuration file or environment setting turns colour on', () => {
+  const home = mkdtempSync(join(tmpdir(), 'tally-home-'));
+  writeFileSync(join(home, '.tallyrc'), '--colour\\n');
+  const env = { ...process.env, HOME: home, FORCE_COLOR: '1', CLICOLOR_FORCE: '1' };
+  const result = spawnSync(process.execPath, [CLI, file('one two\\n')], { encoding: 'utf8', cwd: home, env });
+  assert.equal(result.status, 0);
+  assert.doesNotMatch(result.stdout, /\\x1b/);
+});
 `,
         );
       },
@@ -315,6 +335,10 @@ test('output to a terminal is in colour', (t) => {
     {
       keywords: ["colour", "color", "terminal", "tty"],
       text: "test/colour.test.js runs tally under script(1), so its output is a terminal, and checks the counts, and only the counts, are coloured",
+    },
+    {
+      keywords: ["configuration", "config", "environment", "flag", "command-line", "setting"],
+      text: "test/colour.test.js puts a `.tallyrc` in HOME and the working directory and sets FORCE_COLOR and CLICOLOR_FORCE, and checks piped output is still plain: colour depends only on whether standard output is a terminal, and tally still reads no configuration file",
     },
   ],
 };
@@ -373,6 +397,22 @@ test('--json prints one JSON object per input, one per line', () => {
   assert.deepEqual(JSON.parse(lines[1]), { lines: 1, words: 1, characters: 6 });
 });
 
+test('only --json turns JSON on, never a configuration file or the environment', () => {
+  const home = mkdtempSync(join(tmpdir(), 'tally-home-'));
+  writeFileSync(join(home, '.tallyrc'), '--json\\n');
+  const env = { ...process.env, HOME: home, TALLY_JSON: '1', TALLY_OPTIONS: '--json' };
+  const result = spawnSync(process.execPath, [CLI, file('one two\\n')], { encoding: 'utf8', cwd: home, env });
+  assert.equal(result.status, 0);
+  assert.deepEqual(counts(result.stdout), [1, 2, 8]);
+});
+
+test('with --json an error still goes to standard error and tally exits non-zero', () => {
+  const result = tally(['--json', 'does-not-exist.txt']);
+  assert.notEqual(result.status, 0);
+  assert.notEqual(result.stderr, '');
+  assert.equal(result.stdout, '');
+});
+
 test('without --json the output is unchanged', () => {
   const result = tally([file('one two\\n')]);
   assert.deepEqual(counts(result.stdout), [1, 2, 8]);
@@ -390,6 +430,14 @@ test('without --json the output is unchanged', () => {
     {
       keywords: ["without", "default", "plain", "unchanged"],
       text: "test/json.test.js checks that without `--json` the plain output is unchanged",
+    },
+    {
+      keywords: ["configuration", "config", "environment", "flag", "command-line", "setting"],
+      text: "test/json.test.js puts `--json` in a `.tallyrc` in HOME and the working directory and in environment variables, and checks tally still prints plain counts: only the `--json` flag turns JSON on",
+    },
+    {
+      keywords: ["error", "standard error", "stderr", "status", "non-zero", "exit"],
+      text: "test/json.test.js runs `tally --json does-not-exist.txt` and checks the error goes to standard error, nothing goes to standard output and the exit status is non-zero",
     },
   ],
 };
@@ -449,8 +497,26 @@ test('formats the counts alone when there is no name', () => {
 
 // T11 -----------------------------------------------------------------------
 
-const SINGLE_SPACE_SPLIT = "line.split(' ').length";
-const ANY_SPLIT = /line\.split\([^\n]*?\)(?:\.filter\(Boolean\))?\.length/;
+/** The word-splitting expression, in whatever form the default branch holds it. */
+const WORD_SPLIT = /line\.split\([^\n]*?\)(?:\.filter\(Boolean\))?\.length/;
+/** T11 alone: runs of ASCII whitespace; whether other Unicode whitespace separates words is T13's question. */
+const ASCII_RUNS = "line.split(/[ \\t\\n\\r\\f\\v]+/).filter(Boolean).length";
+/** T13 alone: any Unicode whitespace separates words, one character at a time as the space did. */
+const UNICODE_SINGLE = "line.split(/\\p{White_Space}/u).length";
+/** T11 and T13 together. */
+const UNICODE_RUNS = "line.split(/\\p{White_Space}+/u).filter(Boolean).length";
+
+/** Replaces the word-splitting expression under src/; throws when there is none. */
+function replaceWordSplit(tree: Tree, id: TicketId, next: (current: string) => string): void {
+  let found = false;
+  for (const [path, text] of tree) {
+    const match = path.startsWith("src/") ? WORD_SPLIT.exec(text) : null;
+    if (!match) continue;
+    tree.set(path, text.replace(WORD_SPLIT, next(match[0])));
+    found = true;
+  }
+  if (!found) throw new PreparedChangeError(`${id}: the word-splitting code was not found under src/`);
+}
 
 const T11: PreparedChange = {
   id: "T11",
@@ -459,12 +525,8 @@ const T11: PreparedChange = {
     {
       subject: "Count a word as a run of characters between whitespace",
       apply(tree) {
-        // Already split on whitespace (T13 merged first): only the test is added.
-        for (const [path, text] of tree) {
-          if (path.startsWith("src/") && text.includes(SINGLE_SPACE_SPLIT)) {
-            tree.set(path, text.replace(SINGLE_SPACE_SPLIT, "line.split(/[ \\t\\r\\f\\v]+/).filter(Boolean).length"));
-          }
-        }
+        // Runs of whitespace, not single spaces: on Unicode whitespace once T13 has merged.
+        replaceWordSplit(tree, "T11", (current) => (current.includes("White_Space") ? UNICODE_RUNS : ASCII_RUNS));
         addFile(
           tree,
           "test/words.test.js",
@@ -494,6 +556,10 @@ test('a tab separates words', () => {
       keywords: ["whitespace", "run", "doubled", "trailing", "tab"],
       text: "test/words.test.js checks that doubled and trailing spaces add no word and that a tab separates words",
     },
+    {
+      keywords: ["unicode", "non-breaking", "other whitespace", "whitespace character"],
+      text: "words are split on runs of ASCII whitespace (space, tab, line feed, carriage return, vertical tab, form feed); which other Unicode characters separate words is not changed here",
+    },
   ],
 };
 
@@ -506,15 +572,9 @@ const T13: PreparedChange = {
     {
       subject: "Separate words on any Unicode whitespace",
       apply(tree) {
-        let found = false;
-        for (const [path, text] of tree) {
-          if (path.startsWith("src/") && ANY_SPLIT.test(text)) {
-            // \p{White_Space}, not \s: \s also matches U+FEFF, which is not whitespace.
-            tree.set(path, text.replace(ANY_SPLIT, "line.split(/\\p{White_Space}+/u).filter(Boolean).length"));
-            found = true;
-          }
-        }
-        if (!found) throw new PreparedChangeError("T13: the word-splitting code was not found under src/");
+        // \p{White_Space}, not \s: \s also matches U+FEFF, which is not whitespace. Only which
+        // characters separate words changes: runs stay as they were until T11 merges.
+        replaceWordSplit(tree, "T13", (current) => (current.includes("filter(Boolean)") ? UNICODE_RUNS : UNICODE_SINGLE));
         addFile(
           tree,
           "test/unicode-whitespace.test.js",
@@ -539,6 +599,10 @@ test('other Unicode whitespace separates words', () => {
     {
       keywords: ["unicode", "whitespace", "any", "other tools"],
       text: "test/unicode-whitespace.test.js checks that an em space (U+2003) and an ideographic space (U+3000) separate words too",
+    },
+    {
+      keywords: ["only", "ascii", "unchanged", "same", "run", "between whitespace", "u+feff", "byte-order"],
+      text: "only which characters separate words changes: the split uses Unicode's White_Space property (not `\\s`, which would also match U+FEFF), and runs of spaces count as they did before",
     },
   ],
 };
