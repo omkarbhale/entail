@@ -8,6 +8,7 @@ import { createWriteStream, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { Store } from "../../src/store.ts";
 import { FIXTURE_SETTINGS } from "./fixture.ts";
 import { formData, parsePage, submitButtons, type Control, type Form, type Page } from "./html.ts";
 
@@ -21,9 +22,17 @@ export interface EntailOptions {
   dataHome: string;
   /** Where entail's standard output and error are appended. */
   logFile: string;
+  /**
+   * The board port. entail has no flag for it: it listens on the saved global
+   * setting, 7419 by default. Another port is saved to a fresh store before
+   * the first start, so a second entail can run beside one holding 7419; the
+   * settings page then sends it back as it is.
+   */
   port: number;
   fetch?: typeof fetch;
 }
+
+export const DEFAULT_BOARD_PORT = 7419;
 
 /** One entail, started and stopped as a child process. */
 export class EntailProcess {
@@ -32,6 +41,7 @@ export class EntailProcess {
   readonly origin: string;
   readonly #logFile: string;
   readonly #fetch: typeof fetch;
+  readonly #port: number;
   #child: ChildProcess | undefined;
   #exited: Promise<number | null> | undefined;
   starts = 0;
@@ -40,6 +50,7 @@ export class EntailProcess {
     this.dataHome = options.dataHome;
     this.dataDirectory = join(options.dataHome, "entail");
     this.origin = `http://127.0.0.1:${options.port}`;
+    this.#port = options.port;
     this.#logFile = options.logFile;
     this.#fetch = options.fetch ?? fetch;
   }
@@ -51,7 +62,8 @@ export class EntailProcess {
   /** Starts `entail run` and waits until its pages answer. */
   async start(timeoutMs = 60_000): Promise<void> {
     if (this.#child) throw new EntailError("entail is already running");
-    mkdirSync(this.dataHome, { recursive: true });
+    mkdirSync(this.dataDirectory, { recursive: true });
+    if (this.#port !== DEFAULT_BOARD_PORT && this.starts === 0) this.#saveBoardPort();
     const log = createWriteStream(this.#logFile, { flags: "a" });
     log.write(`--- entail start ${this.starts + 1} at ${new Date().toISOString()}\n`);
     const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("NODE_TEST")));
@@ -79,6 +91,15 @@ export class EntailProcess {
         // not listening yet
       }
       if (Date.now() > deadline) throw new EntailError(`entail did not answer on ${this.origin} within ${timeoutMs} ms`);
+    }
+  }
+
+  #saveBoardPort(): void {
+    const store = Store.openIn(this.dataDirectory);
+    try {
+      if (store.latestGlobalSettings() === null) store.saveGlobalSettings({ boardPort: this.#port }, "acceptance harness");
+    } finally {
+      store.close();
     }
   }
 

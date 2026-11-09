@@ -15,7 +15,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { createAudit } from "./audit.ts";
 import { BoardDriver } from "./board-driver.ts";
 import { checkRun, judge, type Plan, type RunReport } from "./checks.ts";
-import { EntailProcess, OwnerPages } from "./entail.ts";
+import { DEFAULT_BOARD_PORT, EntailProcess, OwnerPages } from "./entail.ts";
 import {
   allComments,
   callIdsOnPage,
@@ -55,6 +55,8 @@ Options:
   --model-run-limit <n>         entail's limit on model runs at once (default: 3)
   --executor-interval <seconds> Seconds between the scripted executor's passes (default: 60; each
                                 pass reads every open PR, and the forge's API budget is per account)
+  --port <n>                    The board port of the entail each run starts (default: ${DEFAULT_BOARD_PORT}); another
+                                port lets this test run beside one holding ${DEFAULT_BOARD_PORT}
   --max-minutes <n>             Time limit for one run (default: 180)
   --stall-minutes <n>           End a run that has not settled once no ticket has changed state
                                 for this long after the restart (default: 30)
@@ -80,6 +82,7 @@ const options = {
   "executor-interval": { type: "string", default: "60" },
   "max-minutes": { type: "string", default: "180" },
   "stall-minutes": { type: "string", default: "30" },
+  port: { type: "string", default: String(DEFAULT_BOARD_PORT) },
   "restart-after": { type: "string", default: "30" },
   recheck: { type: "string" },
   verbose: { type: "boolean", default: false },
@@ -89,7 +92,6 @@ const options = {
 type Values = ReturnType<typeof parseArgs<{ options: typeof options }>>["values"];
 
 const HOSTS: Record<ForgeKind, string> = { github: "github.com", gitlab: "gitlab.com" };
-const PORT = 7419;
 const say = (line: string) => process.stdout.write(`${line}\n`);
 
 /** Whether a forge's CLI is installed and logged in; the reason when not. */
@@ -189,7 +191,7 @@ async function acceptanceRun(ctx: RunContext): Promise<{ evidence: RunEvidence; 
   tag(`resetting ${kind} ${ctx.path}`);
   await resetFixture(forge, log, { fileIssues: false });
 
-  const entail = new EntailProcess({ dataHome: join(directory, "data-home"), logFile: join(directory, "entail.log"), port: PORT });
+  const entail = new EntailProcess({ dataHome: join(directory, "data-home"), logFile: join(directory, "entail.log"), port: Number(values.port) });
   const issueNumbers: Partial<Record<TicketId, number>> = {};
   let restart: RestartRecord | null = null;
   let settled = false;
@@ -332,6 +334,8 @@ async function main(argv: string[]): Promise<number> {
   }
   const kinds: ForgeKind[] = values.forge === "both" ? ["github", "gitlab"] : [values.forge as ForgeKind];
   if (!kinds.every((k) => k === "github" || k === "gitlab")) throw new Error(`unknown forge: ${values.forge}`);
+  const port = Number(values.port);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error(`--port must be an integer from 1024 to 65535, got: ${values.port}`);
   const plan: Plan = {
     githubRuns: kinds.includes("github") ? Number(values["github-runs"]) : 0,
     gitlabRuns: kinds.includes("gitlab") ? Number(values["gitlab-runs"]) : 0,
