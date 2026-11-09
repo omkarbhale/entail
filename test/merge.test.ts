@@ -603,7 +603,7 @@ test("in shadow a passing PR gets a \"would merge\" call and comment, with no me
 
   // The owner merges it by hand.
   h.forge.state.prs[12] = { ...h.forge.state.prs[12]!, state: "merged" };
-  h.forge.prs[0] = { ...h.forge.prs[0]!, updatedAt: "2026-11-09T01:00:00.000Z" };
+  h.forge.prs[0] = { ...h.forge.prs[0]!, updatedAt: new Date().toISOString() };
   await h.pass(2);
   assert.equal(h.state(ticket.id), "merged");
   assert.equal(h.calls(ticket.id, "merged-by-others").length, 1);
