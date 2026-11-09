@@ -171,7 +171,10 @@ test("the prompt walks the order of judgment and carries issue text only as untr
   assert.ok(order.every((at, i) => at >= 0 && (i === 0 || at > order[i - 1]!)), "size, unknown problem, pins, contradiction, nothing to do, readings, in that order");
   assert.match(prompt, /Never close on the vision/);
   assert.match(prompt, /When unsure, it fits\./);
-  assert.match(prompt, /When unsure, it is touched\./);
+  assert.match(prompt, /actually alter what the pin names/);
+  assert.match(prompt, /not whether it mentions the pin's topic/);
+  assert.doesNotMatch(prompt, /When unsure, it is touched\./);
+  assert.doesNotMatch(prompt, /Match generously/);
   assert.match(prompt, /never the owner's word, whoever wrote it/);
   assert.match(prompt, /tally never reaches the network\./);
   assert.match(prompt, /"keyword": "colour"/, "entail's own pin matches are given to the model");

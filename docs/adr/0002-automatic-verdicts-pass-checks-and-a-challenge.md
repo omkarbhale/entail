@@ -1,6 +1,8 @@
 # Automatic verdicts pass checks and a challenge, not the model's confidence
 
 > **Amended by ADR-0011.** The **small** verdict, with its categories and high-stakes exclusions, is replaced by **unopposed**: a ticket the vision does not contradict, that touches no pin and has no consequential readings is cleared. The checks and the challenge below still apply to settled and unopposed verdicts, without the category check or the high-stakes area.
+>
+> **Narrowed by #156.** A pin is touched when the ticket's change would actually alter what it names, judged on the outcome asked for, not "when unsure"; and a challenge overturns only with a concrete objection: a second reading with a different observable outcome, a pin by its topic, or a quoted line. Unsure must be specific.
 
 A settled or small verdict clears a ticket only after entail itself checks it mechanically and an independent challenge fails to overturn it; any failure makes the ticket need the owner. VISION.md says a wrong "already settled" is costly while an extra question is cheap, and that a check a model grades on itself can be bypassed, so the model must argue its way to an automatic verdict instead of rating its own certainty.
 

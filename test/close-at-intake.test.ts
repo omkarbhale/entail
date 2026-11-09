@@ -417,7 +417,7 @@ test("a successful challenge on a proposed close raises the ticket to the board,
         objection: "Issue #3 is about a trailing space; this one asks about a leading space",
         lines: [],
         pin: null,
-        reading: { reading: "Leading spaces count as no word.", observed_outcome: "`echo ' a' | tally` prints 1." },
+        reading: { reading: "The issue asks that a leading space stay a separator but a doubled one count as a word.", observed_outcome: "`echo '  a' | tally` prints 2." },
         criterion: null,
       },
     ],
@@ -441,7 +441,7 @@ test("a successful challenge on a proposed close raises the ticket to the board,
   const snapshot = item.snapshot as BoardItemSnapshot;
   assert.equal(snapshot.why.kind, "challenge");
   assert.match(snapshot.why.text, /trailing space/);
-  assert.ok(snapshot.form.options.some((o) => o.reading === "Leading spaces count as no word."), "the missed reading is offered");
+  assert.ok(snapshot.form.options.some((o) => o.reading === "The issue asks that a leading space stay a separator but a doubled one count as a word."), "the missed reading is offered");
   assert.deepEqual(h.forge.state.closed, {}, "the issue is not closed");
   assert.equal(h.forge.state.comments["issue:5"]!.length, 1, "only the raise's intake comment");
 });

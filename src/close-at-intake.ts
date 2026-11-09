@@ -298,7 +298,7 @@ export function checkClose(verdict: RecordedVerdict, evidence: readonly FoundEvi
 }
 
 /** Bumped whenever the close's challenge prompt changes, and recorded with every such run (ADR-0009). */
-export const CLOSE_CHALLENGE_PROMPT_VERSION = `${CHALLENGE_PROMPT_VERSION}-close-2`;
+export const CLOSE_CHALLENGE_PROMPT_VERSION = `${CHALLENGE_PROMPT_VERSION}-close-3`;
 
 /**
  * The challenge on a proposed close: the same challenge as a verdict's, with
@@ -341,8 +341,8 @@ export function closeChallengePrompt(input: {
 Closing an issue that still asks for something is costly and an extra question for the owner is cheap, so look hard. Object when you find any of these:
 
 - "contradicted_line": a vision line the request contradicts. A request the vision opposes needs the owner, and is never closed on the vision. Quote the line whole and word for word in "lines".
-- "touched_pin": a pin the ticket touches: its change would touch the pin's topic, or the issue names one of its paths or keywords. When unsure, it is touched. Give the pin's topic sentence word for word in "pin".
-- "missed_reading": a defensible reading of the issue under which something is still to be done that the evidence does not cover. Give it in "reading" with the outcome a user would observe.
+- "touched_pin": a pin the ticket touches: carrying out the ticket's outcome would actually alter what the pin names, or the issue names one of its paths or keywords. Judge the outcome the ticket asks for, not whether it mentions the pin's topic. Give the pin's topic sentence word for word in "pin", and say in "objection" what the change would alter in it.
+- "missed_reading": a second defensible reading of the issue under which something is still to be done that the evidence does not cover. Give it in "reading" with the different outcome a user would observe; without one, the objection does not count.
 - "uncited_assumption": evidence that shows nothing is to be done only through an assumption it does not state: the other issue asks for something different, or the commit does not do what the issue asks, or does only part of it${onFindings ? ", or the findings entry does not show that there is nothing to fix" : ""}.
 
 Do not object to the close's wording, only to what it decides. No criteria were written for a close, so "criterion" is always null. If any objection stands, "outcome" is "overturned" and "objections" lists every one. Otherwise "outcome" is "upheld" and "objections" is empty. Give "reason", one or two sentences for the audit log.
@@ -488,7 +488,7 @@ export async function proposeClose(options: { store: Store; log: OperationalLog 
       log.info("verdict-discarded", { ticketId: ticket.id, state: store.getTicket(ticket.id)?.state ?? null });
       return;
     }
-    challenge = recordedChallenge(run);
+    challenge = recordedChallenge(run, { readings: verdict.readings });
     modelRuns.push(modelRunRecord(request, run));
   }
 
