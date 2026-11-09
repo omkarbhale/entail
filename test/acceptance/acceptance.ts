@@ -55,6 +55,8 @@ Options:
   --executor-interval <seconds> Seconds between the scripted executor's passes (default: 60; each
                                 pass reads every open PR, and the forge's API budget is per account)
   --max-minutes <n>             Time limit for one run (default: 180)
+  --stall-minutes <n>           End a run that has not settled once no ticket has changed state
+                                for this long after the restart (default: 30)
   --restart-after <minutes>     Restart entail by then even if no ticket is landing yet (default: 30)
   --recheck <dir>               Run the pass checks again on the evidence saved in <dir>, without running
   --verbose                     Print every harness event
@@ -76,6 +78,7 @@ const options = {
   "model-run-limit": { type: "string", default: "3" },
   "executor-interval": { type: "string", default: "60" },
   "max-minutes": { type: "string", default: "180" },
+  "stall-minutes": { type: "string", default: "30" },
   "restart-after": { type: "string", default: "30" },
   recheck: { type: "string" },
   verbose: { type: "boolean", default: false },
@@ -222,6 +225,8 @@ async function acceptanceRun(ctx: RunContext): Promise<{ evidence: RunEvidence; 
     const deadline = began + Number(values["max-minutes"]) * 60_000;
     let quiet = 0;
     let lastSummary = "";
+    let lastStates = "";
+    let lastChange = Date.now();
     while (Date.now() < deadline) {
       await sleep(20_000);
       const store = readStore(entail.dataDirectory);
@@ -230,6 +235,11 @@ async function acceptanceRun(ctx: RunContext): Promise<{ evidence: RunEvidence; 
       const line = summary(states);
       if (line !== lastSummary) tag(`${minutes.toFixed(0)} min: ${line}`);
       lastSummary = line;
+      const statesNow = JSON.stringify([...states]);
+      if (statesNow !== lastStates) {
+        lastStates = statesNow;
+        lastChange = Date.now();
+      }
       if (restart === null && isMidway(store, minutes, Number(values["restart-after"]))) {
         const ticketsBefore = store.tickets;
         const stoppedAt = new Date().toISOString();
@@ -249,8 +259,14 @@ async function acceptanceRun(ctx: RunContext): Promise<{ evidence: RunEvidence; 
           break;
         }
       } else quiet = 0;
+      // A ticket no executor can move (such as a landing check that can never pass) would hold the run to its time limit.
+      if (restart !== null && Date.now() - lastChange >= Number(values["stall-minutes"]) * 60_000) {
+        tag(`stalled: no ticket changed state for ${values["stall-minutes"]} minutes`);
+        log({ event: "run-stalled", minutes: Number(values["stall-minutes"]) });
+        break;
+      }
     }
-    if (!settled) tag("stopped at the time limit before every ticket settled");
+    if (!settled) tag("ended before every ticket settled");
     try {
       const response = await fetch(`${entail.origin}/calls`);
       callsPage = response.ok ? await response.text() : null;

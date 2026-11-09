@@ -83,7 +83,7 @@ export interface RunReport {
   run: number;
   startedAt: string;
   finishedAt: string;
-  /** Whether the run settled, or stopped at its time limit. */
+  /** Whether the run settled, or ended at its time limit or after stalling. */
   settled: boolean;
   tickets: TicketReport[];
   checks: CheckResult[];

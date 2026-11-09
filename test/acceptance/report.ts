@@ -11,7 +11,7 @@ export function renderRun(report: RunReport): string {
   const lines = [
     `### ${report.forge} run ${report.run}: ${report.passed ? "every pass check held" : "pass checks failed"}`,
     "",
-    `${report.repo} · ${report.startedAt} → ${report.finishedAt}${report.settled ? "" : " · **stopped at the time limit before every ticket settled**"}`,
+    `${report.repo} · ${report.startedAt} → ${report.finishedAt}${report.settled ? "" : " · **ended (stalled or at the time limit) before every ticket settled**"}`,
     "",
     `Model runs: **${report.modelRuns}**, estimated cost **${usd(report.costUsd)}**.`,
     "",
