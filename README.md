@@ -36,9 +36,9 @@ Then:
 2. Open `http://127.0.0.1:7419/settings` and set your display name.
 3. Open `http://127.0.0.1:7419/repos` and enroll a repo: forge (`github` or `gitlab`), host and path. entail checks access and proposes generic criteria for you to confirm.
 
-   ![A repo's settings page: generic criteria, merge method and pins](docs/assets/repo-settings.png)
+   ![A repo's settings page: identity details and generic criteria](docs/assets/repo-settings.png)
 
-   *A repo's settings: generic criteria, merge method, who counts as an executor and pins.*
+   *A repo's settings: its identity details and generic criteria.*
 
 4. Open a new issue in that repo. Within a minute entail comments on it, or puts a decision on the board at `http://127.0.0.1:7419/`.
 5. Answer board items there. The board form is the only way an answer enters entail.
