@@ -4,7 +4,9 @@
 import type { RunReport, Verdict } from "./checks.ts";
 
 const usd = (value: number) => `$${value.toFixed(2)}`;
-const cell = (text: string) => text.replaceAll("|", "\\|").replaceAll("\n", " ");
+/** Fixture issue and PR numbers as code, so a forge never links them to the repo the report is posted in. */
+const refs = (text: string) => text.replace(/(?<![`\w])#(\d+)/g, "`#$1`");
+const cell = (text: string) => refs(text.replaceAll("|", "\\|").replaceAll("\n", " "));
 
 /** One run as Markdown. */
 export function renderRun(report: RunReport): string {
@@ -19,7 +21,7 @@ export function renderRun(report: RunReport): string {
     "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ...report.tickets.map(
       (t) =>
-        `| ${t.id}${t.wrongClear ? " **wrong clear**" : ""} | ${t.issue === null ? "–" : `#${t.issue}`} | ${t.expectedEnd} | ${t.endsAsExpected ? "" : "✗ "}${t.endState} | ${
+        `| ${t.id}${t.wrongClear ? " **wrong clear**" : ""} | ${t.issue === null ? "–" : `\`#${t.issue}\``} | ${t.expectedEnd} | ${t.endsAsExpected ? "" : "✗ "}${t.endState} | ${
           t.clearedAutomatically ? `yes (${t.clearedAs})` : "no"
         } | ${cell(t.path)} | ${t.modelRuns} | ${usd(t.costUsd)} |`,
     ),
@@ -34,7 +36,7 @@ export function renderRun(report: RunReport): string {
     lines.push("Extra board items:", "");
     for (const item of report.extraBoardItems) {
       lines.push(
-        `- ${item.ticket ?? "?"} (issue #${item.issue}), item ${item.item}, raised for ${item.whyRaised}: “${item.decision}” — ${
+        `- ${item.ticket ?? "?"} (issue \`#${item.issue}\`), item ${item.item}, raised for ${item.whyRaised}: “${refs(item.decision)}” — ${
           item.answered === null ? "left unanswered" : `answered ${JSON.stringify(item.answered)}`
         }`,
       );
