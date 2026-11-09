@@ -11,6 +11,7 @@ import { BoardDriver } from "./board-driver.ts";
 import { ScriptedExecutor, Workspace } from "./executor.ts";
 import { FIXTURE_REPO_NAME } from "./fixture.ts";
 import { createForge, type Forge, type ForgeKind } from "./forge.ts";
+import { acquireFixtureLock, refuseInsidePipeline, type LockOptions } from "./lock.ts";
 import { resetFixture, setupFixture, startingStateDifferences, type HarnessEvent, type Log } from "./reset.ts";
 
 const USAGE = `Usage: node test/acceptance/harness.ts <command> [options]
@@ -32,6 +33,11 @@ Options:
   --once                        Make one pass and exit
   --work-dir <path>             Where the executor keeps its clones (default: a directory under the system temp dir)
   --events <file>               Also append every event to this JSON-lines file
+  --break-lock                  Take a fixture's lock even though it is held, when its holder is gone
+
+setup, reset, executor and play hold each fixture repo's lock while they run,
+and refuse to start while another run or reset holds it. Every command but
+check refuses to run inside a review pipeline (NO_MISTAKES_GATE set).
 `;
 
 const options = {
@@ -43,6 +49,7 @@ const options = {
   once: { type: "boolean", default: false },
   "work-dir": { type: "string" },
   events: { type: "string" },
+  "break-lock": { type: "boolean", default: false },
   help: { type: "boolean", short: "h", default: false },
 } as const;
 
@@ -112,14 +119,18 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(USAGE);
     return command === undefined && !values.help ? 2 : 0;
   }
+  if (command !== "check") refuseInsidePipeline(`harness ${command}`);
   const log = logger(values.events);
   const targets = await forges(values);
+  const lock: LockOptions = { breakStale: values["break-lock"] };
+  // The executor writes to the fixture repos for as long as it runs: it holds their locks throughout.
+  if (command === "executor" || command === "play") for (const forge of targets) acquireFixtureLock(forge, lock);
   switch (command) {
     case "setup":
-      for (const forge of targets) await setupFixture(forge, log);
+      for (const forge of targets) await setupFixture(forge, log, { lock });
       return 0;
     case "reset":
-      for (const forge of targets) await resetFixture(forge, log);
+      for (const forge of targets) await resetFixture(forge, log, { lock });
       return 0;
     case "check": {
       let clean = true;

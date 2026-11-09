@@ -14,6 +14,7 @@ import {
   type TicketId,
 } from "./fixture.ts";
 import { ForgeError, type Forge, type RepoInfo } from "./forge.ts";
+import { withFixtureLock, type LockOptions } from "./lock.ts";
 import { git, writeTree } from "./tree.ts";
 
 export type HarnessEvent = Record<string, unknown> & { event: string };
@@ -71,9 +72,14 @@ export interface ResetResult {
 /**
  * Brings a fixture repo back to tally's starting state. Every step reads the
  * forge first and only removes or adds what differs, so running it again, or
- * after an interrupted run, ends in the same state.
+ * after an interrupted run, ends in the same state. It holds the fixture's
+ * lock throughout, and refuses to start while another process holds it.
  */
-export async function resetFixture(forge: Forge, log: Log = () => {}, options: ResetOptions = {}): Promise<ResetResult> {
+export function resetFixture(forge: Forge, log: Log = () => {}, options: ResetOptions = {}): Promise<ResetResult> {
+  return withFixtureLock(forge, options.lock ?? {}, () => resetLocked(forge, log, options));
+}
+
+async function resetLocked(forge: Forge, log: Log, options: ResetOptions): Promise<ResetResult> {
   const repo = await forge.repo();
   assertFixture(forge, repo);
   const where = `${forge.kind}:${repo.path}`;
@@ -121,6 +127,8 @@ export async function resetFixture(forge: Forge, log: Log = () => {}, options: R
 }
 
 export interface ResetOptions extends SettleOptions {
+  /** How to take the fixture's lock; `breakStale` breaks a lock whose holder is gone. */
+  lock?: LockOptions;
   /**
    * Whether to file T1–T13 again (the default). The acceptance run resets
    * without them, enrolls the repo, then files them, because entail takes in
@@ -215,11 +223,13 @@ export async function startingStateDifferences(forge: Forge): Promise<string[]> 
   return differences;
 }
 
-/** Creates a fixture repo if it is missing, then resets it. */
-export async function setupFixture(forge: Forge, log: Log = () => {}, options: SettleOptions = {}): Promise<ResetResult> {
-  if ((await forge.repo()) === undefined) {
-    await forge.createPrivateRepo(FIXTURE_DESCRIPTION);
-    log({ event: "repo-created", forge: forge.kind, repo: forge.path });
-  }
-  return resetFixture(forge, log, options);
+/** Creates a fixture repo if it is missing, then resets it, holding the fixture's lock throughout. */
+export function setupFixture(forge: Forge, log: Log = () => {}, options: ResetOptions = {}): Promise<ResetResult> {
+  return withFixtureLock(forge, options.lock ?? {}, async () => {
+    if ((await forge.repo()) === undefined) {
+      await forge.createPrivateRepo(FIXTURE_DESCRIPTION);
+      log({ event: "repo-created", forge: forge.kind, repo: forge.path });
+    }
+    return resetFixture(forge, log, options);
+  });
 }

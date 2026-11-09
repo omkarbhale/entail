@@ -7,6 +7,10 @@ import { FIXTURE_DESCRIPTION } from "./fixture.ts";
 import type { Account, Comment, Forge, ForgeKind, Issue, NewPullRequest, PullRequest, RepoInfo } from "./forge.ts";
 import { git } from "./tree.ts";
 
+// The harness's own tests never take the real fixture locks: every test
+// process that uses the fake forge locks under a directory of its own.
+process.env.ENTAIL_ACCEPTANCE_LOCK_DIR ??= mkdtempSync(join(tmpdir(), "entail-acceptance-locks-"));
+
 export class FakeForge implements Forge {
   readonly kind: ForgeKind;
   readonly host: string;

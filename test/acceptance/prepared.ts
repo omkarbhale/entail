@@ -495,38 +495,50 @@ test('formats the counts alone when there is no name', () => {
   ],
 };
 
-// T11 -----------------------------------------------------------------------
+// T11 and T13 ----------------------------------------------------------------
+//
+// Both issues are about the vision's word rule, "A word is a run of characters
+// between whitespace.", and entail's criteria for each ask for the whole line:
+// runs of any whitespace separate words, and no whitespace makes a word. So
+// each change brings tally to the whole rule on its own, with its own tests for
+// what its issue reported. Whichever merges second finds the rule already in
+// place and adds only its tests; the two edit the word-splitting line the same
+// way, so open PRs for both merge without a conflict.
 
 /** The word-splitting expression, in whatever form the default branch holds it. */
 const WORD_SPLIT = /line\.split\([^\n]*?\)(?:\.filter\(Boolean\))?\.length/;
-/** T11 alone: runs of ASCII whitespace; whether other Unicode whitespace separates words is T13's question. */
-const ASCII_RUNS = "line.split(/[ \\t\\n\\r\\f\\v]+/).filter(Boolean).length";
-/** T13 alone: any Unicode whitespace separates words, one character at a time as the space did. */
-const UNICODE_SINGLE = "line.split(/\\p{White_Space}/u).length";
-/** T11 and T13 together. */
-const UNICODE_RUNS = "line.split(/\\p{White_Space}+/u).filter(Boolean).length";
+/**
+ * The vision's word rule: runs of Unicode whitespace separate words, and
+ * empty pieces (leading or trailing whitespace) are not words.
+ * \p{White_Space}, not \s: \s also matches U+FEFF, which is not whitespace.
+ */
+export const WORD_RULE = "line.split(/\\p{White_Space}+/u).filter(Boolean).length";
 
-/** Replaces the word-splitting expression under src/; throws when there is none. */
-function replaceWordSplit(tree: Tree, id: TicketId, next: (current: string) => string): void {
+/** Puts {@link WORD_RULE} in place of the word-splitting expression under src/; throws when there is none. */
+function applyWordRule(tree: Tree, id: TicketId): void {
   let found = false;
   for (const [path, text] of tree) {
-    const match = path.startsWith("src/") ? WORD_SPLIT.exec(text) : null;
-    if (!match) continue;
-    tree.set(path, text.replace(WORD_SPLIT, next(match[0])));
+    if (!path.startsWith("src/") || !WORD_SPLIT.test(text)) continue;
+    tree.set(path, text.replace(WORD_SPLIT, WORD_RULE));
     found = true;
   }
   if (!found) throw new PreparedChangeError(`${id}: the word-splitting code was not found under src/`);
 }
 
+/** The facts both changes report about the word rule itself. */
+const WORD_RULE_FACT = {
+  keywords: ["between whitespace", "run of characters", "any whitespace", "whitespace", "vision", "word is"],
+  text: "tally counts the words of a line as `line.split(/\\p{White_Space}+/u).filter(Boolean).length`: a word is a run of characters between whitespace, a run of any Unicode whitespace separates two words, and leading or trailing whitespace adds no word. It uses Unicode's White_Space property rather than `\\s`, which would also match U+FEFF",
+};
+
 const T11: PreparedChange = {
   id: "T11",
-  summary: "Words are counted as runs of characters between whitespace, so a leading, doubled or trailing space no longer adds a word.",
+  summary: "Words are counted as runs of characters between whitespace, so a leading, doubled or trailing space, or any other whitespace, no longer adds a word.",
   steps: [
     {
       subject: "Count a word as a run of characters between whitespace",
       apply(tree) {
-        // Runs of whitespace, not single spaces: on Unicode whitespace once T13 has merged.
-        replaceWordSplit(tree, "T11", (current) => (current.includes("White_Space") ? UNICODE_RUNS : ASCII_RUNS));
+        applyWordRule(tree, "T11");
         addFile(
           tree,
           "test/words.test.js",
@@ -539,8 +551,12 @@ test('doubled and trailing spaces do not count as words', () => {
   assert.deepEqual(counts(tally([file('one  two \\n')]).stdout), [1, 2, 10]);
 });
 
-test('a tab separates words', () => {
-  assert.deepEqual(counts(tally([file('one\\ttwo\\n')]).stdout), [1, 2, 8]);
+test('a line of only whitespace has no words', () => {
+  assert.deepEqual(counts(tally([file('one\\n \\t \\ntwo\\n')]).stdout), [3, 2, 12]);
+});
+
+test('a run of any whitespace separates words: tabs, non-breaking and other Unicode spaces', () => {
+  assert.deepEqual(counts(tally([file('one\\ttwo\\u00a0three\\u2003 four\\n')]).stdout), [1, 4, 20]);
 });
 `,
         );
@@ -553,28 +569,25 @@ test('a tab separates words', () => {
       text: "test/words.test.js counts ` one two` as 2 words; before the change tally counted 3",
     },
     {
-      keywords: ["whitespace", "run", "doubled", "trailing", "tab"],
-      text: "test/words.test.js checks that doubled and trailing spaces add no word and that a tab separates words",
+      keywords: ["run", "doubled", "trailing", "only whitespace", "blank"],
+      text: "test/words.test.js checks that doubled and trailing spaces add no word and that a line of only spaces and tabs has no words",
     },
     {
-      keywords: ["unicode", "non-breaking", "other whitespace", "whitespace character"],
-      text: "words are split on runs of ASCII whitespace (space, tab, line feed, carriage return, vertical tab, form feed); which other Unicode characters separate words is not changed here",
+      keywords: ["tab", "unicode", "non-breaking", "other whitespace", "whitespace character", "any whitespace"],
+      text: "test/words.test.js counts `one\\ttwo\\u00a0three\\u2003 four` as 4 words: a tab, a non-breaking space (U+00A0) and an em space (U+2003) followed by a space each separate words, a run of them counting once",
     },
+    WORD_RULE_FACT,
   ],
 };
 
-// T13 -----------------------------------------------------------------------
-
 const T13: PreparedChange = {
   id: "T13",
-  summary: "Any Unicode whitespace, including a non-breaking space, separates words.",
+  summary: "Any Unicode whitespace, including a non-breaking space, separates words, and a run of it counts as one separator.",
   steps: [
     {
       subject: "Separate words on any Unicode whitespace",
       apply(tree) {
-        // \p{White_Space}, not \s: \s also matches U+FEFF, which is not whitespace. Only which
-        // characters separate words changes: runs stay as they were until T11 merges.
-        replaceWordSplit(tree, "T13", (current) => (current.includes("filter(Boolean)") ? UNICODE_RUNS : UNICODE_SINGLE));
+        applyWordRule(tree, "T13");
         addFile(
           tree,
           "test/unicode-whitespace.test.js",
@@ -585,6 +598,14 @@ test('a non-breaking space separates words', () => {
 
 test('other Unicode whitespace separates words', () => {
   assert.deepEqual(counts(tally([file('one\\u2003two\\u3000three\\n')]).stdout), [1, 3, 14]);
+});
+
+test('a run of whitespace, or whitespace at either end, adds no word', () => {
+  assert.deepEqual(counts(tally([file('\\u00a0one\\u00a0\\u00a0two \\u00a0\\n')]).stdout), [1, 2, 12]);
+});
+
+test('U+FEFF, which is not whitespace, does not separate words', () => {
+  assert.deepEqual(counts(tally([file('one\\ufefftwo\\n')]).stdout), [1, 1, 8]);
 });
 `,
         );
@@ -597,13 +618,18 @@ test('other Unicode whitespace separates words', () => {
       text: "test/unicode-whitespace.test.js counts `one\\u00a0two` as 2 words; before the change tally counted 1",
     },
     {
-      keywords: ["unicode", "whitespace", "any", "other tools"],
+      keywords: ["unicode", "any", "other tools", "em space", "ideographic"],
       text: "test/unicode-whitespace.test.js checks that an em space (U+2003) and an ideographic space (U+3000) separate words too",
     },
     {
-      keywords: ["only", "ascii", "unchanged", "same", "run", "between whitespace", "u+feff", "byte-order"],
-      text: "only which characters separate words changes: the split uses Unicode's White_Space property (not `\\s`, which would also match U+FEFF), and runs of spaces count as they did before",
+      keywords: ["run", "leading", "trailing", "doubled", "end"],
+      text: "test/unicode-whitespace.test.js counts `\\u00a0one\\u00a0\\u00a0two \\u00a0` as 2 words: a run of whitespace separates two words once, and whitespace at either end adds no word",
     },
+    {
+      keywords: ["u+feff", "byte-order", "zero width", "not whitespace", "\\s"],
+      text: "test/unicode-whitespace.test.js checks that U+FEFF, which is not whitespace, does not separate words",
+    },
+    WORD_RULE_FACT,
   ],
 };
 

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { FIXTURE_ISSUES, startingTree, type TicketId, type Tree } from "./fixture.ts";
-import { applyPrepared, EXPECTED_ANSWERS, EXTRA_ANSWERS, PREPARED_CHANGES, PREPARED_FINDINGS } from "./prepared.ts";
+import { applyPrepared, EXPECTED_ANSWERS, EXTRA_ANSWERS, PREPARED_CHANGES, PREPARED_FINDINGS, WORD_RULE } from "./prepared.ts";
 import { runTests, writeTree } from "./tree.ts";
 
 function scratch(t: TestContext): string {
@@ -121,7 +121,45 @@ test("open PRs merge without conflicts, except the ones that share the counting 
       }
     }
   }
-  assert.deepEqual([...conflicting].sort(), ["T11+T13", "T3+T11", "T3+T13"]);
+  assert.deepEqual([...conflicting].sort(), ["T3+T11", "T3+T13"]);
+});
+
+/** Word counts the vision's word rule gives: "A word is a run of characters between whitespace." */
+const WORD_RULE_CASES: readonly [text: string, words: number][] = [
+  ["one two\n", 2],
+  [" one two\n", 2],
+  ["one  two \n", 2],
+  ["one\ttwo\n", 2],
+  ["\t\u00a0\n", 0],
+  ["one\u00a0two\n", 2],
+  ["one\u2003two\u3000three\n", 3],
+  ["\u00a0one\u00a0\u00a0two\u2003\n", 2],
+  ["one\r\ntwo\r\n", 2],
+  ["one\ufefftwo\n", 1],
+];
+
+test("T11 and T13 each bring tally to the whole word rule on their own, in any order with T3", (t) => {
+  const orders: TicketId[][] = [["T11"], ["T13"], ["T3", "T11"], ["T3", "T13"], ["T11", "T13"], ["T13", "T11"], ["T11", "T3", "T13"], ["T13", "T3", "T11"]];
+  for (const order of orders) {
+    const { directory } = testsOf(t, applyAll(startingTree(), order));
+    for (const [n, [text, words]] of WORD_RULE_CASES.entries()) {
+      const path = join(directory, `words-${n}.txt`);
+      writeFileSync(path, text);
+      const result = tally(directory, [path]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(Number(result.stdout.trim().split(/ +/)[1]), words, `${order.join(", ")}: ${JSON.stringify(text)}`);
+    }
+  }
+});
+
+test("whichever of T11 and T13 merges second changes no code, only adds its tests", () => {
+  for (const [first, second] of [["T11", "T13"], ["T13", "T11"]] as const) {
+    const before = applyAll(startingTree(), [first]);
+    const after = applyAll(before, [second]);
+    const changed = [...after.keys()].filter((path) => after.get(path) !== before.get(path));
+    assert.deepEqual(changed, second === "T11" ? ["test/words.test.js"] : ["test/unicode-whitespace.test.js"]);
+    assert.ok(before.get("src/cli.js")!.includes(WORD_RULE));
+  }
 });
 
 test("prepared work covers every expected path in the outcomes table", () => {
