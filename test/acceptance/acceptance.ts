@@ -50,7 +50,8 @@ Options:
   --out <dir>                   Where reports, evidence and entail's data go
                                 (default: a new directory under the system temp dir)
   --owner-name <name>           The display name entail answers and comments as (default: your forge login)
-  --poll-interval <seconds>     entail's poll interval (default: 15)
+  --poll-interval <seconds>     entail's poll interval (default: 45; each pass re-reads every landing PR,
+                                and the forge's API budget is per account)
   --model-run-limit <n>         entail's limit on model runs at once (default: 3)
   --executor-interval <seconds> Seconds between the scripted executor's passes (default: 60; each
                                 pass reads every open PR, and the forge's API budget is per account)
@@ -74,7 +75,7 @@ const options = {
   "gitlab-repo": { type: "string" },
   out: { type: "string" },
   "owner-name": { type: "string" },
-  "poll-interval": { type: "string", default: "15" },
+  "poll-interval": { type: "string", default: "45" },
   "model-run-limit": { type: "string", default: "3" },
   "executor-interval": { type: "string", default: "60" },
   "max-minutes": { type: "string", default: "180" },
