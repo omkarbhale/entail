@@ -199,6 +199,7 @@ async function acceptanceRun(ctx: RunContext): Promise<{ evidence: RunEvidence; 
   await resetFixture(forge, log, { fileIssues: false });
 
   const entail = new EntailProcess({ dataHome: join(directory, "data-home"), logFile: join(directory, "entail.log"), port: Number(values.port) });
+  runningEntail = entail;
   const issueNumbers: Partial<Record<TicketId, number>> = {};
   let restart: RestartRecord | null = null;
   let settled = false;
@@ -403,6 +404,17 @@ async function main(argv: string[]): Promise<number> {
   if (verdict.status === "failed") return 1;
   if (verdict.github === "passed" && verdict.gitlab === "pending") return 3;
   return 4;
+}
+
+let runningEntail: EntailProcess | undefined;
+
+for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
+  let signalled = false;
+  process.on(signal, () => {
+    if (signalled) process.exit(code);
+    signalled = true;
+    (runningEntail?.stop() ?? Promise.resolve()).catch(() => {}).finally(() => process.exit(code));
+  });
 }
 
 // Exits explicitly: idle keep-alive connections to entail's pages and the forge would otherwise hold the process open.
