@@ -1,5 +1,7 @@
 # Criteria are a few outcomes with mechanical checks, and the owner never signs them off
 
+> **Amended by ADR-0021.** Decision records, the spec, other docs, tests and code are design history: they are never a criterion's source, and criteria never lock a ticket in or narrow it to what they describe. A ticket that overturns a recorded decision lists the record in `records_overturned`, and a check before clearing requires a criterion whose `changes_path` glob matches it, to update or supersede it.
+
 entail writes each cleared ticket's criteria itself, because an issue is a request or a symptom with no implementation idea. The criteria are a few numbered outcomes: what is true once the issue is resolved, plus any vision constraint the change must respect, which may restate a vision line. Each criterion is one sentence traced to its source. Where it can, it carries **mechanical checks** from a closed list that entail computes from forge data alone: the PR changes a path, leaves a path alone, or a named check run, status or pipeline job passes. The owner never signs criteria off. A criterion that would fix something a user can observe, which its source does not choose, is a product call and sends the ticket to the board. VISION.md prefers mechanical checks wherever a criterion allows one and gives settled work a zero-ceremony path. entail never runs code, so the forge's diff and check results are all it can verify mechanically.
 
 ## Considered options

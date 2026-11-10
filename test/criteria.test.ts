@@ -111,6 +111,7 @@ function settledCriteria(...extra: CriterionOut[]): CriteriaOutput {
       criterion({ id: "C2", sentence: "Words stay runs of characters between whitespace.", source: { kind: "vision_line", ref: WORD_LINE }, checks: [{ kind: "check_passes", argument: "test" }] }),
       ...extra,
     ],
+    records_overturned: [],
     product_call: null,
   };
 }
@@ -129,6 +130,7 @@ function unopposedCriteria(): CriteriaOutput {
         ],
       }),
     ],
+    records_overturned: [],
     product_call: null,
   };
 }
@@ -138,6 +140,7 @@ const UPHELD: ChallengeOutput = { outcome: "upheld", objections: [], reason: "No
 const PRODUCT_CALL: CriteriaOutput = {
   outcome: "needs_product_call",
   criteria: [],
+  records_overturned: [],
   product_call: {
     reason: "Whether `--json` prints numbers or strings is something users see, and nothing chooses it.",
     options: [
@@ -263,7 +266,7 @@ test("criteria that are right on every count pass every check, in order", () => 
   assert.equal(checks.passed, true);
   assert.deepEqual(
     checks.results.map((r) => r.check),
-    [CRITERIA_CHECKS.count, CRITERIA_CHECKS.sources, CRITERIA_CHECKS.mechanicalChecks, CRITERIA_CHECKS.fences, CRITERIA_CHECKS.readingChosen, CRITERIA_CHECKS.noSlash],
+    [CRITERIA_CHECKS.count, CRITERIA_CHECKS.sources, CRITERIA_CHECKS.mechanicalChecks, CRITERIA_CHECKS.fences, CRITERIA_CHECKS.readingChosen, CRITERIA_CHECKS.recordsSuperseded, CRITERIA_CHECKS.noSlash],
   );
   const fenced = checkCriteria(unopposedCriteria(), context({ verdict: unopposed() as never, fences: ["VISION.md", "src/format.js"] }));
   assert.equal(fenced.passed, true);
@@ -274,7 +277,7 @@ test("criteria that are right on every count pass every check, in order", () => 
 
 /** Each check, with crafted output that fails it alone. */
 const FAILING: [string, CriteriaOutput, Partial<CriteriaContext>, string, RegExp][] = [
-  ["no criterion", { outcome: "criteria", criteria: [], product_call: null }, {}, CRITERIA_CHECKS.count, /writes no criterion/],
+  ["no criterion", { outcome: "criteria", criteria: [], records_overturned: [], product_call: null }, {}, CRITERIA_CHECKS.count, /writes no criterion/],
   [
     "six criteria",
     settledCriteria(criterion({ id: "C3" }), criterion({ id: "C4" }), criterion({ id: "C5" }), criterion({ id: "C6" })),
@@ -351,6 +354,13 @@ const FAILING: [string, CriteriaOutput, Partial<CriteriaContext>, string, RegExp
     {},
     CRITERIA_CHECKS.readingChosen,
     /C3 states “R2”, but the reading the ticket goes ahead with is “R1”/,
+  ],
+  [
+    "an overturned decision record no criterion supersedes",
+    { ...settledCriteria(), records_overturned: [{ path: "docs/adr/0003-words-split-on-spaces.md", decision: "Words split on ASCII spaces only." }] },
+    {},
+    CRITERIA_CHECKS.recordsSuperseded,
+    /The ticket overturns “docs\/adr\/0003-words-split-on-spaces\.md”, but no criterion carries a changes-path check matching it, to update or supersede it\./,
   ],
   [
     "a line starting with /",

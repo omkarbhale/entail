@@ -98,11 +98,15 @@ The vision passage that a settled verdict, or any call that says the vision sett
 **Pin**:
 A topic the owner has said must always come to them, even where the vision settles it or no decision exists yet, optionally with paths and keywords that also mark it as touched. The vision itself is always pinned, in every repo.
 
+**Design history**:
+Everything in a repo other than its vision of record and its pins, such as decision records, a spec, other docs, tests and the code itself. It may inform how a change is built, but it never binds: a ticket that departs from it contradicts nothing, it never makes readings consequential, and criteria never lock a ticket to it. A ticket that overturns a decision it records gets a criterion to update or supersede that record.
+_Avoid_: Precedent, constraint
+
 **Challenge**:
-An independent second judgment that tries to overturn an automatic verdict by finding a vision line the ticket contradicts, a touched pin, a consequential reading or an uncited assumption; if it succeeds with a concrete objection (a second reading with a different observable outcome, a pin by its topic, or a quoted line), the ticket needs the owner.
+An independent second judgment that tries to overturn an automatic verdict by finding a vision line the ticket contradicts, a touched pin, a consequential reading or an uncited assumption; if it succeeds with a concrete objection (a second reading with a different observable outcome, a pin by its topic, or a quoted vision line), the ticket needs the owner. It never objects that a ticket goes against design history.
 
 **Criteria**:
-What one ticket's PR must contain, written by entail because an issue carries no implementation idea: a few numbered outcomes, namely what is true once the issue is resolved and any vision constraint the change must respect. Each outcome is traced to its source (the issue, an entry of its findings, a vision line or the owner's answer) and may carry mechanical checks. They are published on the issue when the ticket is cleared and are frozen from then on; only a new version written by a new call changes them.
+What one ticket's PR must contain, written by entail because an issue carries no implementation idea: a few numbered outcomes, namely what is true once the issue is resolved and any vision constraint the change must respect. Each outcome is traced to its source (the issue, an entry of its findings, a vision line or the owner's answer, never design history) and may carry mechanical checks. When the ticket overturns a decision that design history records, one outcome requires updating or superseding that record. They are published on the issue when the ticket is cleared and are frozen from then on; only a new version written by a new call changes them.
 _Avoid_: Acceptance criteria, requirements
 
 **Evidence**:

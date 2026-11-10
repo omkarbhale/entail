@@ -3,7 +3,7 @@ import { test, type TestContext } from "node:test";
 import { setImmediate as immediate } from "node:timers/promises";
 import { afterAnswerPlanner } from "../src/after-answer.ts";
 import { boardPlanner, type BoardItemSnapshot } from "../src/board-item.ts";
-import type { ChallengeOutput } from "../src/challenge.ts";
+import { CHALLENGE_PROMPT_VERSION, type ChallengeOutput } from "../src/challenge.ts";
 import { assertCommentRules } from "../src/comment-rules.ts";
 import { criteriaInForce, criteriaPlanner, type CriteriaDetail } from "../src/criteria.ts";
 import { deciderPlanner } from "../src/decider.ts";
@@ -33,6 +33,7 @@ import { ScriptedRunner } from "../src/scripted-runner.ts";
 import type { CallRecord, RepoRecord, TicketRecord } from "../src/store.ts";
 import { blobAt } from "../src/vision-change.ts";
 import { splitVisionLines } from "../src/vision.ts";
+import { WHAT_BINDS } from "../src/what-binds.ts";
 import { FixtureRepo } from "./git-fixture.ts";
 import { actor, IntakeForge, issue, passSetup, type PassSetup } from "./pass-fixture.ts";
 
@@ -102,6 +103,7 @@ const SETTLED_CRITERIA: CriteriaOutput = {
     { id: "C1", sentence: "`tally` counts `a-b` as one word.", source: { kind: "issue", ref: null }, checks: [], states_reading: "R1" },
     { id: "C2", sentence: "Words stay runs of characters between whitespace.", source: { kind: "vision_line", ref: WORD_LINE }, checks: [{ kind: "check_passes", argument: "test" }], states_reading: null },
   ],
+  records_overturned: [],
   product_call: null,
 };
 
@@ -112,6 +114,7 @@ const REWORDED_CRITERIA: CriteriaOutput = {
     { id: "C1", sentence: "`tally` counts `a-b` as one word.", source: { kind: "issue", ref: null }, checks: [], states_reading: "R1" },
     { id: "C2", sentence: "Words stay runs of characters between any whitespace.", source: { kind: "vision_line", ref: WORD_LINE_REWORDED }, checks: [], states_reading: null },
   ],
+  records_overturned: [],
   product_call: null,
 };
 
@@ -126,6 +129,7 @@ const UNOPPOSED_CRITERIA: CriteriaOutput = {
       states_reading: "R1",
     },
   ],
+  records_overturned: [],
   product_call: null,
 };
 
@@ -135,6 +139,7 @@ const JSON_CRITERIA: CriteriaOutput = {
     { id: "C1", sentence: "`tally --json` prints one JSON array of every input.", source: { kind: "issue", ref: null }, checks: [], states_reading: "R2" },
     { id: "C2", sentence: "Machine-readable output is one JSON array per run.", source: { kind: "vision_line", ref: JSON_LINE }, checks: [], states_reading: null },
   ],
+  records_overturned: [],
   product_call: null,
 };
 
@@ -449,7 +454,7 @@ test("outcome 1, stands: a line added elsewhere flags the ticket, and the re-che
   assert.deepEqual(call.detail.visionChangeIds, [change!.id]);
   assert.deepEqual([call.citation?.visionSha, call.citation?.lines], [sha, [WORD_LINE]]);
   assert.equal(call.inputs?.visionSha, sha);
-  assert.deepEqual(call.modelRuns.map((run) => [run.purpose, run.promptVersion]), [["re-check", RECHECK_PROMPT_VERSION], ["challenge", "challenge-4"]]);
+  assert.deepEqual(call.modelRuns.map((run) => [run.purpose, run.promptVersion]), [["re-check", RECHECK_PROMPT_VERSION], ["challenge", CHALLENGE_PROMPT_VERSION]]);
   const prompt = h.runner.requests.find((request) => request.kind === "re-check")!.prompt;
   assert.match(prompt, /Added lines, each with its recorded origin:\n- "Counts are exact\." \(origin: agent-proposed-owner-approved\)/);
   assert.match(prompt, /"reading_chosen": null/);
@@ -1087,6 +1092,7 @@ const ANSWERED_PRIOR = settled({
 const ANSWER_CRITERIA: CriteriaOutput = {
   outcome: "criteria",
   criteria: [{ id: "C1", sentence: "`tally` counts `a-b` as one word.", source: { kind: "answer", ref: null }, checks: [], states_reading: null }],
+  records_overturned: [],
   product_call: null,
 };
 
@@ -1444,4 +1450,113 @@ test("recording an edit is safe to run twice, and does nothing for a final ticke
   h.setup.store.recordCall({ ticketId: ticket.id, kind: "cancel-on-outside-close", reason: "Closed.", stateTo: "cancelled" });
   assert.equal(recordIssueEdit(h.setup.store, ticket.id, { title: "Another title", body: EDITED }, settingsId), null);
   assert.equal(h.calls(1, "issue-edit").length, 1);
+});
+
+// Only the vision and the pins bind (ADR-0021, issue #170): an edit that asks to overturn a decision record is cleared, and its criteria supersede the record.
+
+const ADR_PATH = "docs/adr/0017-tally-is-plain-node-with-no-ui-framework.md";
+const ADR_LINE = "tally is plain Node with no UI framework and no build step.";
+const PROGRESS_TITLE = "Show progress while counting large files";
+const PROGRESS_BODY = "Counting a large file shows nothing until it ends. tally should show its progress while it counts.";
+const FRAMEWORK_BODY = "Counting a large file shows nothing until it ends. tally should show a progress bar while it counts, built with a terminal UI framework.";
+const PROGRESS_LINE = "tally counts the words of text files.";
+
+function progressVerdict(reading: { reading: string; observed_outcome: string }): VerdictOutput {
+  return settled({
+    readings: [{ id: "R1", ...reading }],
+    vision_check: [{ line: PROGRESS_LINE, mark: "does_not_settle" }],
+    verdict: "unopposed",
+    citations: [],
+    why_unopposed: "No vision line speaks to showing progress, or to how tally's display is built.",
+    reading_chosen: "R1",
+    reason: "Nothing in the vision opposes showing progress.",
+  });
+}
+
+const PROGRESS = { reading: "Show a progress line on standard error.", observed_outcome: "`tally big.txt` shows its progress on standard error while it counts." };
+const FRAMEWORK = { reading: "Show a progress bar built with a terminal UI framework.", observed_outcome: "`tally big.txt` shows a progress bar while it counts." };
+
+/** The criteria the first call locked to ADR 0017, as entail wrote them before #170. */
+const LOCKED_CRITERIA: CriteriaOutput = {
+  outcome: "criteria",
+  criteria: [
+    { id: "C1", sentence: "`tally` shows its progress on standard error while counting a large file.", source: { kind: "issue", ref: null }, checks: [{ kind: "leaves_path", argument: "VISION.md" }], states_reading: "R1" },
+    { id: "C2", sentence: "tally stays plain Node with no UI framework and no build step, as ADR 0017 describes.", source: { kind: "issue", ref: null }, checks: [], states_reading: null },
+  ],
+  records_overturned: [],
+  product_call: null,
+};
+
+/** The criteria after the edit: the framework the issue asks for, and ADR 0017 superseded. */
+const SUPERSEDING_CRITERIA: CriteriaOutput = {
+  outcome: "criteria",
+  criteria: [
+    {
+      id: "C1",
+      sentence: "`tally` shows a progress bar, built with a terminal UI framework, while it counts a large file.",
+      source: { kind: "issue", ref: null },
+      checks: [{ kind: "leaves_path", argument: "VISION.md" }],
+      states_reading: "R1",
+    },
+    { id: "C2", sentence: "ADR 0017 is superseded by a decision record for the terminal UI framework.", source: { kind: "issue", ref: null }, checks: [{ kind: "changes_path", argument: "docs/adr/**" }], states_reading: null },
+  ],
+  records_overturned: [{ path: ADR_PATH, decision: ADR_LINE }],
+  product_call: null,
+};
+
+test("an edit asking for a framework against a decision record goes ahead, cleared with criteria that supersede the record, and is never raised to the board (issue #170, as #169)", async (t) => {
+  const h = await harness(t);
+  h.fixture.write(ADR_PATH, `# tally is plain Node with no UI framework\n\n${ADR_LINE}\n`).commit("Record ADR 0017");
+  h.fixture.push();
+  h.forge.issues = [issue(1, { title: PROGRESS_TITLE, body: PROGRESS_BODY })];
+  h.runner.script("verdict", "1", { output: progressVerdict(PROGRESS) });
+  h.runner.script("criteria", "1", { output: LOCKED_CRITERIA });
+  h.runner.script("challenge", "1", { output: UPHELD });
+  await h.pass(3);
+  const ticket = h.ticket();
+  assert.equal(ticket.state, "cleared");
+
+  // The edit asks for a framework against ADR 0017. The re-check goes ahead differently,
+  // and a first criteria output that leaves the record standing is invalid and retried.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  h.editIssue({ body: FRAMEWORK_BODY });
+  const { size: _s, close_evidence: _c, questions: _q, verdict: _v, ...call } = progressVerdict(FRAMEWORK);
+  h.runner.script("re-check", String(ticket.id), {
+    output: { outcome: "goes_ahead_differently", ...call, verdict: "unopposed", reason: "The edit asks for a framework; no vision line or pin bears on how tally's display is built, and ADR 0017 is design history." },
+  });
+  h.runner.script("criteria", String(ticket.id), { output: { ...SUPERSEDING_CRITERIA, criteria: [SUPERSEDING_CRITERIA.criteria[0]!] } }, { output: SUPERSEDING_CRITERIA });
+  h.runner.script("challenge", String(ticket.id), { output: UPHELD });
+  await h.engine.runPass();
+  await until(() => h.setup.logLines().some((line) => line.event === "model-run-retry" && line.kind === "criteria"), "the criteria that leave ADR 0017 standing wait for their retry");
+  const failure = h.setup.logLines().find((line) => line.event === "machine-failure" && line.kind === "criteria")!;
+  assert.ok(String(failure.error).includes("each record the ticket overturns has a criterion to update or supersede it"), String(failure.error));
+  t.mock.timers.tick(60_000);
+  await h.idle();
+  await h.pass(2);
+
+  const recheck = recheckCall(h);
+  assert.equal(recheck.detail.recheck.outcome, "goes_ahead_differently");
+  assert.equal(h.ticket().state, "cleared");
+  assert.deepEqual(h.setup.store.boardItemsForTicket(ticket.id), [], "never raised to the board");
+  assert.deepEqual(h.forge.state.labels[1], [CLEARED_LABEL]);
+
+  const criteria = criteriaInForce(h.calls()) as CriteriaDetail;
+  assert.equal(criteria.version, 2);
+  assert.deepEqual(
+    criteria.criteria.map((c) => [c.sentence, c.checks]),
+    [
+      ["`tally` shows a progress bar, built with a terminal UI framework, while it counts a large file.", [{ kind: "leaves_path", argument: "VISION.md" }]],
+      ["ADR 0017 is superseded by a decision record for the terminal UI framework.", [{ kind: "changes_path", argument: "docs/adr/**" }]],
+    ],
+    "nothing locks the ticket to ADR 0017, and a criterion supersedes it",
+  );
+  assert.deepEqual(criteria.records_overturned, [{ path: ADR_PATH, decision: ADR_LINE }]);
+  const intake = h.forge.commentsOn().at(-1)!;
+  assert.match(intake, /ADR 0017 is superseded by a decision record for the terminal UI framework\./);
+  assert.doesNotMatch(intake, /as ADR 0017 describes/);
+
+  const prompts = h.runner.requests.filter((request) => request.ticket === String(ticket.id));
+  for (const kind of ["re-check", "criteria", "challenge"] as const) {
+    assert.ok(prompts.find((request) => request.kind === kind)!.prompt.includes(WHAT_BINDS), `the ${kind} prompt says only the vision and the pins bind`);
+  }
 });
