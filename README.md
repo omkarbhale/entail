@@ -83,7 +83,7 @@ MVP-1, under development; the commands above work, but expect rough edges and no
 npm ci
 npm run typecheck
 npm test        # node:test, running the TypeScript sources directly
-npm run build   # compiles to dist/ for the published command
+npm run build   # compiles the server and bundles the board app into dist/
 ```
 
 The acceptance test (`npm run acceptance`) and its harness (fixture repos, reset, scripted executor and board driver) are described in [test/acceptance/README.md](test/acceptance/README.md).
