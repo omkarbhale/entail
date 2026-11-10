@@ -4,6 +4,7 @@ import type { JudgedPin, PinMatch, RecordedVerdict } from "./decider.ts";
 import type { ScheduledRun } from "./model-runs.ts";
 import { arrayOf, nullable, object, oneOf, string, type Infer } from "./schema.ts";
 import { VISION_PATH } from "./vision.ts";
+import { REPO_CONTENT, WHAT_BINDS } from "./what-binds.ts";
 
 /**
  * The challenge (spec §6, ADR-0002, ADR-0011): after a settled or unopposed
@@ -24,6 +25,13 @@ import { VISION_PATH } from "./vision.ts";
  * to point at, is set aside and kept on the record. "When unsure, ask" stays,
  * but unsure must be specific.
  *
+ * Only the vision and the pins bind (ADR-0021, issue #170): the prompt tells
+ * the challenger that a ticket departing from a decision record, the spec, a
+ * doc, a test or code contradicts nothing. entail does not also set aside an
+ * objection whose quote is not word for word a vision line: a challenger that
+ * misquotes a real vision line would then clear a ticket wrongly, trading
+ * over-asking for its opposite.
+ *
  * After the owner's answer lets a ticket go ahead, the verdict is not run
  * again and the answer settles what it raised (ADR-0008). The challenge then
  * tests only the criteria written from the answer, and a pin the owner has
@@ -31,7 +39,7 @@ import { VISION_PATH } from "./vision.ts";
  */
 
 /** Bumped whenever the challenge prompt changes, and recorded with every challenge run (ADR-0009). */
-export const CHALLENGE_PROMPT_VERSION = "challenge-4";
+export const CHALLENGE_PROMPT_VERSION = "challenge-5";
 
 /** What a challenge may object to (spec §6). */
 export const OBJECTION_KINDS = ["contradicted_line", "touched_pin", "missed_reading", "uncited_assumption", "criterion_beyond_source"] as const;
@@ -254,9 +262,9 @@ export function challengePrompt(input: {
       ? `The owner's answers settle what the verdict raised: do not object to the verdict, to a vision line the owner chose to go against, or to a reading the owner chose.
 
 ${pinObjection}`
-      : `- "contradicted_line": a vision line the ticket contradicts under the reading the verdict goes ahead with. Quote the line whole and word for word in "lines".
+      : `- "contradicted_line": a vision line the ticket contradicts under the reading the verdict goes ahead with. Quote the line whole and word for word in "lines". Only a line of ${VISION_PATH} counts: a ticket that departs from ${REPO_CONTENT} contradicts nothing, so never object on them.
 ${pinObjection}
-- "missed_reading": a consequential reading the verdict missed: a second defensible reading whose observable outcome for users differs from the outcome of every reading the verdict lists, where a vision line or pin bears on that difference and nothing in the vision chooses between them. Give it in "reading", with the different outcome a user would observe in "observed_outcome", such as what a command prints or what a user sees. A change that alters nothing a user observes, such as moving code into its own module, has no such reading.
+- "missed_reading": a consequential reading the verdict missed: a second defensible reading whose observable outcome for users differs from the outcome of every reading the verdict lists, where a vision line or pin bears on that difference and nothing in the vision chooses between them. What ${REPO_CONTENT} describe or decided never bears on it. Give it in "reading", with the different outcome a user would observe in "observed_outcome", such as what a command prints or what a user sees. A change that alters nothing a user observes, such as moving code into its own module, has no such reading.
 - "uncited_assumption": a settled verdict's citation that chooses its reading only through an assumption the cited lines do not state. Name the assumption in "objection" and quote the cited lines in "lines".`;
   return `You are entail's challenger. Another model judged the issue below against the vision of record and the repo's pins, and proposed the verdict "${input.verdict.verdict}".${told} Your job is to overturn ${subject} if you can. You can only read: your working directory is a read-only checkout of the repo's default branch at commit ${input.visionSha}, and you may read any file in it.
 
@@ -266,12 +274,14 @@ ${verdictObjections}
 ${
   criteria === null
     ? ""
-    : `- "criterion_beyond_source": a criterion that decides something its source does not: it fixes something users can observe (behavior, wording, appearance, a default) that the issue, the vision line, the findings entry or the owner's answer it is traced to does not choose, or that goes beyond the reading ${answers === null ? "the verdict goes ahead with" : "the owner chose"}. Give its id in "criterion".
+    : `- "criterion_beyond_source": a criterion that decides something its source does not: it fixes something users can observe (behavior, wording, appearance, a default) that the issue, the vision line, the findings entry or the owner's answer it is traced to does not choose, or that goes beyond the reading ${answers === null ? "the verdict goes ahead with" : "the owner chose"}. A criterion that locks the ticket in or narrows it to what ${REPO_CONTENT} describe, rather than to what the issue, the vision${answers === null ? "" : ", the owner's answers"} or the findings choose, is one. A criterion that requires updating or superseding a record the ticket overturns is not: it follows from the ticket. Give its id in "criterion".
 `
 }
 Readings that differ only in detail the vision does not speak to are not consequential, and are no objection. Neither is "this could be read differently" without a second reading and the different outcome a user would observe: an objection with nothing concrete to point at does not count, and entail sets it aside. Do not object to wording, only to what is decided.
 
 When a whole vision line chooses the reading, or the ticket changes nothing a user observes, there is nothing to ask the owner: uphold it. When a real ambiguity or a touched pin remains, object, and be specific about it.
+
+${WHAT_BINDS}
 
 If any objection stands, "outcome" is "overturned" and "objections" lists every one. Otherwise "outcome" is "upheld" and "objections" is empty. Give "reason", one or two sentences for the audit log.
 

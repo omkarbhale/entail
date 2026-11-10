@@ -67,6 +67,7 @@ function answeredCriteria(...extra: CriteriaOutput["criteria"]): CriteriaOutput 
       { id: "C1", sentence: "`tally` counts `a-b` as two words.", source: { kind: "answer", ref: null }, checks: [], states_reading: null },
       ...extra,
     ],
+    records_overturned: [],
     product_call: null,
   };
 }
@@ -76,6 +77,7 @@ const UPHELD: ChallengeOutput = { outcome: "upheld", objections: [], reason: "No
 const PRODUCT_CALL: CriteriaOutput = {
   outcome: "needs_product_call",
   criteria: [],
+  records_overturned: [],
   product_call: {
     reason: "Whether an apostrophe splits a word is something users see, and the answer does not choose it.",
     options: [

@@ -1,5 +1,7 @@
 # A ticket the vision does not contradict and no pin touches is cleared
 
+> **Amended by ADR-0021.** Only vision lines and pins count in the order of judgment. A ticket that departs from a decision record, the spec, a doc, a test or code contradicts nothing, and that content never bears on whether readings are consequential. The challenge is told the same.
+
 A ticket that contradicts no vision line, touches no pin and has no consequential readings is cleared, even where the vision is silent. Its verdict is **unopposed**. entail keeps no list of change categories and no high-stakes areas of its own. What matters for a project, such as an interface people depend on, new features being opt-in, or how it looks, is said in that project's VISION.md and pins. This replaces the **small** verdict and its bar from ADR-0002.
 
 The owner decided this while clicking through the board prototype. A `tally` item asking what `--json` should print had reached the board, and the owner said it "should never come to me, additive or not". They continued: "It should if its API people depend on, but then in that case that project's vision would say about API changes, not entail. For example, firstmate's vision says that new features should always be opt-in." And then: "Actually, just make them all go ahead on their own. If it makes sense with the vision, it'll be marked as clear from entail. That's all, then executor has still to decide whether to pick it."

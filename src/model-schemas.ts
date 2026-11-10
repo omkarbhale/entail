@@ -121,7 +121,9 @@ export const MECHANICAL_CHECK_KINDS = ["changes_path", "leaves_path", "check_pas
 
 /**
  * The criteria run's output: one to five criteria C1…Cn, or "needs a product
- * call" with its reason and open choices (spec section 7, ADR-0005).
+ * call" with its reason and open choices (spec section 7, ADR-0005), and the
+ * records of past decisions the ticket overturns, each of which a criterion
+ * requires updating or superseding (ADR-0021).
  */
 export const criteriaSchema = object({
   outcome: oneOf(["criteria", "needs_product_call"]),
@@ -142,6 +144,13 @@ export const criteriaSchema = object({
       states_reading: nullable(string(), "The id of the reading this criterion states, when it states the reading chosen. null otherwise."),
     }),
     "For criteria: one to five. Empty for needs_product_call.",
+  ),
+  records_overturned: arrayOf(
+    object({
+      path: string("The record's path relative to the repository root, such as docs/adr/0017-one-local-process.md."),
+      decision: string("The past decision the ticket overturns, as the record states it, in one plain sentence."),
+    }),
+    "For criteria: each decision record, spec or other document of the repo that records a past decision the ticket overturns. Each needs a criterion requiring it to be updated or superseded. Empty when the ticket overturns none, and for needs_product_call.",
   ),
   product_call: nullable(
     object({

@@ -89,6 +89,7 @@ const CRITERIA: CriteriaOutput = {
     },
     { id: "C2", sentence: WORD_LINE, source: { kind: "vision_line", ref: WORD_LINE }, checks: [], states_reading: null },
   ],
+  records_overturned: [],
   product_call: null,
 };
 
