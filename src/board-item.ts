@@ -7,7 +7,7 @@ import type { Git } from "./git.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import type { IntakeDetail } from "./intake.ts";
 import { latestIssueEditId, recordedIssueText } from "./issue-edit.ts";
-import { intakeCommentText, raisedNextText, shortSha, visionCheckOf, type VisionCheck, type VisionCheckMark } from "./intake-comment.ts";
+import { intakeCommentText, RAISED_LABEL, raisedNextText, shortSha, visionCheckOf, type VisionCheck, type VisionCheckMark } from "./intake-comment.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import { makeNotice, type Notifier } from "./notice.ts";
 import type { OperationalLog } from "./operational-log.ts";
@@ -19,8 +19,9 @@ import { readVision, VISION_PATH, visionLinesOf } from "./vision.ts";
 /**
  * Raising a ticket to the board (spec §13, §9, ADR-0007, ADR-0008, ADR-0012,
  * ADR-0017): when a ticket needs the owner, entail records one board item, a
- * snapshot with live links, posts the intake comment linking the board, and
- * sends one `board-item` notice. The ticket moves to on the board.
+ * snapshot with live links, posts the intake comment linking the board, labels
+ * the issue `entail:raised` (ADR-0013), and sends one `board-item` notice. The
+ * ticket moves to on the board.
  */
 
 /**
@@ -604,11 +605,12 @@ export function boardNoticeText(issueNumber: number): string {
 
 /**
  * Raises a ticket to the board. In one transaction it records the call that
- * moves the ticket to on the board, the board item as a snapshot, and the
- * intake comment's intent; the store refuses a second open item for the
- * ticket. Then it sends one `board-item` notice and posts the comment. A
- * failed notice is logged and blocks nothing; a comment that fails to post is
- * settled on the next start.
+ * moves the ticket to on the board, the board item as a snapshot, the intake
+ * comment's intent and the intent to add `entail:raised`; the store refuses a
+ * second open item for the ticket. Then it sends one `board-item` notice,
+ * posts the comment and adds the label. A failed notice is logged and blocks
+ * nothing; a comment or label that fails to go out is settled on the next
+ * start.
  *
  * @returns the board item, or null when the ticket moved before it was raised.
  */
@@ -685,6 +687,15 @@ export async function raiseToBoard(
       });
     }
     also?.record(call.id);
+    store.recordForgeWriteIntent({
+      repoId: repo.id,
+      ticketId: ticket.id,
+      callId: call.id,
+      kind: "label",
+      target: "issue",
+      number: ticket.issueNumber,
+      payload: { action: "add", label: RAISED_LABEL },
+    });
     return { item, call, body, link };
   });
   if (raised === null) {
@@ -702,6 +713,8 @@ export async function raiseToBoard(
   await pass.writer().comment(write, "issue", request.ticket.issueNumber, raised.body);
   if (request.removeLabel !== undefined) await pass.writer().removeLabel(write, request.ticket.issueNumber, request.removeLabel);
   await also?.send(raised.call.id);
+  // Added last, once any label the ticket carried before is removed, so the issue never carries two `entail:` labels.
+  await pass.writer().addLabel(write, request.ticket.issueNumber, RAISED_LABEL);
   return raised.item;
 }
 

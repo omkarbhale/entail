@@ -1,7 +1,8 @@
 import type { JudgedRequest } from "./decider.ts";
 import type { RequestPart } from "./intake.ts";
 import type { OperationalLog } from "./operational-log.ts";
-import type { ChangeHandler } from "./pass.ts";
+import { RAISED_LABEL } from "./intake-comment.ts";
+import type { ChangeHandler, RepoPass } from "./pass.ts";
 import type { CallRecord, Store, TicketRecord } from "./store.ts";
 import { isFinalState } from "./ticket-states.ts";
 import { withdrawOpenItem } from "./withdraw.ts";
@@ -128,9 +129,10 @@ const REASONS: Readonly<Record<"deciding" | "investigating" | "on-the-board" | "
  * Records an edit to the ticket's issue (ADR-0020), when the current text is
  * an edit of the text its latest call recorded: the `issue-edit` call with the
  * new text, and, for a ticket on the board with an open item, the withdrawal
- * of that item with the call that takes the ticket back to deciding, in one
- * transaction. A final ticket, or text that is no edit, records nothing.
- * Safe to run twice for one edit. Returns the call, or null.
+ * of that item and the intent to remove `entail:raised` with the call that
+ * takes the ticket back to deciding, in one transaction. A final ticket, or
+ * text that is no edit, records nothing. Safe to run twice for one edit.
+ * Returns the call, or null.
  */
 export function recordIssueEdit(store: Store, ticketId: number, current: IssueText, settingsVersionId: number | null): CallRecord | null {
   return store.transaction(() => {
@@ -150,7 +152,18 @@ export function recordIssueEdit(store: Store, ticketId: number, current: IssueTe
       detail,
       ...(withdraw ? { stateTo: "deciding" as const } : {}),
     });
-    if (withdraw) withdrawOpenItem(store, { ticketId: ticket.id, callId: call.id, basis: { kind: "issue-edited" } });
+    if (withdraw) {
+      withdrawOpenItem(store, { ticketId: ticket.id, callId: call.id, basis: { kind: "issue-edited" } });
+      store.recordForgeWriteIntent({
+        repoId: ticket.repoId,
+        ticketId: ticket.id,
+        callId: call.id,
+        kind: "label",
+        target: "issue",
+        number: ticket.issueNumber,
+        payload: { action: "remove", label: RAISED_LABEL },
+      });
+    }
     return call;
   });
 }
@@ -178,9 +191,18 @@ export function issueEdits(options: IssueEditOptions): { onChange: ChangeHandler
     const ticket: TicketRecord | null = store.latestTicketForIssue(pass.repo.id, change.issue.number);
     if (ticket === null) return;
     const call = recordIssueEdit(store, ticket.id, change.issue, pass.settings.id);
-    if (call !== null) logEdit(log, ticket, call);
+    if (call !== null) {
+      logEdit(log, ticket, call);
+      await removeRaisedOnEdit(ticket, call, pass);
+    }
   };
   return { onChange };
+}
+
+/** Sends the removal of `entail:raised` an edit recorded when it took the ticket off the board, resuming its intent. */
+export async function removeRaisedOnEdit(ticket: TicketRecord, call: CallRecord, pass: Pick<RepoPass, "writer">): Promise<void> {
+  if (call.stateChange === null) return;
+  await pass.writer().removeLabel({ ticketId: ticket.id, callId: call.id }, ticket.issueNumber, RAISED_LABEL);
 }
 
 /** Logs an edit recorded. */

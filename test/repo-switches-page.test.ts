@@ -140,8 +140,9 @@ test("unenrolling shows the in-flight count first, then cancels, withdraws and r
     assert.equal(store.getCall(now.stateCallId!)!.reason, UNENROLL_REASON);
   }
   assert.equal(store.boardItemsForTicket(onBoard.id).at(-1)!.withdrawal?.reason, "The repo was unenrolled.");
+  assert.deepEqual(served.forge.state.labels[12], [], "the raised label is removed");
   assert.deepEqual(served.forge.state.labels[13], [], "the cleared label is removed");
-  assert.deepEqual(served.forge.state.sends, { comment: 0, addLabel: 0, removeLabel: 1, close: 0, merge: 0 });
+  assert.deepEqual(served.forge.state.sends, { comment: 0, addLabel: 0, removeLabel: 2, close: 0, merge: 0 });
 
   const repos = await get(served, done.headers.location as string);
   assert.match(repos.body, /data-unenrolled="\d+">Unenrolled acme\/tally on github\.com: 3 tickets were cancelled, with no comment posted and no issue closed\./);

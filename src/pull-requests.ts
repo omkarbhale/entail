@@ -2,7 +2,7 @@ import { composeComment } from "./comment-rules.ts";
 import type { Change, PullRequest } from "./forge/forge.ts";
 import type { CommentPayload } from "./forge-writer.ts";
 import { readGlobalSettings } from "./global-settings.ts";
-import { CLEARED_LABEL } from "./intake-comment.ts";
+import { CLEARED_LABEL, INVESTIGATE_LABEL, RAISED_LABEL } from "./intake-comment.ts";
 import { openLandingItem, withdrawOnNewPush } from "./landing-pin.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import type { ChangeHandler, OwedStep, OwedStepPlanner, RepoPass } from "./pass.ts";
@@ -54,14 +54,12 @@ export const ONE_TIME_COMMENTS = {
 
 export type OneTimeComment = (typeof ONE_TIME_COMMENTS)[keyof typeof ONE_TIME_COMMENTS];
 
-/** The label an investigated issue carries (ADR-0013). */
-const INVESTIGATE_LABEL = "entail:investigate";
-
 /** The `entail:` label an issue carries while its ticket is in each state, if any (ADR-0013). */
 export const LABEL_IN_STATE: Partial<Record<TicketState, string>> = {
   cleared: CLEARED_LABEL,
   landing: CLEARED_LABEL,
   investigating: INVESTIGATE_LABEL,
+  "on-the-board": RAISED_LABEL,
 };
 
 /** The states in which a ticket has no criteria in force yet. */

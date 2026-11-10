@@ -437,7 +437,7 @@ test("a PR that passes everything else but touches a pinned path raises one boar
 
   assert.equal(h.forge.issueCommentsOn(1).length, 1, "the intake comment links the board");
   assert.match(h.forge.issueCommentsOn(1)[0]!, /entail raised this issue to the owner/);
-  assert.deepEqual(h.forge.state.labels[1], [], "entail:cleared comes off while the ticket is on the board");
+  assert.deepEqual(h.forge.state.labels[1], ["entail:raised"], "entail:cleared comes off while the ticket is on the board, and entail:raised replaces it");
   assert.equal(h.notices().length, 1);
 
   await h.pass(2);
@@ -557,6 +557,7 @@ test("\"Merge this PR as it is\" verifies the same head again through the merge 
   assert.equal(detail.outcome, "merged");
   assert.equal(detail.landingCallId, h.calls(ticket.id, "landing")[0]!.id);
   assert.equal(h.forge.state.closed[1], "completed");
+  assert.deepEqual(h.forge.state.labels[1], [], "entail:raised comes off with the merge the answer asked for");
   assert.deepEqual(h.calls(ticket.id, "go-ahead"), [], "no criteria are written for it");
   assert.deepEqual(answersInForce(h.setup.store, ticket.id), [], "it is no answer the criteria cite");
   assert.equal(h.forge.issueCommentsOn(1).length, 1, "only the intake comment that raised it");
@@ -581,7 +582,7 @@ test("\"Merge this PR as it is\" holds while the guard cannot say, and a guard t
   const comments = h.forge.prComments(12);
   assert.equal(comments.length, 2);
   assert.match(comments[1]!, /^entail did not merge this pull request at `[0-9a-f]{40}`: The PR conflicts with its base\./m);
-  assert.deepEqual(h.forge.state.labels[1], ["entail:cleared"], "the label is back while the ticket is landing");
+  assert.deepEqual(h.forge.state.labels[1], ["entail:cleared"], "entail:raised gives way to entail:cleared while the ticket is landing");
   assert.equal(h.setup.store.boardItemsForTicket(ticket.id).length, 1, "the pin the owner saw does not raise it again at the same head");
 });
 
@@ -638,6 +639,7 @@ test("\"Don't go ahead\" cancels the ticket and closes the issue, and nothing me
   await h.pass(2);
   assert.equal(h.state(ticket.id), "cancelled");
   assert.equal(h.forge.state.closed[1], "not-planned");
+  assert.deepEqual(h.forge.state.labels[1], [], "entail:raised comes off, and entail:cleared does not come back");
   assert.deepEqual(h.forge.merges, []);
   assert.equal(h.forge.state.prs[12]!.state, "open", "the PR is not closed");
 });
@@ -655,7 +657,12 @@ test("a new push withdraws the item, and the landing check runs again on the new
   assert.equal(history.withdrawal!.reason, "A new push arrived on the pull request this item was about.");
   const [push] = h.calls(ticket.id, "new-push");
   assert.deepEqual(push!.stateChange, { from: "on-the-board", to: "landing" });
-  assert.deepEqual(h.forge.state.labels[1], ["entail:cleared"]);
+  assert.deepEqual(h.forge.state.labels[1], ["entail:cleared"], "withdrawn: entail:raised gives way to entail:cleared");
+  assert.deepEqual(
+    h.setup.store.forgeWritesForCall(push!.id).map((w) => w.payload),
+    [{ action: "remove", label: "entail:raised" }, { action: "add", label: "entail:cleared" }],
+    "taken off before entail:cleared goes back on",
+  );
 
   await h.pass(3);
   const items = h.setup.store.boardItemsForTicket(ticket.id);

@@ -4,7 +4,7 @@ import { criteriaInForce, type CriteriaDetail } from "./criteria.ts";
 import { composeComment } from "./comment-rules.ts";
 import { MergePendingError, type CheckReport, type Issue, type MergeMethod, type MergeOutcome, type PullRequest } from "./forge/forge.ts";
 import { readGlobalSettings } from "./global-settings.ts";
-import { CLEARED_LABEL } from "./intake-comment.ts";
+import { CLEARED_LABEL, RAISED_LABEL } from "./intake-comment.ts";
 import { isIssueEdit, recordedIssueText, type IssueText } from "./issue-edit.ts";
 import {
   code,
@@ -24,7 +24,7 @@ import { isLandingMergeAnswer, ownerClosing, pinnedPathsAtLanding, pinsCoveredAt
 import { forgeRemote, Mirror } from "./mirror.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import type { OwedStep, OwedStepPlanner, RepoPass } from "./pass.ts";
-import { alreadyMergedText, commentOnce, ONE_TIME_COMMENTS, type PullRequestDetail } from "./pull-requests.ts";
+import { alreadyMergedText, commentOnce, LABEL_IN_STATE, ONE_TIME_COMMENTS, type PullRequestDetail } from "./pull-requests.ts";
 import { repoSettingsOf } from "./repo-settings.ts";
 import type { AnswerRecord, BoardItemRecord, CallRecord, RepoRecord, Store, TicketRecord } from "./store.ts";
 import { readVision } from "./vision.ts";
@@ -625,7 +625,8 @@ async function mergedTickets(store: Store, ticket: TicketRecord, landing: CallRe
 /**
  * Records a merge (spec §11, ADR-0014): for each ticket it ends, in one
  * transaction, a merge call to merged with the intents to close an issue the
- * forge left open and to remove `entail:cleared`; then sends them. Each other
+ * forge left open and to remove the ticket's label, `entail:cleared`, or
+ * `entail:raised` for a ticket merged on the owner's answer; then sends them. Each other
  * open PR for a merged ticket then gets one "already merged" comment, and is
  * neither checked again nor closed.
  */
@@ -648,6 +649,7 @@ async function recordMerged(
   const recorded = store.transaction(() =>
     ending.flatMap(({ ticket: t, landingCallId }) => {
       if (!unmoved(store, t)) return [];
+      const label = LABEL_IN_STATE[t.state] ?? CLEARED_LABEL;
       const onAnswer = answer !== null && t.id === ticket.id ? answer : null;
       const mergeDetail: MergeDetail = {
         pullRequests: [pr.number],
@@ -673,18 +675,18 @@ async function recordMerged(
       });
       const write = { repoId: pass.repo.id, ticketId: t.id, callId: call.id, target: "issue" as const, number: t.issueNumber };
       if (open.get(t.id)) store.recordForgeWriteIntent({ ...write, kind: "close", payload: { reason: "completed" } });
-      store.recordForgeWriteIntent({ ...write, kind: "label", payload: { action: "remove", label: CLEARED_LABEL } });
-      return [{ ticket: t, call }];
+      store.recordForgeWriteIntent({ ...write, kind: "label", payload: { action: "remove", label } });
+      return [{ ticket: t, call, label }];
     }),
   );
 
   const writer = pass.writer();
-  for (const { ticket: t, call } of recorded) {
+  for (const { ticket: t, call, label } of recorded) {
     log.info("ticket-merged", { ticketId: t.id, callId: call.id, pullRequest: pr.number, headSha: detail.headSha });
     // Each resumes the intent recorded above.
     const write = { ticketId: t.id, callId: call.id };
     if (open.get(t.id)) await writer.closeIssue(write, t.issueNumber, "completed");
-    await writer.removeLabel(write, t.issueNumber, CLEARED_LABEL);
+    await writer.removeLabel(write, t.issueNumber, label);
   }
   for (const { ticket: t } of recorded) {
     const merged = store.getTicket(t.id)!;
@@ -758,6 +760,8 @@ async function recordRefused(
     const write = { repoId: pass.repo.id, ticketId: ticket.id, callId: call.id };
     if (comment) store.recordForgeWriteIntent({ ...write, kind: "comment", target: "pr", number: pr.number, payload: { body } });
     if (answer !== null) {
+      // Off the board and back to landing: `entail:raised` gives way to `entail:cleared` (ADR-0013).
+      store.recordForgeWriteIntent({ ...write, kind: "label", target: "issue", number: ticket.issueNumber, payload: { action: "remove", label: RAISED_LABEL } });
       store.recordForgeWriteIntent({ ...write, kind: "label", target: "issue", number: ticket.issueNumber, payload: { action: "add", label: CLEARED_LABEL } });
     }
     return call;
@@ -766,7 +770,10 @@ async function recordRefused(
   log.info("merge-refused", { ticketId: ticket.id, callId: recorded.id, pullRequest: pr.number, headSha: detail.headSha, by: refusal.by, why: refusal.why });
   const write = { ticketId: ticket.id, callId: recorded.id };
   if (comment) await pass.writer().comment(write, "pr", pr.number, body);
-  if (answer !== null) await pass.writer().addLabel(write, ticket.issueNumber, CLEARED_LABEL);
+  if (answer !== null) {
+    await pass.writer().removeLabel(write, ticket.issueNumber, RAISED_LABEL);
+    await pass.writer().addLabel(write, ticket.issueNumber, CLEARED_LABEL);
+  }
 }
 
 /** A landing pin item the owner answered "Merge this PR as it is", with that answer. */

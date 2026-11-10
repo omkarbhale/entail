@@ -3,7 +3,7 @@ import type { BoardItemSnapshot } from "./board-item.ts";
 import { isLandingMergeAnswer } from "./landing-pin.ts";
 import type { CriteriaDetail } from "./criteria.ts";
 import { readGlobalSettings } from "./global-settings.ts";
-import { recheckChangeOf } from "./intake-comment.ts";
+import { RAISED_LABEL, recheckChangeOf } from "./intake-comment.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import type { OwedStep, OwedStepPlanner, RepoPass } from "./pass.ts";
 import { cancelledAfterRecheckText, commentOnce, ONE_TIME_COMMENTS } from "./pull-requests.ts";
@@ -135,10 +135,11 @@ export function afterAnswerPlanner(options: AfterAnswerOptions): OwedStepPlanner
 }
 
 /**
- * Makes the call an answer causes. Going ahead, it returns the ticket to
- * deciding, citing the answer, with no forge write: the intake comment comes
- * with the criteria. "Don't go ahead" records, in one transaction, the call
- * that cancels the ticket with the comment's and the close's intents, then
+ * Makes the call an answer causes, in one transaction with the intent to
+ * remove `entail:raised`, since the ticket leaves the board (ADR-0013). Going
+ * ahead, it returns the ticket to deciding, citing the answer: the intake
+ * comment comes with the criteria. "Don't go ahead" records the call that
+ * cancels the ticket with the comment's and the close's intents too, then
  * comments and closes the issue. A write that fails is settled on the next
  * start.
  */
@@ -173,6 +174,8 @@ async function actOnAnswer(
         detail,
         stateTo: "deciding",
       });
+      const intent = { repoId: pass.repo.id, ticketId: ticket.id, callId: call.id, target: "issue", number: ticket.issueNumber } as const;
+      store.recordForgeWriteIntent({ ...intent, kind: "label", payload: { action: "remove", label: RAISED_LABEL } });
       return { call, body: null };
     }
     const call = store.recordCall({
@@ -185,6 +188,7 @@ async function actOnAnswer(
     });
     const body = answerComment(ownerName, ticket.id, answer, snapshot, pass.repo.forge);
     const intent = { repoId: pass.repo.id, ticketId: ticket.id, callId: call.id, target: "issue", number: ticket.issueNumber } as const;
+    store.recordForgeWriteIntent({ ...intent, kind: "label", payload: { action: "remove", label: RAISED_LABEL } });
     store.recordForgeWriteIntent({ ...intent, kind: "comment", payload: { body } });
     store.recordForgeWriteIntent({ ...intent, kind: "close", payload: { reason: DONT_GO_AHEAD_CLOSE } });
     return { call, body };
@@ -194,11 +198,12 @@ async function actOnAnswer(
     return;
   }
   log.info("answer-acted-on", { ticketId: ticket.id, answerId: answer.id, callId: made.call.id, kind: made.call.kind });
-  if (made.body === null) return;
 
   // Each resumes the intent recorded above; the comment is found by its hidden marker if it was already posted.
   const writer = pass.writer();
   const write = { ticketId: ticket.id, callId: made.call.id };
+  await writer.removeLabel(write, ticket.issueNumber, RAISED_LABEL);
+  if (made.body === null) return;
   await writer.comment(write, "issue", ticket.issueNumber, made.body);
   await writer.closeIssue(write, ticket.issueNumber, DONT_GO_AHEAD_CLOSE);
 

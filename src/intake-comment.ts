@@ -140,6 +140,14 @@ export const CLEARED_LABEL = "entail:cleared";
 /** The label an investigating ticket's issue carries (ADR-0006, ADR-0013). */
 export const INVESTIGATE_LABEL = "entail:investigate";
 
+/**
+ * The label an issue carries while its ticket is on the board waiting for the
+ * owner (ADR-0013). It only marks state: it carries no question text, and
+ * adding or removing it by hand answers nothing, since answers come only
+ * through the board form (ADR-0008).
+ */
+export const RAISED_LABEL = "entail:raised";
+
 /** A question an investigation must establish, as its intake comment lists it. */
 export interface ListedQuestion {
   id: string;

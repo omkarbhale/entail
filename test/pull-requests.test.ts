@@ -3,7 +3,7 @@ import { test, type TestContext } from "node:test";
 import { setImmediate as immediate } from "node:timers/promises";
 import { assertCommentRules, markedTickets } from "../src/comment-rules.ts";
 import type { Actor, ChangeBatch, PullRequest } from "../src/forge/forge.ts";
-import { CLEARED_LABEL } from "../src/intake-comment.ts";
+import { CLEARED_LABEL, RAISED_LABEL } from "../src/intake-comment.ts";
 import { Passes } from "../src/pass.ts";
 import { pullRequestFollowing, type MergedByOthersDetail, type PullRequestDetail } from "../src/pull-requests.ts";
 import type { RepoSettings } from "../src/repo-settings.ts";
@@ -205,7 +205,7 @@ const MERGES: { name: string; state: TicketState; author: Actor; whoCounts?: Rep
   { name: "a cleared ticket's PR merged by someone else", state: "cleared", author: actor(OWNER_ID), label: CLEARED_LABEL },
   { name: "a PR from an account that does not count", state: "landing", author: STRANGER, whoCounts: "owner-and-listed", label: CLEARED_LABEL },
   { name: "a PR on an issue under investigation", state: "investigating", author: EXECUTOR, label: "entail:investigate" },
-  { name: "a PR on an issue on the board", state: "on-the-board", author: EXECUTOR, label: null },
+  { name: "a PR on an issue on the board", state: "on-the-board", author: EXECUTOR, label: RAISED_LABEL },
 ];
 
 for (const merge of MERGES) {

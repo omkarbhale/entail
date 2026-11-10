@@ -3,7 +3,7 @@ import { test, type TestContext } from "node:test";
 import { setImmediate as immediate } from "node:timers/promises";
 import type { Issue, PullRequest } from "../src/forge/forge.ts";
 import { ForgeWriter, InFlightWrites, RepoUnenrolledError, settleUnconfirmedWrites } from "../src/forge-writer.ts";
-import { CLEARED_LABEL } from "../src/intake-comment.ts";
+import { CLEARED_LABEL, RAISED_LABEL } from "../src/intake-comment.ts";
 import { outsideCloses } from "../src/outside-close.ts";
 import { Passes, type OwedStepPlanner } from "../src/pass.ts";
 import { pullRequestFollowing } from "../src/pull-requests.ts";
@@ -92,7 +92,7 @@ const ROUTE: Record<TicketState, { kind: CallKind; to: TicketState }[]> = {
   ],
 };
 
-const LABELLED: Partial<Record<TicketState, string>> = { investigating: "entail:investigate", cleared: CLEARED_LABEL, landing: CLEARED_LABEL };
+const LABELLED: Partial<Record<TicketState, string>> = { investigating: "entail:investigate", "on-the-board": RAISED_LABEL, cleared: CLEARED_LABEL, landing: CLEARED_LABEL };
 const NOTHING_SENT = { comment: 0, addLabel: 0, removeLabel: 0, close: 0, merge: 0 };
 
 async function until(done: () => boolean, what: string): Promise<void> {
@@ -329,7 +329,7 @@ test("unenrolling cancels every in-flight ticket with a logged call, removes the
     [
       ["deciding", null],
       ["investigating", "entail:investigate"],
-      ["on-the-board", null],
+      ["on-the-board", RAISED_LABEL],
       ["cleared", CLEARED_LABEL],
       ["landing", CLEARED_LABEL],
     ],
@@ -351,12 +351,12 @@ test("unenrolling cancels every in-flight ticket with a logged call, removes the
   for (const call of before) assert.deepEqual(store.getCall(call.id), call, "every earlier call stays as it was");
   assert.equal(store.listCalls({ repoId: h.repo.id }).length, before.length + 5, "with one cancel call per in-flight ticket");
 
-  assert.equal(pendingUnenrollLabels(store, h.repo.id).length, 3);
+  assert.equal(pendingUnenrollLabels(store, h.repo.id).length, 4);
   const writer = new ForgeWriter(store, h.forge, h.repo, "Ada", h.inFlight);
   assert.equal(await removeUnenrollLabels(store, h.repo, writer, h.setup.log), 0);
   assert.equal(pendingUnenrollLabels(store, h.repo.id).length, 0);
-  for (const n of [2, 4, 5]) assert.deepEqual(h.forge.state.labels[n], [], `issue ${n} keeps no entail: label`);
-  assert.deepEqual(h.forge.state.sends, { ...NOTHING_SENT, removeLabel: 3 });
+  for (const n of [2, 3, 4, 5]) assert.deepEqual(h.forge.state.labels[n], [], `issue ${n} keeps no entail: label`);
+  assert.deepEqual(h.forge.state.sends, { ...NOTHING_SENT, removeLabel: 4 });
   assert.deepEqual(h.forge.state.comments, {}, "no comment");
   assert.deepEqual(h.forge.state.closed, {}, "no close");
   assert.deepEqual(await settleUnconfirmedWrites(store, () => h.forge), [], "settling on start sends nothing more there");
@@ -369,7 +369,7 @@ test("unenrolling cancels every in-flight ticket with a logged call, removes the
   assert.equal(h.forge.reads.changes, reads);
   await assert.rejects(writer.closeIssue({ ticketId: tickets.deciding.id }, 1, "completed"), RepoUnenrolledError, "a late step's close is refused");
   await assert.rejects(writer.addLabel({ ticketId: tickets.cleared.id }, 4, CLEARED_LABEL), RepoUnenrolledError, "and so is a label");
-  assert.deepEqual(h.forge.state.sends, { ...NOTHING_SENT, removeLabel: 3 });
+  assert.deepEqual(h.forge.state.sends, { ...NOTHING_SENT, removeLabel: 4 });
   assert.throws(() => recordUnenrollment(store, h.repo, "Ada"), NotEnrolledError, "an unenrolled repo cannot be unenrolled again");
 });
 

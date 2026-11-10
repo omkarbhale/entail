@@ -23,8 +23,8 @@ import { judgedRequest, matchPins, requestText, visionText, type DeciderMirror, 
 import { currentPins, latestJudgment, samePins, VisionFlags, type TouchedItem, type VisionFlag } from "./flags.ts";
 import { RECENT_DEFAULT_BRANCH_COMMITS, reportedCheckNames } from "./generic-criteria.ts";
 import { readGlobalSettings } from "./global-settings.ts";
-import { afterChangeText, CLEARED_LABEL, clearedNextText, intakeCommentText, recheckChangeOf, shortSha, visionCheckOf } from "./intake-comment.ts";
-import { latestIssueEditId, logEdit, recordIssueEdit, type IssueText } from "./issue-edit.ts";
+import { afterChangeText, CLEARED_LABEL, clearedNextText, RAISED_LABEL, intakeCommentText, recheckChangeOf, shortSha, visionCheckOf } from "./intake-comment.ts";
+import { latestIssueEditId, logEdit, recordIssueEdit, removeRaisedOnEdit, type IssueText } from "./issue-edit.ts";
 import { findingsIds, findingsOf, findingsText, type FindingsDetail } from "./investigation.ts";
 import { recordLanding, type HeldLanding, type LandingHold, type LandingRunKey, type MechanicalPass } from "./landing.ts";
 import type { ProcessChanges } from "./merge.ts";
@@ -522,7 +522,10 @@ export function visionChanges(options: VisionChangeOptions): VisionChanges {
     // An issue edit found on the last look is recorded first, and flags its ticket (ADR-0020).
     for (const { ticket, current } of changes.issues) {
       const call = recordIssueEdit(store, ticket.id, current, pass.settings?.id ?? null);
-      if (call !== null) logEdit(log, ticket, call);
+      if (call !== null) {
+        logEdit(log, ticket, call);
+        await removeRaisedOnEdit(ticket, call, pass);
+      }
     }
     for (const ticket of tickets) {
       if (await hold.held(ticket, pass)) return { flagged: true };
@@ -1020,7 +1023,8 @@ async function raiseAfterRecheck(context: Context, ticket: TicketRecord, recheck
  * Withdraws an open board item a vision change or a pin change touched (spec
  * §13, §15, ADR-0008, ADR-0018): in one transaction, the call that takes the
  * ticket back to deciding, which the decider then decides at the current
- * vision and pins, and the withdrawal.
+ * vision and pins, the withdrawal and the intent to remove `entail:raised`;
+ * then it sends the label removal.
  */
 async function withdrawTouched(context: Context, ticket: TicketRecord, pass: RepoPass): Promise<void> {
   const { store, log } = context.options;
@@ -1056,6 +1060,15 @@ async function withdrawTouched(context: Context, ticket: TicketRecord, pass: Rep
     });
     const basis = touched.byVision ? ({ kind: "vision-change" } as const) : ({ kind: "pin-change", pins: touched.pinsTouching } as const);
     withdrawOpenItem(store, { ticketId: ticket.id, callId: recorded.id, basis });
+    store.recordForgeWriteIntent({
+      repoId: pass.repo.id,
+      ticketId: ticket.id,
+      callId: recorded.id,
+      kind: "label",
+      target: "issue",
+      number: ticket.issueNumber,
+      payload: { action: "remove", label: RAISED_LABEL },
+    });
     return recorded;
   });
   context.flags.forget(ticket.id);
@@ -1064,6 +1077,8 @@ async function withdrawTouched(context: Context, ticket: TicketRecord, pass: Rep
     return;
   }
   log.info("board-item-withdrawn", { ticketId: ticket.id, callId: call.id, boardItemId: touched.boardItemId, why: touched.byVision ? "vision-change" : "pin-change" });
+  // Resumes the intent recorded above.
+  await pass.writer().removeLabel({ ticketId: ticket.id, callId: call.id }, ticket.issueNumber, RAISED_LABEL);
 }
 
 /** Why a touched item is withdrawn, in the words its call's reason uses: what the vision change did to it, and the pin change. */
