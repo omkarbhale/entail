@@ -37,6 +37,8 @@ A PR that passes its criteria merges automatically; finishing settled work does 
 Every call settled automatically is logged with its reason, so it can be audited later.
 Choices a model does not notice it is making cannot be caught reliably, so entail makes them visible and attributable afterwards instead of claiming to prevent them.
 entail also checks merged work against the current vision on a schedule and files a ticket for any drift it finds, which then goes through the same intake as any other.
+A change to how entail judges (its prompts, verdict rules or challenge) names the case it fixes and the cases it could break, and moves only as far as that case needs; it never trades one failure for its opposite, such as over-asking for wrongly clearing.
+Such a change explains its reasoning in the change itself, and is checked against the acceptance cases before it lands.
 Autonomy grows as the vision covers more and trust is earned.
 Board answers earn it too, the owner's or an allowed collaborator's: once the same kind of question has been answered the same way repeatedly, entail settles that kind of question itself and cites those answers instead of a vision passage.
 
@@ -65,4 +67,4 @@ entail works with or without firstmate; without it quality may drop and firstmat
 Personal use and local-first operation are acceptable.
 
 A change aligns when it lets a ticket the vision settles or does not contradict move from intake through a criteria-checked merge without the owner, or close with a recorded reason after investigation, or when it brings a call the vision does not allow to the owner with what the ticket was, what happened, and why it was raised.
-A change should be resisted when it lets entail clear a ticket that contradicts the vision, touches a pin, or has readings the vision makes consequential, without the owner's answer or a ruling learned from repeated answers, records anyone's words as the owner's, grows the vision with rulings that are not general statements, settles a call without citing the vision passage or past answers it relies on, or without logging the reason, moves a question or its answer into chat, makes entail depend on firstmate, or puts work-management traffic on the board.
+A change should be resisted when it lets entail clear a ticket that contradicts the vision, touches a pin, or has readings the vision makes consequential, without the owner's answer or a ruling learned from repeated answers, records anyone's words as the owner's, grows the vision with rulings that are not general statements, settles a call without citing the vision passage or past answers it relies on, or without logging the reason, moves a question or its answer into chat, changes how entail judges without stating the case it fixes, what it could break and why, makes entail depend on firstmate, or puts work-management traffic on the board.
