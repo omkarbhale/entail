@@ -6,7 +6,8 @@ entail and an executor share no API. They meet on the issue and the PR, in the s
 
 1. **Marking.** An issue carries at most one `entail:` label, matching the ticket's state:
    - `entail:cleared` while the ticket is cleared or landing, because its criteria are in force;
-   - `entail:investigate` while it is being investigated.
+   - `entail:investigate` while it is being investigated;
+   - `entail:raised` while it is on the board, waiting for the owner (see the amendment below).
 
    entail removes the label when the ticket leaves that state: to the board, back to deciding, declined, cancelled or merged. An executor can trust the label alone. entail does not react to anyone else adding or removing its labels, because its records are the authority (ADR-0005).
 2. **What entail requires.** The intake comment (ADR-0007) lists criteria C1…Cn, or, for an investigation, the questions Q1…Qn that the investigation must establish. Its second section ends with one fixed line telling any executor how to report, so no executor needs an integration to learn the contract.
@@ -41,3 +42,11 @@ entail and an executor share no API. They meet on the issue and the PR, in the s
 Point 4's one comment for a PR linking an issue with no criteria in force also covers an issue whose latest ticket is final as declined or cancelled. The PR is not checked or merged. The comment names the end state, links the comment that gave its reason, and says the issue has no criteria in force unless the owner pulls it in again (ADR-0020) and it is cleared. If that happens, the PR links the new ticket and is checked against its criteria. A PR linking a merged ticket gets ADR-0014's "already merged" comment instead. Under "owner plus listed executors", another account's PR gets only point 3's comment, as before. Each PR gets the comment once per ticket.
 
 Settled after the MVP-1 spec was assembled, as an engineering call the owner delegated (open point 7 of `docs/spec/mvp-1.md`). The executor's question is the same as for a ticket with no criteria yet, why the PR is not checked, so one existing comment answers it. Staying silent was passed over, because an executor would be left waiting on a check that never comes.
+
+## Amendment: `entail:raised` marks a ticket on the board
+
+An issue whose ticket is on the board, waiting for the owner, carries `entail:raised`. entail adds it when it raises the ticket, after removing any label the ticket carried before, such as `entail:cleared` when a re-check or a touched pin at landing raises it. entail removes it with the call that takes the ticket off the board: an answer (going ahead, "don't go ahead" or "Merge this PR as it is"), a withdrawal (an issue edit, a vision or pin change, or a new push) or a cancel (the issue closed, or the repo unenrolled). Where the ticket then has criteria in force, `entail:cleared` replaces it, never beside it. A ticket going ahead returns to deciding with no label until its criteria clear it.
+
+The label only marks state. It carries no question text, and adding or removing it by hand answers nothing: the question and its answer stay on the board (ADR-0008, ADR-0012), and entail does not react to anyone else changing its labels. It tells an executor that the issue is not ready for work because it waits for the owner.
+
+Decided on [I want entail to mark issues not just cleared, but raised as well.](https://github.com/omkarbhale/entail/issues/168), which entail cleared as unopposed: the vision says nothing about labelling issues on the forge, and a label with no question text moves neither the question nor its answer off the board.

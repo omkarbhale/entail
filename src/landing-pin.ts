@@ -13,7 +13,7 @@ import {
 } from "./board-item.ts";
 import type { CriteriaDetail } from "./criteria.ts";
 import { judgedPins, type RecordedVerdict } from "./decider.ts";
-import { CLEARED_LABEL } from "./intake-comment.ts";
+import { CLEARED_LABEL, RAISED_LABEL } from "./intake-comment.ts";
 import type { PassingLandingDetail } from "./merge.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import type { PullRequest } from "./forge/forge.ts";
@@ -248,8 +248,8 @@ export function landingPinRaising(options: BoardOptions): LandingPinRaising {
  * Withdraws an open landing pin item when its PR, as following the ticket's
  * PRs read it, has a new head (spec §13, ADR-0014): in one transaction, a call
  * that takes the ticket back to landing, where the landing check runs again on
- * the new head, with the withdrawal and the intent to put `entail:cleared`
- * back on the issue; then it sends the label. A PR still at the item's head,
+ * the new head, with the withdrawal and the intents to take `entail:raised`
+ * off the issue and put `entail:cleared` back; then it sends the labels. A PR still at the item's head,
  * or no longer open, withdraws nothing.
  */
 export async function withdrawOnNewPush(
@@ -274,19 +274,14 @@ export async function withdrawOnNewPush(
       stateTo: "landing",
     });
     withdrawOpenItem(store, { ticketId: ticket.id, callId: call.id, basis: { kind: "new-push" } });
-    store.recordForgeWriteIntent({
-      repoId: pass.repo.id,
-      ticketId: ticket.id,
-      callId: call.id,
-      kind: "label",
-      target: "issue",
-      number: ticket.issueNumber,
-      payload: { action: "add", label: CLEARED_LABEL },
-    });
+    const write = { repoId: pass.repo.id, ticketId: ticket.id, callId: call.id, kind: "label", target: "issue", number: ticket.issueNumber } as const;
+    store.recordForgeWriteIntent({ ...write, payload: { action: "remove", label: RAISED_LABEL } });
+    store.recordForgeWriteIntent({ ...write, payload: { action: "add", label: CLEARED_LABEL } });
     return call;
   });
   if (recorded === null) return;
   log.info("landing-pin-withdrawn", { ticketId: ticket.id, callId: recorded.id, boardItemId: open.item.id, pullRequest: pr.number, headSha: pr.headSha });
-  // Resumes the intent recorded above.
+  // Each resumes the intent recorded above.
+  await pass.writer().removeLabel({ ticketId: ticket.id, callId: recorded.id }, ticket.issueNumber, RAISED_LABEL);
   await pass.writer().addLabel({ ticketId: ticket.id, callId: recorded.id }, ticket.issueNumber, CLEARED_LABEL);
 }

@@ -526,7 +526,7 @@ test("findings that leave the problem unknown raise the ticket to the board; a s
   const snapshot = h.setup.store.openBoardItem(ticket.id)!.snapshot as BoardItemSnapshot;
   assert.equal(snapshot.why.kind, "failed_check");
   assert.match(snapshot.why.text, /investigates a ticket at most once, and the findings leave the problem unknown/);
-  assert.deepEqual(h.forge.state.labels[5], [], "the label stays off on the board");
+  assert.deepEqual(h.forge.state.labels[5], ["entail:raised"], "entail:investigate stays off on the board, and entail:raised is on");
 });
 
 test("under owner plus listed executors, another account's findings are not used and get one comment, once", async (t) => {

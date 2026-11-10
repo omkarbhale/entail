@@ -643,7 +643,7 @@ test("a criterion that needs a product call raises a board item with the open ch
   const raise = h.calls().at(-1)!;
   assert.equal(raise.kind, "raise");
   assert.equal((raise.detail as { basedOnCallId: number }).basedOnCallId, call.id);
-  assert.deepEqual(h.forge.state.labels[1] ?? [], [], "no label");
+  assert.deepEqual(h.forge.state.labels[1] ?? [], ["entail:raised"], "entail:raised, not entail:cleared");
   assert.equal(comments(h).length, 1, "one intake comment, linking the board");
   assert.ok(!comments(h)[0]!.includes("numbers or strings"), "with no question text");
 });
@@ -676,7 +676,7 @@ test("a challenge that finds a criterion deciding what its source does not sends
   const snapshot = item.snapshot as BoardItemSnapshot;
   assert.equal(snapshot.why.objection, "C1: Nothing in the issue says hyphenated words count once.");
   assert.deepEqual(snapshot.form.options.map((o) => o.id), ["R1", "R2"]);
-  assert.deepEqual(h.forge.state.labels[1] ?? [], []);
+  assert.deepEqual(h.forge.state.labels[1] ?? [], ["entail:raised"]);
 });
 
 test("a challenge that misses no reading but finds a touched pin names it on the board", async (t) => {

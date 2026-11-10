@@ -8,7 +8,7 @@ import { assertCommentRules } from "../src/comment-rules.ts";
 import { criteriaInForce, criteriaPlanner, type CriteriaDetail } from "../src/criteria.ts";
 import { deciderPlanner } from "../src/decider.ts";
 import type { ChangeBatch, Check, CheckReport, CommitChecks, Issue, MergeOutcome, PullRequest, PullRequestComment } from "../src/forge/forge.ts";
-import { CLEARED_LABEL } from "../src/intake-comment.ts";
+import { CLEARED_LABEL, RAISED_LABEL } from "../src/intake-comment.ts";
 import { issueEdits, recordIssueEdit, type IssueEditDetail } from "../src/issue-edit.ts";
 import { landingPlanner, type LandingMirror } from "../src/landing.ts";
 import { landingGrader, type GradeMirror, type LandingChallengeOutput } from "../src/landing-grade.ts";
@@ -550,7 +550,7 @@ test("outcome 3, needs the owner: the ticket goes on the board, loses entail:cle
 
   assert.equal(h.ticket().state, "on-the-board");
   assert.deepEqual(h.forge.merges, [], "no PR for it merges");
-  assert.deepEqual(h.forge.state.labels[1], []);
+  assert.deepEqual(h.forge.state.labels[1], [RAISED_LABEL], "entail:cleared gives way to entail:raised");
   const item = h.setup.store.openBoardItem(ticket.id)!;
   assert.equal(item.whyRaised, "contradiction");
   assert.match(h.forge.commentsOn().at(-1)!, new RegExp(`after the vision change at \`${sha.slice(0, 7)}\``));
@@ -571,6 +571,7 @@ test("outcome 3, needs the owner: the ticket goes on the board, loses entail:cle
   await h.pass(2);
   assert.equal(h.ticket().state, "cancelled");
   assert.equal(h.forge.state.closed[1], "not-planned");
+  assert.deepEqual(h.forge.state.labels[1], [], "entail:raised comes off with the answer");
   assert.equal(h.forge.state.prs[12]?.state, "open", "the PR is not closed");
   const prComments = h.forge.prComments(12);
   assert.equal(prComments.length, 2);
@@ -765,10 +766,17 @@ test("an open board item a vision change touches is withdrawn, and its ticket de
   const withdrawal = h.calls(1, "recheck")[0]!;
   assert.deepEqual(withdrawal.stateChange, { from: "on-the-board", to: "deciding" });
   assert.equal(withdrawal.inputs?.visionSha, sha);
+  assert.deepEqual(
+    h.setup.store.forgeWritesForCall(withdrawal.id).map((w) => [w.kind, w.payload]),
+    [["label", { action: "remove", label: RAISED_LABEL }]],
+    "withdrawn: entail:raised comes off with the call that takes the ticket off the board",
+  );
   const verdicts = h.calls(1, "verdict");
   assert.equal(verdicts.length, 2, "decided again");
   assert.equal(verdicts[1]!.inputs?.visionSha, sha);
   assert.equal(h.ticket().state, "on-the-board", "and raised again on the new verdict");
+  assert.deepEqual(h.forge.state.labels[1], [RAISED_LABEL], "which puts entail:raised back on");
+  assert.deepEqual([h.forge.state.sends.addLabel, h.forge.state.sends.removeLabel], [2, 1]);
 });
 
 test("a deciding ticket's verdict run in flight when a vision change is recorded is discarded, and the ticket decided at the new vision", async (t) => {
@@ -885,7 +893,7 @@ test("a re-check after a pin was added that finds the pin touched raises the tic
 
   assert.equal(h.ticket().state, "on-the-board");
   assert.deepEqual(h.forge.merges, [], "no PR for it merges");
-  assert.deepEqual(h.forge.state.labels[1], []);
+  assert.deepEqual(h.forge.state.labels[1], [RAISED_LABEL]);
   const item = h.setup.store.openBoardItem(ticket.id)!;
   assert.equal(item.whyRaised, "pin");
   assert.match((item.snapshot as BoardItemSnapshot).why.text, /It touches the pin “the output format”/);
@@ -1147,7 +1155,7 @@ test("an edit that makes a landing ticket need the owner raises it, removes enta
 
   assert.equal(h.ticket().state, "on-the-board");
   assert.deepEqual(h.forge.merges, []);
-  assert.deepEqual(h.forge.state.labels[1], []);
+  assert.deepEqual(h.forge.state.labels[1], [RAISED_LABEL]);
   const item = h.setup.store.openBoardItem(ticket.id)!;
   const snapshot = item.snapshot as BoardItemSnapshot;
   assert.deepEqual([snapshot.ticket.issue.title, snapshot.ticket.request], ["Count hyphenated words as two", "Count `a-b` as two words."], "the item quotes the edited issue");
@@ -1350,11 +1358,19 @@ test("an edit withdraws an open board item, its form locking with the reason, an
   const edit = editCall(h);
   assert.deepEqual(edit.stateChange, { from: "on-the-board", to: "deciding" });
   assert.equal(history.withdrawal?.callId, edit.id);
+  assert.deepEqual(
+    h.setup.store.forgeWritesForCall(edit.id).map((w) => [w.kind, w.payload]),
+    [["label", { action: "remove", label: RAISED_LABEL }]],
+    "withdrawn: entail:raised comes off with the edit that takes the ticket off the board",
+  );
+  assert.ok(!h.setup.store.unconfirmedForgeWrites().some((w) => w.callId === edit.id), "and is sent");
   const verdicts = h.calls(1, "verdict");
   assert.equal(verdicts.length, 2, "decided again");
   assert.equal(verdicts[1]!.inputs?.issueBody, "Count the words of a web page saved to a file.");
   assert.equal(h.ticket().state, "on-the-board");
   assert.equal((h.setup.store.openBoardItem(ticket.id)!.snapshot as BoardItemSnapshot).ticket.request, "Count the words of a web page saved to a file.");
+  assert.deepEqual(h.forge.state.labels[1], [RAISED_LABEL], "raised again, with entail:raised back on");
+  assert.deepEqual([h.forge.state.sends.addLabel, h.forge.state.sends.removeLabel], [2, 1]);
 });
 
 test("an edit landing just before merge is caught by the merge guard and holds the merge until its re-check is recorded", async (t) => {

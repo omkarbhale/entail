@@ -4,7 +4,7 @@ import { setImmediate as immediate } from "node:timers/promises";
 import { recordBoardAnswer } from "../src/answer.ts";
 import { readBoard } from "../src/board-page.ts";
 import type { ChangeBatch, Issue, PullRequest } from "../src/forge/forge.ts";
-import { CLEARED_LABEL } from "../src/intake-comment.ts";
+import { CLEARED_LABEL, RAISED_LABEL } from "../src/intake-comment.ts";
 import { ISSUE_RECHECK_MS, outsideCloses, type OutsideCloseDetail } from "../src/outside-close.ts";
 import { Passes } from "../src/pass.ts";
 import { pullRequestFollowing } from "../src/pull-requests.ts";
@@ -116,7 +116,7 @@ const ROUTE: Record<TicketState, { kind: CallKind; to: TicketState }[]> = {
   ],
 };
 
-const LABELLED: Partial<Record<TicketState, string>> = { investigating: "entail:investigate", cleared: CLEARED_LABEL, landing: CLEARED_LABEL };
+const LABELLED: Partial<Record<TicketState, string>> = { investigating: "entail:investigate", "on-the-board": RAISED_LABEL, cleared: CLEARED_LABEL, landing: CLEARED_LABEL };
 
 async function until(done: () => boolean, what: string): Promise<void> {
   const deadline = performance.now() + 10_000;

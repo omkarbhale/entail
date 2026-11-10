@@ -183,7 +183,8 @@ test("a needs-the-owner verdict creates exactly one open board item, one intake 
   const posted = h.forge.state.comments["issue:7"] ?? [];
   assert.equal(posted.length, 1, "one intake comment");
   assert.equal(raise.postedComments.length, 1, "the comment is recorded on the raise call");
-  assert.deepEqual(h.forge.state.sends, { comment: 1, addLabel: 0, removeLabel: 0, close: 0, merge: 0 }, "no label on the board");
+  assert.deepEqual(h.forge.state.sends, { comment: 1, addLabel: 1, removeLabel: 0, close: 0, merge: 0 }, "one label on the board");
+  assert.deepEqual(h.forge.state.labels[7], ["entail:raised"], "the issue is labelled entail:raised while its ticket waits on the board");
 
   assert.equal(boardItemLink(ORIGIN, item.id), `${ORIGIN}/?item=${item.id}`, "the item, on the board at the server's root");
   const notices = h.notices();
@@ -395,8 +396,9 @@ test("a raise whose comment failed to post is settled on the next start, once", 
 
   h.forge.postComment = post;
   const settled = await settleUnconfirmedWrites(h.setup.store, () => h.forge);
-  assert.deepEqual(settled.map((s) => ("settled" in s ? s.settled : s.error.message)), ["not found, so posted"]);
+  assert.deepEqual(settled.map((s) => ("settled" in s ? s.settled : s.error.message)), ["not found, so posted", "applied again"]);
   assert.equal(h.forge.state.comments["issue:7"]!.length, 1);
+  assert.deepEqual(h.forge.state.labels[7], ["entail:raised"], "the label the raise recorded goes out with it");
   await h.pass();
   assert.equal(h.forge.state.comments["issue:7"]!.length, 1, "not posted again");
   assert.equal(h.setup.store.boardItemsForTicket(ticket.id).length, 1);
@@ -417,7 +419,7 @@ test("a ticket never has two open board items", async (t) => {
     notifier: h.notifier,
     boardOrigin: ORIGIN,
   };
-  const writer = { repo: h.repo, writer: () => ({ comment: async () => ({ id: 1, url: "u" }) }) as never };
+  const writer = { repo: h.repo, writer: () => ({ comment: async () => ({ id: 1, url: "u" }), addLabel: async () => {} }) as never };
   const request = raiseFromVerdict(deciding, verdictCall);
   const [first, second] = await Promise.all([raiseToBoard(options, request, writer, h.mirror), raiseToBoard(options, request, writer, h.mirror)]);
   assert.equal([first, second].filter((item) => item !== null).length, 1, "two raises at once make one item");
@@ -461,7 +463,7 @@ test("a ticket pulled in again shows its predecessor's calls and answer among wh
   const verdict = store.callsForTicket(first.id).find((c) => c.kind === "verdict")!;
   const verdictAgain = store.recordCall({ ticketId: again.id, kind: "verdict", reason: verdict.reason, inputs: verdict.inputs, detail: verdict.detail });
 
-  const writer = { repo: h.repo, writer: () => ({ comment: async () => ({ id: 2, url: "u" }) }) as never };
+  const writer = { repo: h.repo, writer: () => ({ comment: async () => ({ id: 2, url: "u" }), addLabel: async () => {} }) as never };
   const options = { store, log: h.setup.log, dataDirectory: h.setup.dataDirectory, notifier: h.notifier, boardOrigin: ORIGIN };
   const raisedAgain = await raiseToBoard(options, raiseFromVerdict(store.getTicket(again.id)!, verdictAgain), writer, h.mirror);
   const snapshot = raisedAgain!.snapshot as BoardItemSnapshot;

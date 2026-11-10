@@ -369,7 +369,7 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 ### 10. Executor contract
 
 - entail and an executor meet only on the issue and the PR, the same way on both forges. Nothing is specific to firstmate. [ADR-0013]
-- **Labels.** An issue carries at most one `entail:` label, matching the ticket's state: `entail:cleared` while cleared or landing, `entail:investigate` while investigating. entail removes it when the ticket leaves that state. entail ignores anyone else adding or removing its labels. [ADR-0013]
+- **Labels.** An issue carries at most one `entail:` label, matching the ticket's state: `entail:cleared` while cleared or landing, `entail:investigate` while investigating, `entail:raised` while on the board. entail removes it when the ticket leaves that state. `entail:raised` only marks state: it carries no question text, and the question and its answer stay on the board. entail ignores anyone else adding or removing its labels. [ADR-0013]
 - **Linking.** The PR closes the issue with the forge's closing keyword. A PR that only mentions the issue is not the ticket's PR. A PR into a branch other than the default is not the ticket's PR. [ADR-0013], [ADR-0014]
 - **Evidence.** An `entail evidence` section, one entry per id (`C1: <what was run or done> — <result>`, and the same for G ids), in the PR description or in a PR comment by the PR's author. The latest section at the checked head counts. A criterion with no entry is not met. [ADR-0013]
 - **Who counts** (per repo): **anyone** by default, or **owner plus listed executors**. Under the latter, entail does not check another account's PR or findings and comments once that it lands work only from the repo's executors. [ADR-0013], [ADR-0018]
@@ -416,7 +416,7 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 - **Outcomes.** [ADR-0016]
   1. **Stands.** The call carries the new citation if the cited line was reworded. The criteria version is kept when every source still exists and the reading is the same, and is otherwise rewritten by the criteria run.
   2. **Goes ahead differently.** A new reading is settled, or the ticket is now unopposed. A new criteria version is written, and the ticket stays cleared or landing.
-  3. **Needs the owner.** The ticket goes on the board, `entail:cleared` is removed, and no PR for it merges. Each open PR gets one comment saying the issue was raised to the owner. On "go ahead", a new criteria version is written and the PR is checked again. On "don't go ahead", the ticket is cancelled and the PR gets one comment but is not closed.
+  3. **Needs the owner.** The ticket goes on the board, `entail:cleared` gives way to `entail:raised`, and no PR for it merges. Each open PR gets one comment saying the issue was raised to the owner. On "go ahead", a new criteria version is written and the PR is checked again. On "don't go ahead", the ticket is cancelled and the PR gets one comment but is not closed.
 
   Outcomes 1 and 2 pass the same mechanical checks and challenge as any automatic verdict, and a failure makes the outcome 3. entail never cancels or closes a flagged ticket on its own.
 - **A ticket cleared by the owner's answer** keeps that answer through an issue-edit re-check. The re-check can only find a product call the answer does not cover, which goes to the board as a new item for that call alone. Otherwise the ticket stands, or gets a new criteria version that still cites the answer. [ADR-0020]

@@ -9,7 +9,7 @@ import { assertCommentRules } from "../src/comment-rules.ts";
 import { checkCriteria, criteriaInForce, criteriaPlanner, type CriteriaDetail } from "../src/criteria.ts";
 import { deciderPlanner, owesVerdict } from "../src/decider.ts";
 import { ForgeLoggedOutError, type CommitChecks } from "../src/forge/forge.ts";
-import { CLEARED_LABEL, EXECUTOR_LINE } from "../src/intake-comment.ts";
+import { CLEARED_LABEL, EXECUTOR_LINE, RAISED_LABEL } from "../src/intake-comment.ts";
 import { Mirror } from "../src/mirror.ts";
 import type { CriteriaOutput, VerdictOutput } from "../src/model-schemas.ts";
 import { ModelRuns } from "../src/model-runs.ts";
@@ -276,6 +276,77 @@ test("criteria written from an answer cite it, pass the usual checks and challen
     }),
     "the comment is the one the board's receipt showed, with the criteria in place",
   );
+});
+
+test("entail:raised marks the issue while its ticket waits on the board, and going ahead takes it off before entail:cleared goes on", async (t) => {
+  const h = await harness(t);
+  const item = await raised(h);
+  assert.deepEqual(h.forge.state.labels[1], [RAISED_LABEL], "raised: the issue carries entail:raised and no other entail: label");
+  const raise = h.calls().find((c) => c.kind === "raise")!;
+  assert.deepEqual(
+    h.setup.store.forgeWritesForCall(raise.id).filter((w) => w.kind === "label").map((w) => w.payload),
+    [{ action: "add", label: RAISED_LABEL }],
+    "the label is recorded with the raise call",
+  );
+
+  h.answer(OPTION_R2);
+  h.scripted.script("criteria", "1", { output: answeredCriteria() });
+  h.scripted.script("challenge", "1", { output: UPHELD });
+  await h.pass(1);
+  assert.equal(h.ticket().state, "deciding");
+  assert.deepEqual(h.forge.state.labels[1], [], "answered: entail:raised comes off as the ticket leaves the board, while its criteria are written");
+  const goAhead = h.calls().find((c) => c.kind === "go-ahead")!;
+  const writes = h.setup.store.forgeWritesForCall(goAhead.id);
+  assert.deepEqual(
+    writes.map((w) => [w.kind, w.payload]),
+    [["label", { action: "remove", label: RAISED_LABEL }]],
+    "the removal is recorded with the call that cites the answer",
+  );
+  assert.ok(!h.setup.store.unconfirmedForgeWrites().some((w) => w.id === writes[0]!.id), "and confirmed");
+  assert.equal(h.setup.store.answerFor(item.id)!.boardItemId, item.id);
+
+  await h.pass(1);
+  assert.equal(h.ticket().state, "cleared");
+  assert.deepEqual(h.forge.state.labels[1], [CLEARED_LABEL], "cleared: entail:cleared replaces entail:raised, never beside it");
+});
+
+test("\"don't go ahead\" takes entail:raised off the issue it closes", async (t) => {
+  const h = await harness(t);
+  await raised(h);
+  assert.deepEqual(h.forge.state.labels[1], [RAISED_LABEL]);
+  h.answer(DONT);
+  await h.pass(1);
+  assert.equal(h.ticket().state, "cancelled");
+  assert.deepEqual(h.forge.state.labels[1], [], "no entail: label is left on a cancelled ticket's issue");
+  assert.deepEqual(h.forge.state.sends, { comment: 2, addLabel: 1, removeLabel: 1, close: 1, merge: 0 });
+});
+
+test("entail:raised only marks state: adding or removing it by hand answers nothing and moves nothing", async (t) => {
+  const h = await harness(t);
+  const item = await raised(h);
+  const calls = h.calls().length;
+  const comments = h.comments().length;
+  assert.ok(!h.comments().at(-1)!.includes(RAISED_LABEL), "the intake comment carries no question in the label's name, nor the label");
+
+  // Someone takes the label off by hand.
+  h.forge.state.labels[1] = [];
+  h.forge.issues = [{ ...h.forge.issues[0]!, labels: [], updatedAt: "2026-11-08T13:00:00.000Z" }];
+  await h.pass(2);
+  assert.equal(h.ticket().state, "on-the-board", "removing the label is no answer");
+  assert.equal(h.openItem().id, item.id, "the item stays open on the board");
+  assert.equal(h.setup.store.answerFor(item.id), null);
+  assert.equal(h.calls().length, calls, "no call is made");
+
+  // And puts it back, or adds it again, by hand.
+  h.forge.state.labels[1] = [RAISED_LABEL];
+  h.forge.issues = [{ ...h.forge.issues[0]!, labels: [RAISED_LABEL], updatedAt: "2026-11-08T13:05:00.000Z" }];
+  await h.pass(2);
+  assert.equal(h.ticket().state, "on-the-board");
+  assert.equal(h.setup.store.answerFor(item.id), null, "adding it is no answer either");
+  assert.equal(h.calls().length, calls);
+  assert.equal(h.comments().length, comments, "nothing is posted");
+  assert.deepEqual(h.forge.state.sends.addLabel, 1, "entail does not react to the label: it added it once, on the raise");
+  assert.equal(h.forge.state.sends.removeLabel, 0);
 });
 
 test("a private note never appears on the forge, nor in what the criteria are written from", async (t) => {
