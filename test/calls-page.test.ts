@@ -383,7 +383,9 @@ test("neither page has any form or action", async (t) => {
     assert.equal(page.status, 200, path);
     assert.equal(parsePage(page.body).forms.length, 0, `${path} has no form`);
     assert.doesNotMatch(page.body, /<(form|button|input|select|textarea)\b/i, `${path} has no control`);
-    assert.doesNotMatch(page.body, /<script\b/i, `${path} has no script`);
+    // Every page loads the board app; the page itself carries no script of its own.
+    const main = page.body.slice(page.body.indexOf("<main"), page.body.indexOf("</main>"));
+    assert.doesNotMatch(main, /<script\b/i, `${path} has no script`);
     const base = path.split("?")[0]!;
     const posted = await postForm(records.server.info.port, base, { token: records.server.info.token });
     assert.equal(posted.status, 405, `${base} takes no write`);

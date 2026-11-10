@@ -9,7 +9,7 @@ import {
   type GlobalSettings,
   type SettingsErrors,
 } from "./global-settings.ts";
-import { escapeHtml, renderPage, timeHtml } from "./page.ts";
+import { escapeHtml, timeHtml } from "./page.ts";
 import { checkRecordsRemote, LOCAL_REMOTE_NOTE, remoteLocation, type RemoteCheck } from "./records-remote.ts";
 import { readRecordsPushState, type RecordsPushState } from "./records-repo.ts";
 import { TOKEN_FIELD, type FormRequest, type Page, type PageRequest, type Reply } from "./server.ts";
@@ -128,7 +128,7 @@ ${ROWS.map((row) => field(row, values[row.key], errors[row.key])).join("\n")}
 <button type="submit">Save settings</button>
 </form>
 ${historyTable(store.globalSettingsHistory())}`;
-  return { status, html: renderPage(request, { title: "Global settings", body }) };
+  return { status, page: { title: "Global settings", body } };
 }
 
 function field(row: (typeof ROWS)[number], value: string, error: string | undefined): string {
@@ -193,7 +193,7 @@ function versionView(store: Store, request: PageRequest, asked: string): Reply {
   const version = Number.isSafeInteger(number) ? store.globalSettingsVersion(number) : null;
   if (version === null) {
     const body = `<h1>No such settings version</h1>\n<p><a href="${SETTINGS_PATH}">Back to the global settings</a></p>`;
-    return { status: 404, html: renderPage(request, { title: "Global settings", body }) };
+    return { status: 404, page: { title: "Global settings", body } };
   }
   const settings = settingsOf(version);
   const inForce = store.latestGlobalSettings()?.version === version.version;
@@ -207,7 +207,7 @@ ${ROWS.map(
 ).join("\n")}
 </dl>
 <p><a href="${SETTINGS_PATH}">Back to the global settings</a></p>`;
-  return { status: 200, html: renderPage(request, { title: `Global settings, version ${version.version}`, body }) };
+  return { status: 200, page: { title: `Global settings, version ${version.version}`, body } };
 }
 
 /** When the records repo last pushed, and the last failure since (spec §3). */

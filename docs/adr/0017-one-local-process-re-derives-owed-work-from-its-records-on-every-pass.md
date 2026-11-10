@@ -2,6 +2,8 @@
 
 > **Amended by ADR-0018.** Enrolling a repo, changing its settings, pausing it and unenrolling it happen on the Repos page served by the running process, not through separate `entail` commands. The commands that open the store directly are what remains, such as status.
 
+> **Amended by ADR-0021.** The pages are one single-page app built with React and bundled by Vite. The board is rendered in the browser from JSON the server sends; the other pages are still rendered by the server and shown in place. Nothing reloads the page, and the app shows when a page or an action is in flight.
+
 > **Amended by ADR-0019.** A failed start-up check for `git` or `claude` no longer stops the process. `entail run` stays up and serves its pages with the halt shown, does no work, and resumes once a later check passes. Only a held lock, an unopenable store or a taken port still exit. `entail status` also reads a status file the process rewrites on every pass, so it answers whether or not entail is running.
 
 entail is one long-running TypeScript process on Node 24, `entail run`, and only one copy runs per machine. Every 60 seconds it runs a **pass** over each enrolled repo:
@@ -31,7 +33,7 @@ There is no job queue. Work owed is a function of the records, so a restart lose
 - **Stack.**
   - entail is one npm package with one `entail` command, written in TypeScript for Node 24 LTS.
   - The store uses Node's built-in `node:sqlite`, so there is no native addon to build.
-  - The pages are server-rendered HTML from `node:http`, with a little inline script and no front-end framework or UI build step.
+  - The pages are served from `node:http` as one single-page app built with React and bundled by Vite (ADR-0021).
   - Verdict, criteria and grade schemas are written once in TypeScript and emitted as the JSON Schema passed to `claude -p --json-schema`.
   - Tests use `node:test`.
   - Linux (WSL included) and macOS are supported. Native Windows is out of MVP-1.

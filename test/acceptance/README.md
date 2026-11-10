@@ -24,7 +24,7 @@ npm run acceptance:harness -- play           # the executor and the board driver
 
 - **The reset** closes (GitHub) or deletes (GitLab) PRs, deletes every branch but `main`, force-pushes the starting commit (built with a fixed date and identity, so it is the same commit every time), deletes every issue, comment and `entail:` label, and files T1–T13 again in order.
 - **The scripted executor** reacts only to `entail:cleared` and `entail:investigate`. For a cleared issue it opens the prepared PR with `Closes #<n>` and an `entail evidence` section holding one entry per C and G id in entail's latest criteria comment, with the result of running tally's tests at that head. For an investigated issue it posts one `entail findings` comment with an entry per Q id. It pushes T1's fix once entail's landing comment names the failing head, rebuilds a PR the forge reports in conflict on the new default branch, and posts evidence again when the head or the criteria change. It keeps no state: every pass re-reads the forge.
-- **The board driver** reads the board page and the item pages it links to, fills each answer form, presses "Review answer" and then "Record answer as <owner> (final)", sending back the form's own hidden fields, the per-start token and item version among them, with the board's `Origin`. It never writes to entail's store.
+- **The board driver** reads the board's data for each open item, as the board app does, fills in the answer, sends "Review answer" and then "Record answer as <owner> (final)" to the answer form's endpoint, with the per-start token and item version the board gave and the board's `Origin`. It never writes to entail's store.
 
 ## The acceptance test
 

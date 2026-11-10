@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
 import { test, type TestContext } from "node:test";
-import { escapeHtml, renderPage } from "../src/page.ts";
+import { escapeHtml } from "../src/page.ts";
 import { BoardPortTakenError, MAX_FORM_BYTES, SERVER_ADDRESS, startServer, TOKEN_FIELD, type LocalServer, type Page } from "../src/server.ts";
 import { postForm, send } from "./http-client.ts";
 
@@ -10,7 +10,7 @@ function echoPage(posted: URLSearchParams[]): Page {
   return {
     path: "/echo",
     nav: "Echo",
-    get: (request) => ({ status: 200, html: renderPage(request, { title: "Echo", body: `<p>token=${escapeHtml(request.server.token)}</p>` }) }),
+    get: (request) => ({ status: 200, page: { title: "Echo", body: `<p>token=${escapeHtml(request.server.token)}</p>` } }),
     post: (request) => {
       posted.push(request.form);
       return { redirect: "/echo?done=1" };
@@ -149,5 +149,8 @@ test("every page shares one header and is sent with protective headers", async (
   assert.equal(page.headers["cache-control"], "no-store");
   assert.equal(page.body.match(/<header class="site">/g)?.length, 1);
   assert.match(page.body, /<a href="\/echo" aria-current="page">Echo<\/a>/);
-  assert.doesNotMatch(page.body, /<script[^>]+src=|<link[^>]+stylesheet/, "nothing is loaded from elsewhere");
+  // The board app's own script and stylesheet, and nothing from elsewhere.
+  const loaded = [...page.body.matchAll(/<(?:script|link)[^>]+(?:src|href)="([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(loaded, ["/ui/app.css", "/ui/app.js"]);
+  assert.match(page.headers["content-security-policy"] as string, /script-src 'self';/, "no inline script runs");
 });

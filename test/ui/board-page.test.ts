@@ -3,13 +3,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { BOARD_ITEM_VERSION, boardOptions, decisionSentence, whyRaised, type BoardItemSnapshot, type WhyRaisedInput } from "../src/board-item.ts";
-import { BOARD_LIVE_PATH, BOARD_POLL_MS, BOARD_SCRIPT, boardPages, raisedAgo, startOfDay, whatNext, type BoardPageOptions } from "../src/board-page.ts";
-import type { VisionCheck } from "../src/intake-comment.ts";
-import { startServer, type LocalServer } from "../src/server.ts";
-import { Store, type BoardItemRecord, type RepoRecord, type TicketRecord } from "../src/store.ts";
-import { decodeEntities, parsePage } from "./acceptance/html.ts";
-import { send } from "./http-client.ts";
+import type { BoardData } from "../../src/app-view.ts";
+import { BOARD_ITEM_VERSION, boardOptions, decisionSentence, whyRaised, type BoardItemSnapshot, type WhyRaisedInput } from "../../src/board-item.ts";
+import { BOARD_DATA_PATH, BOARD_POLL_MS, boardPages, raisedAgo, startOfDay, whatNext, type BoardPageOptions } from "../../src/board-page.ts";
+import type { VisionCheck } from "../../src/intake-comment.ts";
+import { startServer, type LocalServer } from "../../src/server.ts";
+import { Store, type BoardItemRecord, type RepoRecord, type TicketRecord } from "../../src/store.ts";
+import { afterPoll } from "../../src/ui/board.ts";
+import { decodeEntities, parsePage } from "../acceptance/html.ts";
+import { send } from "../http-client.ts";
+import { boardPage, getData, renderBoard, renderItem } from "./render.ts";
 
 const VISION_SHA = "c".repeat(40);
 const NETWORK = "tally never reaches the network.";
@@ -23,7 +26,10 @@ interface Board {
   /** Moves the store's clock on by this many minutes. */
   advance(minutes: number): void;
   raise(repo: RepoRecord, issueNumber: number, why: WhyRaisedInput, check?: Partial<VisionCheck>): { ticket: TicketRecord; item: BoardItemRecord };
-  get(path: string): Promise<{ status: number; body: string }>;
+  /** The board page as the app renders it from the server's data. */
+  get(path: string): Promise<{ status: number; body: string; data: BoardData }>;
+  /** The board's data as the app asks for it every few seconds. */
+  live(item: number | null): Promise<BoardData>;
 }
 
 /** A board item's snapshot, as raising writes it. */
@@ -111,10 +117,8 @@ async function serveBoard(t: TestContext, options: Partial<BoardPageOptions> = {
     gitlab,
     raise,
     advance: (minutes) => void (time.now += minutes * 60_000),
-    get: async (path) => {
-      const r = await send(server.info.port, { path });
-      return { status: r.status, body: r.body };
-    },
+    get: (path) => boardPage(server.info.port, path),
+    live: (item) => getData(server.info.port, item === null ? BOARD_DATA_PATH : `${BOARD_DATA_PATH}?item=${item}`),
   };
 }
 
@@ -126,10 +130,11 @@ function listed(html: string): { open: string[]; ended: string[] } {
   return { open: decisions(open), ended: decisions(ended) };
 }
 
-function stateOf(html: string): { key: string; locked: string; text: string } {
-  const m = /<div id="item-state"[^>]*data-key="([^"]*)" data-locked="([^"]*)"[^>]*>([\s\S]*?)<\/div>/.exec(html);
-  assert.ok(m, "the item's state is on the page");
-  return { key: m[1]!, locked: m[2]!, text: parsePage(m[3]!).text };
+/** The item's state box as the app shows it, and whether its form is locked. */
+function stateOf(html: string): { kind: string; locked: string; text: string } {
+  const box = /<div id="item-state" class="state state-([a-z-]+)" role="status">([\s\S]*?)<\/div>/.exec(html);
+  const form = /<form id="answer-form"[^>]* data-locked="([^"]*)"/.exec(html);
+  return { kind: box?.[1] ?? "open", locked: form?.[1] ?? "no form", text: box ? parsePage(box[2]!).text : "" };
 }
 
 function withdraw(board: Board, ticket: TicketRecord, item: BoardItemRecord, reason: string, stateTo: "deciding" | "cancelled"): void {
@@ -172,7 +177,27 @@ test("the header names the board, its open count, the Calls page and whose answe
   assert.match(parsed.text, /Board · 1 open/);
   assert.match(parsed.text, /answering as Ada Owner/);
   assert.ok(parsed.links.some((l) => l.href === "/calls" && l.text === "Calls"), "a link to the Calls page");
-  assert.match(page.body, /<title>Board \(1\) · entail<\/title>/);
+  assert.equal(page.data.title, "Board (1)");
+  const document = await send(board.server.info.port, { path: "/" });
+  assert.match(document.body, /<title>Board \(1\) · entail<\/title>/, "the document a browser loads carries the title");
+});
+
+test("the board is an app: the document loads it, and the board itself is rendered in the browser from its data", async (t) => {
+  const board = await serveBoard(t);
+  const { item } = board.raise(board.github, 7, { kind: "contradiction" });
+  const document = await send(board.server.info.port, { path: `/?item=${item.id}` });
+  assert.equal(document.status, 200);
+  assert.match(String(document.headers["content-type"]), /^text\/html/);
+  assert.match(document.body, /<script type="module" src="\/ui\/app\.js"><\/script>/, "the document loads the app");
+  assert.match(document.body, /<div id="app">/);
+  const main = document.body.slice(document.body.indexOf("<main"), document.body.indexOf("</main>"));
+  assert.ok(!main.includes(item.decision), "the server renders none of the board: the app does");
+  assert.match(main, /<noscript>/, "without script the page says the board needs it");
+  const boot = /<script type="application\/json" id="entail-boot">([\s\S]*?)<\/script>/.exec(document.body);
+  assert.ok(boot, "the document carries the board's data for the app to start from");
+  const view = JSON.parse(boot[1]!);
+  assert.equal(view.kind, "board");
+  assert.equal(view.data.detail.decision, item.decision);
 });
 
 test("the item view shows the six parts in the order of spec §13", async (t) => {
@@ -201,50 +226,45 @@ test("the item view shows the six parts in the order of spec §13", async (t) =>
   assert.equal(labels.length, 4);
   assert.match(
     labels[0]!,
-    /^Any Unicode whitespace separates words “new york” counts as 2 words\. This goes against a vision line for this ticket only\. The line stays as it is; to change the rule, edit VISION\.md\.$/,
+    /^Any Unicode whitespace separates words\s*“new york” counts as 2 words\.\s*This goes against a vision line for this ticket only\. The line stays as it is; to change the rule, edit VISION\.md\.$/,
     "each option with the outcome a user would observe, and the warning when going ahead goes against a vision line",
   );
   assert.match(labels[2]!, /^Answer in my own words$/);
   assert.match(labels[3]!, /^Don't go ahead/, "then don't go ahead");
   assert.ok(form.controls.some((c) => c.type === "checkbox" && /Show my note on the issue/.test(c.label)));
   assert.match(parsed.text, /Add a note/);
-  assert.deepEqual(
-    form.controls.filter((c) => c.type === "hidden").map((c) => [c.name, c.value]),
-    [["token", board.server.info.token], ["item", String(item.id)], ["version", String(BOARD_ITEM_VERSION)]],
-    "the form carries the per-start token and the item version it shows",
-  );
+  assert.equal(page.data.token, board.server.info.token, "the answer carries the per-start token");
+  assert.equal(page.data.detail.kind === "item" && page.data.detail.version, BOARD_ITEM_VERSION, "and the item version it shows");
 });
 
-test("the page asks for the board every few seconds, and the live board says when the shown item is withdrawn", async (t) => {
+test("the app asks for the board every few seconds, and the live board says when the shown item is withdrawn", async (t) => {
   const board = await serveBoard(t);
   const { ticket, item } = board.raise(board.github, 7, { kind: "contradiction" });
   const other = board.raise(board.gitlab, 8, { kind: "contradiction" });
 
   const page = await board.get(`/?item=${item.id}`);
   assert.ok(BOARD_POLL_MS <= 5000, "every few seconds");
-  assert.match(page.body, new RegExp(`data-live="${BOARD_LIVE_PATH.replaceAll("/", "\\/")}\\?item=${item.id}" data-poll-ms="${BOARD_POLL_MS}"`));
-  assert.match(page.body, /setInterval\(poll/);
-  assert.match(page.body, /el\.readOnly = locked/, "a locked form keeps typed text in place, read-only");
-  assert.doesNotMatch(page.body, /location\.reload|answer-form"\)\.replaceWith|innerHTML/, "the page never reloads or replaces the form");
+  assert.equal(page.data.pollMs, BOARD_POLL_MS);
 
-  let live = await board.get(`${BOARD_LIVE_PATH}?item=${item.id}`);
-  assert.equal(live.status, 200);
-  assert.deepEqual(stateOf(live.body), { key: "open", locked: "false", text: "" });
-  assert.deepEqual(listed(live.body).open, [item.decision, other.item.decision]);
-  assert.match(live.body, /<span id="board-count" class="count">· 2 open<\/span>/);
+  let live = await board.live(item.id);
+  let shown = renderBoard(live);
+  assert.deepEqual(stateOf(shown), { kind: "open", locked: "false", text: "" });
+  assert.deepEqual(listed(shown).open, [item.decision, other.item.decision]);
+  assert.match(shown, /<span id="board-count" class="count">· 2 open<\/span>/);
 
   withdraw(board, ticket, item, "The issue was edited.", "deciding");
-  live = await board.get(`${BOARD_LIVE_PATH}?item=${item.id}`);
-  const state = stateOf(live.body);
-  assert.equal(state.key, `withdrawn:${other.item.id}`);
+  live = await board.live(item.id);
+  shown = renderBoard(live);
+  const state = stateOf(shown);
+  assert.equal(state.kind, "withdrawn");
   assert.equal(state.locked, "true");
   assert.match(state.text, /Withdrawn: this item takes no answer\.\s*The issue was edited\.\s*The ticket is decided again\. If it still needs you, a new item comes to the board\.\s*Anything you typed stays below to copy\. It is not recorded\./);
-  assert.deepEqual(listed(live.body), { open: [other.item.decision], ended: [item.decision] }, "it moves to answered or withdrawn today");
-  assert.match(live.body, /· 1 open/);
+  assert.deepEqual(listed(shown), { open: [other.item.decision], ended: [item.decision] }, "it moves to answered or withdrawn today");
+  assert.match(shown, /· 1 open/);
 
   // Cancelled by an outside close.
   withdraw(board, other.ticket, other.item, "The issue was closed on GitLab by someone else.", "cancelled");
-  assert.match(stateOf((await board.get(`${BOARD_LIVE_PATH}?item=${other.item.id}`)).body).text, /closed on GitLab.*\s*The ticket is cancelled, so nothing more is asked\./);
+  assert.match(stateOf(renderBoard(await board.live(other.item.id))).text, /closed on GitLab.*\s*The ticket is cancelled, so nothing more is asked\./);
 });
 
 test("a withdrawn item's form is locked: nothing in it can be sent", async (t) => {
@@ -255,11 +275,10 @@ test("a withdrawn item's form is locked: nothing in it can be sent", async (t) =
   const page = await board.get(`/?item=${item.id}`);
   const form = parsePage(page.body).forms.find((f) => f.controls.some((c) => c.name === "answer"))!;
   assert.ok(form.controls.filter((c) => c.type === "radio" || c.type === "checkbox").every((c) => c.disabled), "every choice is disabled");
-  assert.match(page.body, /<form id="answer-form" class="answer" method="post" action="\/board\/answer" data-locked="true">/);
-  assert.equal((page.body.match(/<textarea [^>]* readonly>/g) ?? []).length, 2, "text fields stay readable to copy, but read-only");
+  assert.match(page.body, /<form id="answer-form" class="answer"[^>]* data-locked="true"/);
+  assert.equal((page.body.match(/<textarea [^>]*readOnly=""[^>]*>/gi) ?? []).length, 2, "text fields stay readable to copy, but read-only");
   assert.ok(form.controls.filter((c) => c.tag === "button" || c.type === "submit").every((c) => c.disabled), "no button sends it");
-  assert.match(page.body, /document\.addEventListener\("submit"[\s\S]*dataset\.locked === "true"\) event\.preventDefault\(\)/, "a locked form refuses to submit");
-  assert.equal(stateOf(page.body).key, "withdrawn:");
+  assert.equal(stateOf(page.body).kind, "withdrawn");
 });
 
 test('"Answered or withdrawn today" empties at the end of the day', async (t) => {
@@ -286,16 +305,17 @@ test('"Answered or withdrawn today" empties at the end of the day', async (t) =>
   const recheck = store.recordCall({ ticketId: withdrawn.ticket.id, kind: "recheck", reason: "Edited.", stateTo: "deciding" });
   store.withdrawBoardItem({ boardItemId: withdrawn.item.id, callId: recheck.id, reason: "The issue was edited." });
 
-  const board = async () => listed((await send(server.info.port, { path: "/" })).body);
+  const board = async () => listed((await boardPage(server.info.port, "/")).body);
   t.mock.timers.setTime(new Date(2026, 10, 9, 23, 59, 59).getTime());
   assert.deepEqual(await board(), { open: [open.item.decision], ended: [answered.item.decision, withdrawn.item.decision] });
 
   t.mock.timers.setTime(new Date(2026, 10, 10, 0, 0, 0).getTime());
   assert.deepEqual(await board(), { open: [open.item.decision], ended: [] }, "they leave the board at the end of the day");
 
-  const left = await send(server.info.port, { path: `/?item=${answered.item.id}` });
+  const left = await boardPage(server.info.port, `/?item=${answered.item.id}`);
   assert.match(parsePage(left.body).text, /This item has left the board: it was answered before today\. Its ticket's history keeps it/);
-  assert.equal((await send(server.info.port, { path: "/?item=999" })).status, 404);
+  assert.equal((await boardPage(server.info.port, "/?item=999")).status, 404);
+  assert.equal((await send(server.info.port, { path: "/?item=999" })).status, 404, "the document a browser loads says so too");
 });
 
 test("startOfDay is local midnight and raisedAgo reads in minutes, hours and days", () => {
@@ -320,7 +340,7 @@ test("a paused repo's items and a halted host's items render locked, and unlock 
 
   const pausedPage = await board.get(`/?item=${paused.item.id}`);
   assert.deepEqual(stateOf(pausedPage.body), {
-    key: "paused",
+    kind: "paused",
     locked: "true",
     text: "This item is locked: this repo is paused.\nIts form unlocks once the repo is resumed and entail has caught up with it.",
   });
@@ -330,13 +350,13 @@ test("a paused repo's items and a halted host's items render locked, and unlock 
   assert.match(pausedPage.body, /<span class="tag status">locked<\/span>/);
 
   const haltedState = stateOf((await board.get(`/?item=${unreachable.item.id}`)).body);
-  assert.equal(haltedState.key, "halted:gitlab.com");
+  assert.equal(haltedState.kind, "halted");
   assert.match(haltedState.text, /^This item is locked: entail cannot reach gitlab\.com\./);
 
   board.store.saveSettings(board.github.id, { paused: false }, "Ada Owner");
   halted.clear();
-  assert.equal(stateOf((await board.get(`${BOARD_LIVE_PATH}?item=${paused.item.id}`)).body).key, "open");
-  assert.equal(stateOf((await board.get(`${BOARD_LIVE_PATH}?item=${unreachable.item.id}`)).body).locked, "false");
+  assert.equal(stateOf(renderBoard(afterPoll(pausedPage.data, await board.live(paused.item.id)).data)).kind, "open");
+  assert.equal(stateOf(renderBoard(await board.live(unreachable.item.id))).locked, "false");
 });
 
 test("a resumed repo's items stay locked while entail catches up with it, then unlock", async (t) => {
@@ -346,13 +366,13 @@ test("a resumed repo's items stay locked while entail catches up with it, then u
   catching.add(board.github.id);
   const page = await board.get(`/?item=${raised.item.id}`);
   assert.deepEqual(stateOf(page.body), {
-    key: "catching-up",
+    kind: "catching-up",
     locked: "true",
     text: "This item is locked: entail is catching up with this repo after its pause.\nIts form unlocks once entail has handled what changed during the pause. If that changed this item's basis, it is withdrawn instead.",
   });
   assert.match(page.body, /<span class="tag status">locked<\/span>/);
   catching.clear();
-  assert.equal(stateOf((await board.get(`${BOARD_LIVE_PATH}?item=${raised.item.id}`)).body).key, "open");
+  assert.equal(stateOf(renderBoard(await board.live(raised.item.id))).kind, "open");
 });
 
 test("the board offers no reordering, postponing, later, pause or split", async (t) => {
@@ -376,148 +396,87 @@ test("the board offers no reordering, postponing, later, pause or split", async 
   assert.match(stateOf(page.body).text, /Next decision$/);
 });
 
-/** An element as much as the page's script touches it. */
-interface FakeElement {
-  id: string;
-  tagName: string;
-  type: string;
-  dataset: Record<string, string>;
-  readOnly: boolean;
-  disabled: boolean;
-  value: string;
-  html: string;
-  elements?: FakeElement[];
-  replaceWith(next: FakeElement): void;
-  getAttribute(name: string): string | null;
-}
-
-/** Just enough of a browser to run the board's live script against the real server: no reload, no navigation. */
-function fakeBrowser(port: number, html: string) {
-  const ids = new Map<string, FakeElement>();
-  const element = (id: string, tagName: string, outer: string, extra: Partial<FakeElement> = {}): FakeElement => {
-    const dataset: Record<string, string> = {};
-    for (const m of (/^<[^>]*>/.exec(outer)?.[0] ?? "").matchAll(/data-([a-z-]+)="([^"]*)"/g)) {
-      dataset[m[1]!.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())] = decodeEntities(m[2]!);
-    }
-    const el: FakeElement = {
-      id,
-      tagName,
-      type: "",
-      dataset,
-      readOnly: false,
-      disabled: false,
-      value: "",
-      html: outer,
-      replaceWith(next) {
-        ids.set(id, next);
-      },
-      getAttribute: (name: string) => (new RegExp(`^<[^>]* ${name}="([^"]*)"`).exec(outer)?.[1] ?? null),
-      ...extra,
-    };
-    return el;
-  };
-  const byId = (source: string, id: string): FakeElement | null => {
-    const start = source.indexOf(`id="${id}"`);
-    if (start < 0) return null;
-    const open = source.lastIndexOf("<", start);
-    const tag = /^<([a-z]+)/.exec(source.slice(open))![1]!;
-    return element(id, tag.toUpperCase(), source.slice(open, source.indexOf(`</${tag}>`, open) + tag.length + 3));
-  };
-  for (const id of ["board", "board-count", "board-list", "item-state"]) ids.set(id, byId(html, id)!);
-  const control = (tagName: string, type: string, name: string): FakeElement => ({ ...element(name, tagName, ""), type });
-  const typed = { ...control("TEXTAREA", "textarea", "text"), value: "Only ASCII whitespace, please." };
-  const note = { ...control("TEXTAREA", "textarea", "note"), value: "My private note." };
-  const controls = [control("INPUT", "hidden", "item"), control("INPUT", "radio", "answer"), control("INPUT", "radio", "answer"), typed, control("INPUT", "checkbox", "show_note"), note];
-  const shown = byId(html, "answer-form");
-  const form = { ...shown!, elements: controls };
-  if (shown) ids.set("answer-form", form);
-
-  let poll: (() => Promise<void>) | undefined;
-  const listeners: string[] = [];
-  const document = {
-    title: "",
-    getElementById: (id: string) => ids.get(id) ?? null,
-    importNode: (node: FakeElement) => node,
-    addEventListener: (type: string) => void listeners.push(type),
-  };
-  class DOMParser {
-    parseFromString(source: string) {
-      return { title: decodeEntities(/<title>([^<]*)<\/title>/.exec(source)?.[1] ?? ""), getElementById: (id: string) => byId(source, id) };
-    }
-  }
-  const fetchLocal = (path: string) => fetch(`http://127.0.0.1:${port}${path}`);
-  const setInterval = (fn: () => Promise<void>, ms: number) => {
-    poll = fn;
-    return ms;
-  };
-  const navigated: string[] = [];
-  const location = { assign: (href: string) => void navigated.push(href) };
-  new Function("document", "DOMParser", "fetch", "setInterval", "location", BOARD_SCRIPT)(document, DOMParser, fetchLocal, setInterval, location);
-  assert.ok(poll, "the script starts polling");
-  assert.deepEqual(listeners, ["submit"]);
-  return { ids, form, typed, note, controls, document, navigated, poll: () => poll!() };
-}
-
-test("the page refreshes the board without a reload, and a withdrawn item's form locks with its typed text kept", async (t) => {
+test("the board refreshes without a reload, and a withdrawn item's form locks with its typed text kept", async (t) => {
   const board = await serveBoard(t);
   const { ticket, item } = board.raise(board.github, 7, { kind: "contradiction" });
-  const browser = fakeBrowser(board.server.info.port, (await board.get(`/?item=${item.id}`)).body);
-  const shownForm = browser.form;
+  let shown = (await board.get(`/?item=${item.id}`)).data;
+  const draft = { answer: "own-words", text: "Only ASCII whitespace, please.", note: "My private note.", showNote: true };
 
-  await browser.poll();
-  assert.equal(browser.ids.get("item-state")!.dataset.key, "open");
-  assert.equal(browser.form.dataset.locked, "false");
+  shown = afterPoll(shown, await board.live(item.id)).data;
+  assert.equal(stateOf(renderItem(shown, { draft })).locked, "false");
 
   // A newer item arrives on another repo: the list and count refresh in place.
   board.advance(1);
   const newer = board.raise(board.gitlab, 8, { kind: "contradiction" });
-  await browser.poll();
-  assert.deepEqual(listed(browser.ids.get("board-list")!.html).open, [item.decision, newer.item.decision]);
-  assert.match(browser.ids.get("board-count")!.html, /· 2 open/);
-  assert.equal(browser.document.title, "Board (2) · entail");
-  assert.ok(!browser.controls.some((c) => c.disabled || c.readOnly), "the open item's form stays as it was");
+  const polled = afterPoll(shown, await board.live(item.id));
+  assert.equal(polled.show, null, "the board does not move to another item");
+  shown = polled.data;
+  assert.deepEqual(listed(renderBoard(shown)).open, [item.decision, newer.item.decision]);
+  assert.match(renderBoard(shown), /· 2 open/);
+  assert.equal(shown.title, "Board (2)");
+  const open = parsePage(renderItem(shown, { draft })).forms[0]!;
+  assert.ok(!open.controls.some((c) => c.disabled), "the open item's form stays as it was");
 
   withdraw(board, ticket, item, "The issue was edited.", "deciding");
-  await browser.poll();
-  const state = browser.ids.get("item-state")!;
-  assert.equal(state.dataset.key, `withdrawn:${newer.item.id}`);
-  assert.match(state.html, /The issue was edited\./);
-  assert.equal(browser.ids.get("answer-form"), shownForm, "the form itself is never replaced");
-  assert.equal(shownForm.dataset.locked, "true");
+  shown = afterPoll(shown, await board.live(item.id)).data;
+  const html = renderItem(shown, { draft });
+  const state = stateOf(html);
+  assert.equal(state.kind, "withdrawn");
+  assert.match(state.text, /The issue was edited\./);
+  assert.equal(state.locked, "true");
+  const locked = parsePage(html).forms[0]!;
   assert.deepEqual(
-    browser.controls.map((c) => [c.id, c.disabled, c.readOnly]),
+    locked.controls.map((c) => [c.name, c.disabled]),
     [
-      ["item", false, false],
-      ["answer", true, false],
-      ["answer", true, false],
-      ["text", false, true],
-      ["show_note", true, false],
-      ["note", false, true],
+      ["answer", true],
+      ["answer", true],
+      ["answer", true],
+      ["text", false],
+      ["answer", true],
+      ["note", false],
+      ["show_note", true],
+      ["step", true],
     ],
-    "choices are disabled and text fields read-only",
+    "choices and the button are disabled; text fields stay to copy",
   );
-  assert.equal(browser.typed.value, "Only ASCII whitespace, please.", "typed text stays visible to copy");
-  assert.equal(browser.note.value, "My private note.");
-  assert.deepEqual(listed(browser.ids.get("board-list")!.html), { open: [newer.item.decision], ended: [item.decision] });
+  assert.equal((html.match(/<textarea [^>]*readOnly=""[^>]*>/gi) ?? []).length, 2, "text fields are read-only");
+  assert.equal(locked.controls.find((c) => c.name === "text")?.value, "Only ASCII whitespace, please.", "typed text stays visible to copy");
+  assert.equal(locked.controls.find((c) => c.name === "note")?.value, "My private note.");
+  assert.deepEqual(listed(renderBoard(shown)), { open: [newer.item.decision], ended: [item.decision] });
+});
+
+test("the shown item keeps the version it showed while the board refreshes, and says when it has left the board", async (t) => {
+  const board = await serveBoard(t);
+  const { item } = board.raise(board.github, 7, { kind: "contradiction" });
+  const shown = (await board.get(`/?item=${item.id}`)).data;
+  const read = await board.live(item.id);
+  assert.deepEqual(afterPoll(shown, read).data.detail, shown.detail, "nothing changed, so the item shows as it was");
+
+  const gone: BoardData = { ...read, detail: { kind: "unknown" } };
+  const after = afterPoll(shown, gone).data;
+  assert.equal(after.detail.kind, "item", "the item stays to read");
+  assert.match(stateOf(renderBoard(after)).text, /This item has left the board\./);
+  assert.equal(stateOf(renderBoard(after)).locked, "true");
 });
 
 const nextLinkTo = (html: string) => /<a class="next-decision" href="([^"]*)">Next decision<\/a>/.exec(html)?.[1];
 
 test("an empty board shows the oldest item once one is raised", async (t) => {
   const board = await serveBoard(t);
-  const browser = fakeBrowser(board.server.info.port, (await board.get("/")).body);
-  await browser.poll();
-  assert.deepEqual(browser.navigated, [], "nothing to show yet");
+  const empty = (await board.get("/")).data;
+  assert.equal(empty.detail.kind, "empty");
+  assert.match(renderBoard(empty), /Nothing needs you\./);
+  assert.deepEqual(afterPoll(empty, await board.live(null)).show, null, "nothing to show yet");
 
   const first = board.raise(board.github, 7, { kind: "contradiction" });
   board.advance(1);
   board.raise(board.gitlab, 8, { kind: "contradiction" });
-  await browser.poll();
-  assert.deepEqual(browser.navigated, [`/?item=${first.item.id}`], "the oldest open item is opened");
-  assert.match((await board.get(browser.navigated[0]!)).body, new RegExp(first.item.decision.slice(0, 20)));
+  const polled = afterPoll(empty, await board.live(null));
+  assert.equal(polled.show, first.item.id, "the oldest open item is opened");
+  assert.match(renderBoard(polled.data), new RegExp(first.item.decision.slice(0, 20)));
 });
 
-test("a withdrawn or answered item offers Next decision to the oldest open item, and the page never moves on by itself", async (t) => {
+test("a withdrawn or answered item offers Next decision to the oldest open item, and the board never moves on by itself", async (t) => {
   const board = await serveBoard(t);
   const a = board.raise(board.github, 7, { kind: "contradiction" });
   board.advance(1);
@@ -528,13 +487,11 @@ test("a withdrawn or answered item offers Next decision to the oldest open item,
   const open = await board.get(`/?item=${a.item.id}`);
   assert.equal(nextLinkTo(open.body), undefined, "an open item has no Next decision");
 
-  const browser = fakeBrowser(board.server.info.port, open.body);
   withdraw(board, a.ticket, a.item, "The issue was edited.", "deciding");
-  await browser.poll();
-  assert.equal(nextLinkTo(browser.ids.get("item-state")!.html), `/?item=${b.item.id}`);
-  assert.deepEqual(browser.navigated, [], "it does not move on by itself");
-  assert.equal(browser.typed.value, "Only ASCII whitespace, please.");
-  assert.equal(nextLinkTo((await board.get(`/?item=${a.item.id}`)).body), `/?item=${b.item.id}`, "the server render carries it too");
+  const polled = afterPoll(open.data, await board.live(a.item.id));
+  assert.equal(polled.show, null, "it does not move on by itself");
+  assert.equal(nextLinkTo(renderBoard(polled.data)), `/?item=${b.item.id}`);
+  assert.equal(nextLinkTo((await board.get(`/?item=${a.item.id}`)).body), `/?item=${b.item.id}`, "a fresh load carries it too");
 
   board.store.recordAnswer({ boardItemId: b.item.id, answeredBy: "Ada Owner", shape: "dont-go-ahead" });
   const answered = await board.get(`/?item=${b.item.id}`);
@@ -542,5 +499,5 @@ test("a withdrawn or answered item offers Next decision to the oldest open item,
 
   withdraw(board, c.ticket, c.item, "The issue was closed.", "cancelled");
   assert.equal(nextLinkTo((await board.get(`/?item=${c.item.id}`)).body), undefined, "nothing else is open");
-  assert.equal(nextLinkTo((await board.get(`${BOARD_LIVE_PATH}?item=${c.item.id}`)).body), undefined);
+  assert.equal(nextLinkTo(renderBoard(await board.live(c.item.id))), undefined);
 });

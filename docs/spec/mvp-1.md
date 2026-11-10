@@ -166,9 +166,9 @@ Actors: the **owner** (the one person entail serves in MVP-1), an **executor** (
 
 - **One process.** `entail run` is one long-running TypeScript process on Node 24 LTS, one npm package with one `entail` command. One copy runs per machine, and a second `entail run` refuses to start. entail runs on one machine at a time. [ADR-0017]
 - **Service.** `entail service install` registers the same command as a systemd user unit on Linux and WSL, or a launchd agent on macOS. It starts at login and restarts after a crash. `entail service uninstall` removes it. [ADR-0017]
-- **Stack.** [ADR-0017]
+- **Stack.** [ADR-0017], [ADR-0021]
   - The store uses `node:sqlite`.
-  - Pages are server-rendered HTML from `node:http`, with a little inline script, no front-end framework and no UI build step.
+  - Pages are served from `node:http` as one single-page app built with React and bundled by Vite. The board is rendered in the browser from JSON the server sends, and the other pages are rendered by the server and shown in place. Moving between pages and sending a form never reload the page, and the app shows when a page or an action is in flight.
   - Verdict, criteria and grade schemas are written once in TypeScript and emitted as JSON Schema for `claude -p --json-schema`.
   - Tests use `node:test`.
   - Linux (WSL included) and macOS are supported. Native Windows is out of MVP-1.
@@ -718,3 +718,4 @@ All from the map's Out of scope list unless marked otherwise. [#12]
 [ADR-0018]: ../adr/0018-repos-are-enrolled-and-set-on-a-local-repos-page-with-settings-kept-in-entails-records.md
 [ADR-0019]: ../adr/0019-entail-shows-its-own-health-where-the-owner-looks-and-interrupts-only-for-halts-they-must-fix.md
 [ADR-0020]: ../adr/0020-an-edited-issue-is-re-checked-in-place-and-a-finished-issue-comes-back-only-when-the-owner-pulls-it-in.md
+[ADR-0021]: ../adr/0021-the-board-is-a-single-page-app-built-with-react.md

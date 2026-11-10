@@ -1,9 +1,12 @@
+import { ANSWER_FIELDS, type AnswerDraft } from "./app-view.ts";
 import { BOARD_ITEM_VERSION, type BoardItemSnapshot, type BoardOption } from "./board-item.ts";
 import { composeComment } from "./comment-rules.ts";
 import { EXECUTOR_LINE, visionCheckSection } from "./intake-comment.ts";
 import { isLandingMergeAnswer } from "./landing-pin.ts";
 import type { AnswerRecord, AnswerShape, BoardItemHistory, Store } from "./store.ts";
 import type { TicketState } from "./ticket-states.ts";
+
+export { ANSWER_FIELDS, type AnswerDraft };
 
 /**
  * The owner's answer to a board item (spec §13 "One answer path", "Answer
@@ -18,32 +21,12 @@ import type { TicketState } from "./ticket-states.ts";
  * answer itself is not a call.
  */
 
-/** The answer form's fields. The per-start token travels beside them in the server's own field. */
-export const ANSWER_FIELDS = {
-  item: "item",
-  version: "version",
-  answer: "answer",
-  text: "text",
-  note: "note",
-  showNote: "show_note",
-  step: "step",
-} as const;
-
 /** The form's steps: review the answer, record it as final, or go back to the form. */
 export type AnswerStep = "review" | "record" | "back";
 
 /** The warning an option carries when going ahead goes against a vision line (ADR-0012). It links nowhere. */
 export const AGAINST_VISION_WARNING =
   "This goes against a vision line for this ticket only. The line stays as it is; to change the rule, edit VISION.md.";
-
-/** What the owner filled in, exactly as the form sent it, so nothing they typed is lost on the way back. */
-export interface AnswerDraft {
-  /** `option:<id>`, `own-words` or `dont-go-ahead`; empty when nothing was chosen. */
-  answer: string;
-  text: string;
-  note: string;
-  showNote: boolean;
-}
 
 /** An answer as it would be recorded. */
 export interface ChosenAnswer {

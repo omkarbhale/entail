@@ -1,0 +1,62 @@
+/* The board app's own styles (ADR-0021). The base styles every page shares are in the document (src/page.ts). */
+
+/* What is in flight: a bar across the top, a spinner and words in the header, and the pressed button. */
+.progress { position: fixed; top: 0; left: 0; height: 3px; width: 0; background: var(--accent); opacity: 0; z-index: 10; pointer-events: none; }
+.progress.active { opacity: 1; animation: progress 8s cubic-bezier(.1, .7, .2, 1) forwards; }
+@keyframes progress { from { width: 0; } to { width: 90%; } }
+header.site .busy { display: inline-flex; gap: .4rem; align-items: center; font-size: .875rem; color: var(--muted); }
+header.site .busy:empty { display: none; }
+.spinner { display: inline-block; width: .85em; height: .85em; margin-right: .4em; vertical-align: -.1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
+header.site .busy .spinner { margin-right: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } .progress.active { animation: none; width: 90%; } }
+button.pending { cursor: progress; }
+form[aria-busy=true] { cursor: progress; }
+main[aria-busy=true] { opacity: .7; transition: opacity .2s .15s; }
+.app-error { margin: 0; padding: .5rem 1rem; color: var(--bad); background: var(--soft); border-bottom: 2px solid var(--bad); }
+.app-loading { padding: 3rem 1rem; text-align: center; }
+
+/* The board. */
+.board-head { display: flex; flex-wrap: wrap; gap: 1rem; align-items: baseline; }
+.board-head h1 { margin: 0; }
+.board-head .answering { margin-left: auto; }
+.inbox { display: grid; grid-template-columns: minmax(0, 22rem) minmax(0, 1fr); gap: 1.5rem; margin-top: 1rem; }
+.list h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 1rem 0 .25rem; }
+.list ol.entries { list-style: none; padding: 0; margin: 0; }
+.list li a { display: block; padding: .5rem .6rem; border-radius: 6px; color: inherit; text-decoration: none; }
+.list li a:hover { background: var(--soft); }
+.list li a[aria-current] { background: var(--soft); outline: 1px solid var(--line); }
+.list .d { display: block; font-weight: 600; line-height: 1.35; }
+.list .m { display: block; font-size: .8rem; color: var(--muted); margin-top: .2rem; }
+.tag { display: inline-block; font-size: .75rem; padding: 0 .5rem; border-radius: 99px; background: var(--soft); border: 1px solid var(--line); white-space: nowrap; }
+.tag.why-contradiction { color: var(--bad); }
+.item { min-width: 0; }
+.item h2.decision { font-size: 1.3rem; margin: .25rem 0 1rem; }
+.item h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 1.5rem 0 .5rem; }
+.item-meta { margin: 0; font-size: .875rem; }
+.why { padding: .25rem .75rem .5rem; background: var(--soft); border-radius: 6px; }
+ul.vision { list-style: none; padding: 0; }
+.vline { border-left: 3px solid var(--line); padding: .25rem .6rem; margin: .4rem 0; }
+.vline.mark-contradicts { border-color: var(--bad); }
+.vline .mark { font-size: .75rem; font-weight: 600; margin-right: .4rem; }
+blockquote.request { margin: .25rem 0; padding: .5rem .75rem; background: var(--soft); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+ol.happened { list-style: none; padding: 0; }
+ol.happened li { padding: .3rem 0; border-bottom: 1px dashed var(--line); }
+form.answer .choice { display: block; border: 1px solid var(--line); border-radius: 6px; padding: .5rem .75rem; margin: .5rem 0; }
+form.answer .choice .t { font-weight: 600; }
+form.answer .choice .o { display: block; color: var(--muted); font-size: .875rem; }
+form.answer .choice.stop .t { color: var(--bad); }
+form.answer textarea { max-width: none; min-height: 4rem; }
+form.answer[data-locked=true] { opacity: .75; }
+.state { margin: .75rem 0; padding: .6rem .8rem; border-radius: 6px; border: 1px solid var(--line); background: var(--soft); }
+.state p { margin: .25rem 0 0; }
+.empty { color: var(--muted); text-align: center; padding: 3rem 1rem; }
+form.answer .warn, .review .warn { display: block; margin-top: .35rem; font-size: .875rem; color: var(--bad); }
+form.answer .actions { display: flex; gap: .75rem; align-items: baseline; flex-wrap: wrap; }
+.review, .state-answered { border: 1px solid var(--accent); border-radius: 6px; padding: .6rem .8rem; }
+.review h4 { margin: 1rem 0 .25rem; font-size: .9rem; }
+pre.comment { white-space: pre-wrap; overflow-wrap: anywhere; }
+blockquote.note { margin: .25rem 0; padding: .35rem .75rem; border-left: 3px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
+.refusal { padding: .5rem .75rem; border-left: 3px solid var(--bad); background: var(--soft); }
+a.next-decision { display: inline-block; padding: .4rem 1rem; border: 1px solid var(--accent); border-radius: 4px; text-decoration: none; }
+@media (max-width: 52rem) { .inbox { grid-template-columns: minmax(0, 1fr); } }

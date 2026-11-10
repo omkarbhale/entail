@@ -1,3 +1,4 @@
+import { BOARD_PATH } from "./app-view.ts";
 import { challengePins, objectionText, type RecordedChallenge } from "./challenge.ts";
 import { composeComment } from "./comment-rules.ts";
 import type { CriteriaDetail } from "./criteria.ts";
@@ -31,7 +32,7 @@ import { readVision, VISION_PATH, visionLinesOf } from "./vision.ts";
 export const BOARD_ITEM_VERSION = 1;
 
 /** The board page's path on the local server: its root, where the board's links point (ADR-0012). */
-export const BOARD_PATH = "/";
+export { BOARD_PATH };
 /** The page with one ticket's whole history (spec §14). */
 export const TICKET_PATH = "/ticket";
 

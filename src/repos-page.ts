@@ -17,7 +17,7 @@ import { cliOf } from "./host-login.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import { mirrorPaths } from "./mirror.ts";
 import { MECHANICAL_CHECK_KINDS } from "./model-schemas.ts";
-import { escapeHtml, renderPage, timeHtml } from "./page.ts";
+import { escapeHtml, timeHtml } from "./page.ts";
 import { isMergeMethod, MERGE_METHOD_LABELS, PRESELECTED_VISION_ORIGIN, readRepoSettings } from "./repo-settings.ts";
 import { REPO_SETTINGS_PATH, repoSettingsPage } from "./repo-settings-page.ts";
 import { pauseForm, repoSwitchPages, unenrollLink, type RepoSwitchPagesOptions } from "./repo-switches-page.ts";
@@ -413,7 +413,7 @@ ${unenrolledList(store)}
 ${refused}
 ${form}
 <p class="muted"><a href="${SETTINGS_PATH}">Global settings</a></p>`;
-  return { status, html: renderPage(request, { title: "Repos", body }) };
+  return { status, page: { title: "Repos", body } };
 }
 
 /** Each enrolled host, with its CLI and its halts, or that it is answering (spec §16). */
@@ -582,7 +582,7 @@ ${genericCriteriaSection(review, state.criteria, state.blankRows ?? 1)}
 <p>Issues already open are not taken in. Pull any of them in with an <code>/entail</code> comment.</p>
 <button type="submit" name="${ENROLL_FIELDS.action}" value="${ENROLL_ACTIONS.enroll}">Enroll</button> <a href="${REPOS_PATH}">Cancel</a>
 </form>`;
-  return { status: state.status, html: renderPage(request, { title: `Enroll ${setting.path}`, body }) };
+  return { status: state.status, page: { title: `Enroll ${setting.path}`, body } };
 }
 
 /**

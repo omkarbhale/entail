@@ -1,3 +1,4 @@
+import { APP_ASSETS_PATH, APP_ELEMENT_ID, BOOT_ELEMENT_ID, type Chrome, type PageView } from "./app-view.ts";
 import type { HealthCondition, PageHealth } from "./health.ts";
 import type { PageRequest } from "./server.ts";
 
@@ -25,39 +26,66 @@ export interface PageContent {
   wide?: boolean;
 }
 
+/** What the shared header shows for a request: the pages and entail's health, read now. */
+export function chromeOf(request: PageRequest): Chrome {
+  return { nav: request.server.nav, health: readHealth(request) };
+}
+
 /**
- * Renders a whole page: server-rendered HTML with no front-end framework and
- * no build step (spec §1). Every page shares one header, the place the health
- * strip goes (spec §16).
+ * Renders the whole document a browser loads (ADR-0021). It carries the
+ * shared header and, for a page the server renders, the page itself, so the
+ * page reads the same before the board app starts. It loads the app, which
+ * takes over from there: it renders the board from its data and shows every
+ * later page in place, with no reload. The view the document shows travels
+ * beside it as JSON, which is never run as script.
  */
-export function renderPage(request: PageRequest, content: PageContent): string {
+export function renderDocument(request: PageRequest, view: PageView): string {
+  const wide = view.kind === "board" || view.wide;
+  // The page's HTML is already in the document; the app reads it from there rather than twice.
+  const boot: PageView = view.kind === "html" ? { ...view, body: "" } : view;
+  const main =
+    view.kind === "html"
+      ? view.body
+      : `<div class="app-loading"><p class="muted">Loading the board…</p>
+<noscript><p>The board is an app that runs in your browser: turn on JavaScript for ${escapeHtml(request.server.origin)} to see and answer its items.</p></noscript></div>`;
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(content.title)} · entail</title>
+<title>${escapeHtml(view.title)} · entail</title>
 <style>${STYLE}</style>
+<link rel="stylesheet" href="${APP_ASSETS_PATH}app.css">
+<script type="module" src="${APP_ASSETS_PATH}app.js"></script>
 </head>
 <body>
-${renderHeader(request)}
-<main${content.wide ? ' class="wide"' : ""}>
-${content.body}
+<div id="${APP_ELEMENT_ID}">
+${renderHeader(request, view.chrome)}
+<main${wide ? ' class="wide"' : ""}>
+${main}
 </main>
+</div>
+<script type="application/json" id="${BOOT_ELEMENT_ID}">${JSON.stringify(boot).replaceAll("<", "\\u003c")}</script>
 </body>
 </html>
 `;
 }
 
+/** Renders a page the server renders as the whole document a browser loads. */
+export function renderPage(request: PageRequest, content: PageContent, status = 200): string {
+  return renderDocument(request, { kind: "html", status, title: content.title, body: content.body, wide: content.wide === true, chrome: chromeOf(request) });
+}
+
 /**
- * The header every page shares. While anything is halted or warned, the
- * health strip follows it with one line each: what is wrong, what it stops,
- * since when and what clears it. Otherwise the header says only when the
- * last pass ran (spec §16). The strip is not a board item and takes no answer.
+ * The header every page shares, as the document first shows it; the board
+ * app renders the same header from {@link Chrome}. While anything is halted or
+ * warned, the health strip follows it with one line each: what is wrong, what
+ * it stops, since when and what clears it. Otherwise the header says only when
+ * the last pass ran (spec §16). The strip is not a board item and takes no answer.
  */
-function renderHeader(request: PageRequest): string {
-  const health = readHealth(request);
-  const links = request.server.nav
+function renderHeader(request: PageRequest, chrome: Chrome): string {
+  const health = chrome.health;
+  const links = chrome.nav
     .map((link) => {
       const current = link.path === request.url.pathname ? ' aria-current="page"' : "";
       return `<a href="${escapeHtml(link.path)}"${current}>${escapeHtml(link.label)}</a>`;

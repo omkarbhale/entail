@@ -1,14 +1,18 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { APP_ASSETS_PATH, TOKEN_FIELD, type BoardData, type NavLink, type PageView } from "./app-view.ts";
 import type { PageHealth } from "./health.ts";
 import type { OperationalLog } from "./operational-log.ts";
-import { renderPage } from "./page.ts";
+import { chromeOf, renderDocument, type PageContent } from "./page.ts";
 
 /** The only address the local server listens on (ADR-0017). */
 export const SERVER_ADDRESS = "127.0.0.1";
 /** The hidden field that carries the per-start token on every form. */
-export const TOKEN_FIELD = "token";
+export { TOKEN_FIELD };
 /** A form larger than this is refused. */
 export const MAX_FORM_BYTES = 64 * 1024;
 
@@ -25,10 +29,7 @@ export interface ServerInfo {
   health?: () => PageHealth;
 }
 
-export interface NavLink {
-  path: string;
-  label: string;
-}
+export type { NavLink };
 
 export interface PageRequest {
   url: URL;
@@ -40,8 +41,21 @@ export interface FormRequest extends PageRequest {
   form: URLSearchParams;
 }
 
-/** A page's reply: HTML with a status, or a redirect (303 See Other) to another path. */
-export type Reply = { status: number; html: string } | { redirect: string };
+/**
+ * A page's reply (ADR-0021):
+ *
+ * - `page`: a page the server renders as HTML. A browser loading it gets the
+ *   whole document, which starts the board app; the app asking for it gets the
+ *   page as JSON and shows it in place.
+ * - `board`: the board, which the app renders itself from its data.
+ * - `json`: data the app asks for, always sent as JSON.
+ * - `redirect`: a redirect (303 See Other) to another path, which the app follows in place.
+ */
+export type Reply =
+  | { status: number; page: PageContent }
+  | { status: number; board: { title: string; data: BoardData } }
+  | { status: number; json: unknown }
+  | { redirect: string };
 
 /** One page the local server serves, at one exact path. */
 export interface Page {
@@ -60,7 +74,12 @@ export interface ServerOptions {
   log?: OperationalLog;
   /** entail's health, shown at the top of every page (spec §16). */
   health?: () => PageHealth;
+  /** Where the built board app's files are; `dist/ui` in the package by default (`npm run build` writes it). */
+  appDirectory?: string;
 }
+
+/** Where `npm run build` writes the board app, from `src/` and from `dist/` alike. */
+export const APP_DIRECTORY = fileURLToPath(new URL("../dist/ui/", import.meta.url));
 
 export interface LocalServer {
   readonly info: ServerInfo;
@@ -83,9 +102,9 @@ export class BoardPortTakenError extends Error {
 }
 
 const SECURITY_HEADERS = {
-  // A little inline script and style, nothing loaded from elsewhere, and never framed.
+  // The app's own script and no inline script, styles of its own, nothing loaded from elsewhere, and never framed.
   "Content-Security-Policy":
-    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; " +
+    "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
     "connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   "X-Frame-Options": "DENY",
   "X-Content-Type-Options": "nosniff",
@@ -112,10 +131,11 @@ export async function startServer(options: ServerOptions): Promise<LocalServer> 
   const nav = options.pages.flatMap((page) => (page.nav === undefined ? [] : [{ path: page.path, label: page.nav }]));
   const token = randomBytes(32).toString("base64url");
   const log = options.log;
+  const appDirectory = options.appDirectory ?? APP_DIRECTORY;
 
   let info: ServerInfo | undefined;
   const server = createServer((req, res) => {
-    handle(req, res, info!, pages, log).catch((error: unknown) => {
+    handle(req, res, info!, pages, appDirectory, log).catch((error: unknown) => {
       log?.error("board-request-failed", { method: req.method, path: pathOf(req), error: messageOf(error) });
       if (!res.headersSent) send(res, 500, "text/plain", "entail could not serve this page; see the operational log.\n");
       else res.destroy();
@@ -157,6 +177,7 @@ async function handle(
   res: ServerResponse,
   info: ServerInfo,
   pages: ReadonlyMap<string, Page>,
+  appDirectory: string,
   log: OperationalLog | undefined,
 ): Promise<void> {
   const refuse = (status: number, reason: string, text: string) => {
@@ -179,18 +200,22 @@ async function handle(
   const url = new URL(req.url ?? "/", info.origin);
   const page = pages.get(url.pathname);
   const request: PageRequest = { url, server: info };
+  const json = wantsJson(req);
 
   if (!write) {
-    if (page?.get === undefined) {
-      return reply(res, page ? notAllowed(request) : notFound(request));
+    if (page === undefined && url.pathname.startsWith(APP_ASSETS_PATH)) {
+      return sendAsset(res, appDirectory, url.pathname.slice(APP_ASSETS_PATH.length));
     }
-    return reply(res, await page.get(request));
+    if (page?.get === undefined) {
+      return reply(res, request, json, page ? notAllowed() : notFound());
+    }
+    return reply(res, request, json, await page.get(request));
   }
 
   if (method !== "POST" || page?.post === undefined) {
     // Read nothing of a write no page takes, and do not reuse the connection.
     res.setHeader("Connection", "close");
-    return reply(res, page ? notAllowed(request) : notFound(request));
+    return reply(res, request, json, page ? notAllowed() : notFound());
   }
   const type = (req.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
   if (type !== "application/x-www-form-urlencoded") {
@@ -208,7 +233,27 @@ async function handle(
       "This form is not from the running entail. If entail restarted since the page was opened, reload it and try again.",
     );
   }
-  return reply(res, await page.post({ ...request, form }));
+  return reply(res, request, json, await page.post({ ...request, form }));
+}
+
+/** Whether the request is the board app asking for a page as JSON rather than a browser loading it. */
+function wantsJson(req: IncomingMessage): boolean {
+  return (req.headers.accept ?? "").split(",").some((type) => type.split(";")[0]!.trim().toLowerCase() === "application/json");
+}
+
+const ASSET_TYPES: Readonly<Record<string, string>> = { ".js": "text/javascript", ".css": "text/css" };
+
+/** Serves one of the built board app's files, by its bare name only. */
+async function sendAsset(res: ServerResponse, directory: string, name: string): Promise<void> {
+  const type = ASSET_TYPES[extname(name)];
+  if (type === undefined || !/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(name)) return send(res, 404, "text/plain", "entail has no file here.\n");
+  let body: Buffer;
+  try {
+    body = await readFile(join(directory, name));
+  } catch {
+    return send(res, 404, "text/plain", "entail has no file here. If you run entail from a checkout, run `npm run build` first.\n");
+  }
+  send(res, 200, type, body);
 }
 
 function ownHosts(port: number): Set<string> {
@@ -247,32 +292,37 @@ function readBody(req: IncomingMessage, limit: number): Promise<string | null> {
   });
 }
 
-function reply(res: ServerResponse, r: Reply): void {
+/**
+ * Sends a reply: a page or the board as a whole document to a browser loading
+ * it, or as JSON to the board app asking for it; data always as JSON.
+ */
+function reply(res: ServerResponse, request: PageRequest, json: boolean, r: Reply): void {
+  // A page sent as JSON differs from the same page sent as HTML.
+  res.setHeader("Vary", "Accept");
   if ("redirect" in r) {
     res.setHeader("Location", r.redirect);
-    send(res, 303, "text/plain", "");
-  } else {
-    send(res, r.status, "text/html", r.html);
+    return send(res, 303, "text/plain", "");
   }
+  if ("json" in r) return send(res, r.status, "application/json", JSON.stringify(r.json));
+  const view: PageView =
+    "page" in r
+      ? { kind: "html", status: r.status, title: r.page.title, body: r.page.body, wide: r.page.wide === true, chrome: chromeOf(request) }
+      : { kind: "board", status: r.status, title: r.board.title, data: r.board.data, chrome: chromeOf(request) };
+  if (json) send(res, r.status, "application/json", JSON.stringify(view));
+  else send(res, r.status, "text/html", renderDocument(request, view));
 }
 
-function send(res: ServerResponse, status: number, type: string, body: string): void {
+function send(res: ServerResponse, status: number, type: string, body: string | Buffer): void {
   res.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": `${type}; charset=utf-8`, "Content-Length": Buffer.byteLength(body) });
   res.end(body);
 }
 
-function notFound(request: PageRequest): Reply {
-  return {
-    status: 404,
-    html: renderPage(request, { title: "Not found", body: "<h1>Not found</h1>\n<p>entail has no page here.</p>" }),
-  };
+function notFound(): Reply {
+  return { status: 404, page: { title: "Not found", body: "<h1>Not found</h1>\n<p>entail has no page here.</p>" } };
 }
 
-function notAllowed(request: PageRequest): Reply {
-  return {
-    status: 405,
-    html: renderPage(request, { title: "Not allowed", body: "<h1>Not allowed</h1>\n<p>This page does not take that request.</p>" }),
-  };
+function notAllowed(): Reply {
+  return { status: 405, page: { title: "Not allowed", body: "<h1>Not allowed</h1>\n<p>This page does not take that request.</p>" } };
 }
 
 function pathOf(req: IncomingMessage): string {

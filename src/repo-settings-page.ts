@@ -3,7 +3,7 @@ import { createForge as createForgeAdapter } from "./forge/create-forge.ts";
 import { type Actor, type Forge, type ForgeSetting, MERGE_METHODS } from "./forge/forge.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import { MECHANICAL_CHECK_KINDS } from "./model-schemas.ts";
-import { escapeHtml, renderPage, timeHtml } from "./page.ts";
+import { escapeHtml, timeHtml } from "./page.ts";
 import {
   MERGE_METHOD_LABELS,
   parseRepoSettingsForm,
@@ -262,7 +262,7 @@ ${pauseForm(request, repo, settings.paused, "settings")}
 <p class="hint">Or ${unenrollLink(repo, "unenroll this repo")}: entail first shows how many tickets are in flight.</p>
 ${historyTable(store, repo)}
 <p><a href="${REPOS_PATH}">Back to the repos</a></p>`;
-  return { status, html: renderPage(request, { title: `${repo.path} settings`, body }) };
+  return { status, page: { title: `${repo.path} settings`, body } };
 }
 
 function criteriaSection(form: RepoSettingsForm, errors: RepoSettingsErrors, ciChange: CiFilesComparison | null): string {
@@ -400,7 +400,7 @@ function versionView(request: PageRequest, store: Store, repo: RepoRecord, asked
   const version = Number.isSafeInteger(number) ? store.settingsVersion(repo.id, number) : null;
   const back = `<p><a href="${REPO_SETTINGS_PATH}?${REPO_FIELDS.repo}=${repo.id}">Back to the ${escapeHtml(repo.path)} settings</a></p>`;
   if (version === null) {
-    return { status: 404, html: renderPage(request, { title: `${repo.path} settings`, body: `<h1>No such settings version</h1>\n${back}` }) };
+    return { status: 404, page: { title: `${repo.path} settings`, body: `<h1>No such settings version</h1>\n${back}` } };
   }
   const s = repoSettingsOf(version);
   const inForce = store.latestSettings(repo.id)?.version === version.version;
@@ -434,7 +434,7 @@ ${repo.forge === "github" ? `<dt>Merge method</dt><dd>${s.mergeMethod ? escapeHt
 <dt>Paused</dt><dd>${s.paused ? "yes" : "no"}</dd>
 </dl>
 ${back}`;
-  return { status: 200, html: renderPage(request, { title: `${repo.path} settings, version ${version.version}`, body }) };
+  return { status: 200, page: { title: `${repo.path} settings, version ${version.version}`, body } };
 }
 
 /** The form as the settings in force fill it. */
@@ -472,7 +472,7 @@ function repoOf(store: Store, asked: string | null): RepoRecord | null {
 
 function noSuchRepo(request: PageRequest): Reply {
   const body = `<h1>No such repo</h1>\n<p><a href="${REPOS_PATH}">Back to the repos</a></p>`;
-  return { status: 404, html: renderPage(request, { title: "Repo settings", body }) };
+  return { status: 404, page: { title: "Repo settings", body } };
 }
 
 /** An unenrolled repo's settings: readable, with no form, since its records are read-only (ADR-0018). */
@@ -485,12 +485,12 @@ function unenrolledView(request: PageRequest, store: Store, repo: RepoRecord, in
 <p class="muted">Last in force: version ${inForce.version}, saved ${timeHtml(inForce.savedAt)} by ${escapeHtml(inForce.savedBy)}.</p>
 ${historyTable(store, repo)}
 <p><a href="${REPOS_PATH}">Back to the repos</a></p>`;
-  return { status, html: renderPage(request, { title: `${repo.path} settings`, body }) };
+  return { status, page: { title: `${repo.path} settings`, body } };
 }
 
 function noSettings(request: PageRequest, repo: RepoRecord): Reply {
   const body = `<h1>${escapeHtml(repo.path)} settings</h1>\n<p class="muted">No settings saved.</p>\n<p><a href="${REPOS_PATH}">Back to the repos</a></p>`;
-  return { status: 404, html: renderPage(request, { title: `${repo.path} settings`, body }) };
+  return { status: 404, page: { title: `${repo.path} settings`, body } };
 }
 
 function forgeName(forge: "github" | "gitlab"): string {

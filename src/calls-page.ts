@@ -1,5 +1,5 @@
 import { visionPermalink } from "./citation.ts";
-import { escapeHtml, renderPage, timeHtml } from "./page.ts";
+import { escapeHtml, timeHtml } from "./page.ts";
 import type { Page, PageRequest, Reply } from "./server.ts";
 import {
   CALL_KINDS,
@@ -162,10 +162,10 @@ function callsView(store: Store, request: PageRequest): Reply {
   if (!parsed.ok) {
     return {
       status: 400,
-      html: renderPage(request, {
+      page: {
         title: "Calls",
         body: `<h1>Calls</h1>\n<p class="error">${escapeHtml(parsed.problem)}.</p>\n<p><a href="${CALLS_PATH}">Every call</a></p>`,
-      }),
+      },
     };
   }
   const filter = parsed.filter;
@@ -182,7 +182,7 @@ function callsView(store: Store, request: PageRequest): Reply {
 ${renderFilters(store, filter)}
 <p><strong>${escapeHtml(count)}</strong>${filtered ? ` · <a href="${CALLS_PATH}">clear every filter</a>` : ""}</p>
 ${list}`;
-  return { status: 200, html: renderPage(request, { title: "Calls", body }) };
+  return { status: 200, page: { title: "Calls", body } };
 }
 
 /** The filters, as links that each change one part and keep the others. */
@@ -523,7 +523,7 @@ ${facts.map(([name, value]) => `<dt>${escapeHtml(name)}</dt><dd>${value}</dd>`).
 <pre>${escapeHtml(run.input)}</pre>
 <h2>Output</h2>
 <pre>${escapeHtml(prettyOutput(run.output))}</pre>`;
-  return { status: 200, html: renderPage(request, { title: `Model run ${run.id}`, body }) };
+  return { status: 200, page: { title: `Model run ${run.id}`, body } };
 }
 
 /** A run's output, indented when it is JSON, else exactly as recorded. */
@@ -545,6 +545,6 @@ export function recordId(value: string | null): number | null {
 export function missing(request: PageRequest, title: string, text: string): Reply {
   return {
     status: 404,
-    html: renderPage(request, { title, body: `<h1>${escapeHtml(title)}</h1>\n<p>${escapeHtml(text)}</p>\n<p><a href="${CALLS_PATH}">Every call</a></p>` }),
+    page: { title, body: `<h1>${escapeHtml(title)}</h1>\n<p>${escapeHtml(text)}</p>\n<p><a href="${CALLS_PATH}">Every call</a></p>` },
   };
 }

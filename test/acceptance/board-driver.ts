@@ -1,24 +1,18 @@
 // The board driver: the harness answering board items as the owner, through
-// the real board form on localhost (ADR-0008, ADR-0010). It reads the board
-// page and the item pages it links to, fills the answer form the way a person
-// would, presses "Review answer", then "Record answer as <owner> (final)". The
-// form's own hidden fields, the per-start token and the item version among
-// them, go back exactly as the page gave them; the driver never writes to
-// entail's store.
+// the real board on localhost (ADR-0008, ADR-0010, ADR-0021). The board is an
+// app in the browser, so the driver speaks to the server as that app does: it
+// reads the board's data for each open item, fills the answer the way a
+// person would, sends "Review answer", then "Record answer as <owner>
+// (final)" to the answer form's endpoint. The per-start token and the item
+// version go back exactly as the board gave them, with the board's `Origin`;
+// the driver never writes to entail's store.
+import { ANSWER_FIELDS, BOARD_ANSWER_PATH, BOARD_DATA_PATH, ITEM_PARAM, TOKEN_FIELD, type AnswerDraft, type AnswerReply, type BoardData, type ItemView, type OptionView } from "../../src/app-view.ts";
 import { fixtureIssueByTitle, FIXTURE_ISSUES, type TicketId } from "./fixture.ts";
 import type { Forge } from "./forge.ts";
-import { formData, parsePage, submitButtons, type Control, type Form, type Page } from "./html.ts";
 import { EXPECTED_ANSWERS, EXTRA_ANSWERS, LANDING_PIN_ANSWER, type PreparedAnswer } from "./prepared.ts";
 import type { Log } from "./reset.ts";
 
-const REVIEW = /review answer/i;
-const RECORD = /record answer/i;
-const DONT_GO_AHEAD = /don['’]?t go ahead/i;
-const OWN_WORDS = /own words/i;
 const MERGE_AS_IT_IS = /merge this pr as it is/i;
-/** Pages that are not the board: the Calls page, ticket pages, the Repos page and settings. */
-const NOT_BOARD = /\/(calls|tickets?|repos|settings)(\/|$)/i;
-const ISSUE_LINK = /\/(?:-\/)?issues\/(\d+)\/?$/;
 
 export interface BoardDriverOptions {
   /** The board page, `http://127.0.0.1:7419/` by default. */
@@ -30,8 +24,8 @@ export interface BoardDriverOptions {
 }
 
 interface FoundItem {
-  url: string;
-  form: Form;
+  item: ItemView;
+  token: string;
   ticket: TicketId | undefined;
   issue: string | undefined;
   key: string;
@@ -55,77 +49,63 @@ export class BoardDriver {
     this.#fetch = options.fetch ?? fetch;
   }
 
-  async #get(url: URL): Promise<Page> {
-    const response = await this.#fetch(url, { redirect: "follow" });
+  /** The board's data, for one item or the oldest open one, as the board app reads it. */
+  async #data(item: number | null): Promise<BoardData> {
+    const url = new URL(BOARD_DATA_PATH, this.#board);
+    if (item !== null) url.searchParams.set(ITEM_PARAM, String(item));
+    const response = await this.#fetch(url, { headers: { Accept: "application/json" } });
     if (!response.ok) throw new BoardDriverError(`GET ${url} answered ${response.status}`);
-    return parsePage(await response.text());
+    return (await response.json()) as BoardData;
   }
 
-  async #submit(pageUrl: string, form: Form, button: Control): Promise<{ url: string; page: Page }> {
-    const target = new URL(form.action || pageUrl, pageUrl);
-    if (target.origin !== this.#board.origin) throw new BoardDriverError(`form posts to another origin: ${target}`);
-    const data = formData(form, button);
-    const init: RequestInit =
-      form.method === "post"
-        ? {
-            method: "POST",
-            body: data.toString(),
-            headers: { "Content-Type": "application/x-www-form-urlencoded", Origin: this.#board.origin },
-            redirect: "follow",
-          }
-        : { method: "GET", redirect: "follow" };
-    if (form.method !== "post") target.search = data.toString();
-    const response = await this.#fetch(target, init);
+  /** Sends one step of the answer form, as the board app does. */
+  async #send(found: FoundItem, draft: AnswerDraft, step: "review" | "record"): Promise<AnswerReply> {
+    const fields = new URLSearchParams();
+    fields.set(TOKEN_FIELD, found.token);
+    fields.set(ANSWER_FIELDS.item, String(found.item.id));
+    fields.set(ANSWER_FIELDS.version, String(found.item.version));
+    fields.set(ANSWER_FIELDS.answer, draft.answer);
+    fields.set(ANSWER_FIELDS.text, draft.text);
+    fields.set(ANSWER_FIELDS.note, draft.note);
+    if (draft.showNote) fields.set(ANSWER_FIELDS.showNote, "1");
+    fields.set(ANSWER_FIELDS.step, step);
+    const target = new URL(BOARD_ANSWER_PATH, this.#board);
+    const response = await this.#fetch(target, {
+      method: "POST",
+      body: fields.toString(),
+      headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded", Origin: this.#board.origin },
+    });
     const text = await response.text();
-    if (!response.ok) {
-      throw new BoardDriverError(`${init.method} ${target} answered ${response.status}: ${parsePage(text).text.slice(0, 300)}`);
-    }
-    return { url: response.url || target.href, page: parsePage(text) };
+    if (!response.ok) throw new BoardDriverError(`POST ${target} (${step}) answered ${response.status}: ${text.slice(0, 300)}`);
+    return JSON.parse(text) as AnswerReply;
   }
 
-  /** The open items' answer forms on the board page and the board pages it links to. */
+  /** The open items on the board that take an answer now, each read as the board shows it. */
   async #items(): Promise<FoundItem[]> {
-    const board = await this.#get(this.#board);
-    const pages: { url: string; page: Page }[] = [{ url: this.#board.href, page: board }];
-    const seen = new Set([this.#board.href]);
-    for (const link of board.links) {
-      const url = new URL(link.href, this.#board);
-      url.hash = "";
-      if (url.origin !== this.#board.origin || seen.has(url.href) || NOT_BOARD.test(url.pathname)) continue;
-      seen.add(url.href);
-      pages.push({ url: url.href, page: await this.#get(url) });
-    }
+    const board = await this.#data(null);
     const items: FoundItem[] = [];
-    const keys = new Set<string>();
-    for (const { url, page } of pages) {
-      for (const form of page.forms) {
-        const buttons = submitButtons(form).filter((b) => !b.disabled);
-        if (!buttons.some((b) => REVIEW.test(b.label) || RECORD.test(b.label))) continue;
-        const hidden = form.controls.filter((c) => c.type === "hidden").map((c) => `${c.name}=${c.value}`);
-        const key = `${new URL(form.action || url, url).href}?${hidden.sort().join("&")}`;
-        if (keys.has(key)) continue;
-        keys.add(key);
-        const { ticket, issue } = await this.#ticketOf(page, form);
-        items.push({ url, form, ticket, issue, key });
-      }
+    for (const entry of board.open) {
+      const data = await this.#data(entry.id);
+      const item = data.detail;
+      if (item.kind !== "item" || item.state.kind !== "open") continue;
+      const { ticket, issue } = await this.#ticketOf(item);
+      items.push({ item, token: data.token, ticket, issue, key: `${item.id}:${item.version}` });
     }
     return items;
   }
 
-  /** The ticket an item is for: the issue linked closest before its form. */
-  async #ticketOf(page: Page, form: Form): Promise<{ ticket: TicketId | undefined; issue: string | undefined }> {
-    const before = page.links.filter((l) => l.offset < form.offset && ISSUE_LINK.test(new URL(l.href, this.#board).pathname));
-    const link = before.at(-1) ?? page.links.find((l) => ISSUE_LINK.test(l.href));
-    if (link) {
-      const byText = fixtureIssueByTitle(link.text);
-      if (byText) return { ticket: byText.id, issue: link.href };
-      const title = await this.#titleOf(link.href);
-      const byNumber = title === undefined ? undefined : fixtureIssueByTitle(title);
-      if (byNumber) return { ticket: byNumber.id, issue: link.href };
-    }
-    // Last resort: the only fixture title quoted on the page.
-    const titles = FIXTURE_ISSUES.filter((issue) => page.text.includes(issue.title));
-    return { ticket: titles.length === 1 ? titles[0]!.id : undefined, issue: link?.href };
+  /** The ticket an item is for: from its issue's title, or failing that the only fixture title it quotes. */
+  async #ticketOf(item: ItemView): Promise<{ ticket: TicketId | undefined; issue: string | undefined }> {
+    const issue = item.ticket?.href || undefined;
+    const byText = item.ticket ? fixtureIssueByTitle(item.ticket.title) : undefined;
+    if (byText) return { ticket: byText.id, issue };
+    const title = issue === undefined ? undefined : await this.#titleOf(issue);
+    const byNumber = title === undefined ? undefined : fixtureIssueByTitle(title);
+    if (byNumber) return { ticket: byNumber.id, issue };
+    // Last resort: the only fixture title quoted in the item.
+    const text = JSON.stringify(item);
+    const titles = FIXTURE_ISSUES.filter((fixture) => text.includes(fixture.title));
+    return { ticket: titles.length === 1 ? titles[0]!.id : undefined, issue };
   }
 
   async #titleOf(href: string): Promise<string | undefined> {
@@ -142,122 +122,77 @@ export class BoardDriver {
     return this.#issueTitles.get(href.replace(/\/$/, ""));
   }
 
-  #answerFor(item: FoundItem): { answer: PreparedAnswer; extra: boolean } | undefined {
-    if (item.form.controls.some((c) => MERGE_AS_IT_IS.test(c.label))) {
+  #answerFor(found: FoundItem): { answer: PreparedAnswer; extra: boolean } | undefined {
+    if (found.item.form.options.some((o) => MERGE_AS_IT_IS.test(o.title))) {
       return { answer: { shape: "option", label: LANDING_PIN_ANSWER.label, fallback: "" }, extra: true };
     }
-    if (!item.ticket) return undefined;
-    const expected = EXPECTED_ANSWERS.get(item.ticket);
+    if (!found.ticket) return undefined;
+    const expected = EXPECTED_ANSWERS.get(found.ticket);
     if (expected) return { answer: expected, extra: false };
-    const extra = EXTRA_ANSWERS.get(item.ticket);
+    const extra = EXTRA_ANSWERS.get(found.ticket);
     return extra ? { answer: extra, extra: true } : undefined;
   }
 
   /** Checks the board once and answers every open item it has an answer for. */
   async pass(): Promise<void> {
-    for (const item of await this.#items()) {
-      if (this.#handled.has(item.key)) continue;
-      const chosen = this.#answerFor(item);
+    for (const found of await this.#items()) {
+      if (this.#handled.has(found.key)) continue;
+      const chosen = this.#answerFor(found);
       if (!chosen) {
-        this.#handled.add(item.key);
-        const expected = item.ticket === "T8";
-        this.#log({ event: expected ? "left-unanswered" : "extra-item-unanswered", ticket: item.ticket ?? null, issue: item.issue ?? null, extra: !expected });
+        this.#handled.add(found.key);
+        const expected = found.ticket === "T8";
+        this.#log({ event: expected ? "left-unanswered" : "extra-item-unanswered", ticket: found.ticket ?? null, issue: found.issue ?? null, extra: !expected });
         continue;
       }
       try {
-        const receipt = await this.#answer(item, chosen.answer);
-        this.#handled.add(item.key);
+        const receipt = await this.#answer(found, chosen.answer);
+        this.#handled.add(found.key);
         this.#log({
           event: "answered",
-          ticket: item.ticket ?? null,
-          issue: item.issue ?? null,
+          ticket: found.ticket ?? null,
+          issue: found.issue ?? null,
           answer: chosen.answer,
           extra: chosen.extra,
           receipt: receipt.slice(0, 500),
         });
       } catch (error) {
-        const failures = (this.#failures.get(item.key) ?? 0) + 1;
-        this.#failures.set(item.key, failures);
-        if (failures >= 3) this.#handled.add(item.key);
-        this.#log({ event: "answer-failed", ticket: item.ticket ?? null, issue: item.issue ?? null, attempt: failures, error: String(error) });
+        const failures = (this.#failures.get(found.key) ?? 0) + 1;
+        this.#failures.set(found.key, failures);
+        if (failures >= 3) this.#handled.add(found.key);
+        this.#log({ event: "answer-failed", ticket: found.ticket ?? null, issue: found.issue ?? null, attempt: failures, error: String(error) });
       }
     }
   }
 
-  async #answer(item: FoundItem, answer: PreparedAnswer): Promise<string> {
-    const form = fillAnswer(item.form, answer);
-    const buttons = submitButtons(form).filter((b) => !b.disabled);
-    const review = buttons.find((b) => REVIEW.test(b.label)) ?? buttons.find((b) => RECORD.test(b.label))!;
-    let result = await this.#submit(item.url, form, review);
-    if (REVIEW.test(review.label)) {
-      // "Review answer" records nothing; the final step is "Record answer as <owner> (final)".
-      const confirm = result.page.forms
-        .map((f) => ({ form: f, button: submitButtons(f).find((b) => RECORD.test(b.label) && !b.disabled) }))
-        .find((f) => f.button);
-      if (!confirm?.button) throw new BoardDriverError(`the review page has no "Record answer" step: ${result.page.text.slice(0, 300)}`);
-      result = await this.#submit(result.url, confirm.form, confirm.button);
-    }
-    return result.page.text;
+  /** Reviews the answer, records it, and returns the receipt the board then shows. */
+  async #answer(found: FoundItem, answer: PreparedAnswer): Promise<string> {
+    const draft = fillAnswer(found.item.form.options, answer);
+    const review = await this.#send(found, draft, "review");
+    if (review.kind !== "review") throw new BoardDriverError(`"Review answer" did not show the review: ${JSON.stringify(review).slice(0, 300)}`);
+    // "Review answer" records nothing; the final step is "Record answer as <owner> (final)".
+    const recorded = await this.#send(found, draft, "record");
+    if (recorded.kind !== "recorded") throw new BoardDriverError(`"Record answer" recorded nothing: ${JSON.stringify(recorded).slice(0, 300)}`);
+    const shown = (await this.#data(found.item.id)).detail;
+    if (shown.kind !== "item" || shown.state.kind !== "answered") throw new BoardDriverError("the board shows no receipt for the recorded answer");
+    const r = shown.state.receipt;
+    return `Answered by ${r.answeredBy} at ${r.answeredAt} · item version ${r.itemVersion}. The answer: ${r.words}. The ticket's new state: ${r.outcome.stateWords}.`;
   }
 }
 
-function check(form: Form, control: Control): void {
-  for (const other of form.controls) {
-    if (other.type === "radio" && other.name === control.name) other.checked = other === control;
-  }
-  control.checked = true;
-}
-
-/** A copy of an answer form, filled in with a prepared answer. */
-export function fillAnswer(original: Form, answer: PreparedAnswer): Form {
-  const form: Form = { ...original, controls: original.controls.map((c) => ({ ...c, options: [...c.options] })) };
-  const choices = form.controls.filter((c) => c.type === "radio" && !c.disabled);
-  const selects = form.controls.filter((c) => c.tag === "select" && !c.disabled);
-
-  const choose = (pattern: RegExp): boolean => {
-    const radio = choices.find((c) => pattern.test(c.label));
-    if (radio) {
-      check(form, radio);
-      return true;
-    }
-    for (const select of selects) {
-      const option = select.options.find((o) => pattern.test(o.text));
-      if (option) {
-        select.value = option.value;
-        return true;
-      }
-    }
-    return false;
-  };
-
-  const ownWords = (text: string) => {
-    if (!choose(OWN_WORDS)) throw new BoardDriverError('the form has no "Answer in my own words"');
-    const fields = form.controls.filter(
-      (c) => !c.disabled && (c.tag === "textarea" || (c.tag === "input" && c.type === "text")),
-    );
-    const describe = (c: Control) => `${c.name} ${c.label} ${c.placeholder}`;
-    const field =
-      fields.find((c) => !/note/i.test(describe(c)) && /word|answer|text|what should/i.test(describe(c))) ??
-      fields.find((c) => !/note/i.test(describe(c)));
-    if (!field) throw new BoardDriverError("the form has no field for the owner's own words");
-    field.value = text;
-  };
-
+/** The answer a prepared answer fills in: the named option, or the owner's own words when there is none. */
+export function fillAnswer(options: readonly OptionView[], answer: PreparedAnswer): AnswerDraft {
+  const draft: AnswerDraft = { answer: "", text: "", note: "", showNote: false };
   switch (answer.shape) {
     case "don't go ahead":
-      if (!choose(DONT_GO_AHEAD)) throw new BoardDriverError('the form has no "Don\'t go ahead"');
-      break;
+      return { ...draft, answer: "dont-go-ahead" };
     case "own words":
-      ownWords(answer.text);
-      break;
+      return { ...draft, answer: "own-words", text: answer.text };
     case "option": {
       const escaped = answer.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      if (!choose(new RegExp(escaped, "i"))) {
-        if (!answer.fallback) throw new BoardDriverError(`the form has no option "${answer.label}"`);
-        ownWords(answer.fallback);
-      }
-      break;
+      const option = options.find((o) => new RegExp(escaped, "i").test(o.title));
+      if (option) return { ...draft, answer: `option:${option.id}` };
+      if (!answer.fallback) throw new BoardDriverError(`the form has no option "${answer.label}"`);
+      return { ...draft, answer: "own-words", text: answer.fallback };
     }
   }
-  return form;
 }

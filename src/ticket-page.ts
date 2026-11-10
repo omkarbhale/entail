@@ -12,7 +12,7 @@ import {
   ticketPath,
 } from "./calls-page.ts";
 import type { RetryState } from "./model-runs.ts";
-import { escapeHtml, renderPage, timeHtml } from "./page.ts";
+import { escapeHtml, timeHtml } from "./page.ts";
 import type { Page, PageRequest, Reply } from "./server.ts";
 import type { AnswerRecord, BoardItemHistory, CallRecord, Store, TicketRecord } from "./store.ts";
 
@@ -75,7 +75,7 @@ ${facts.map(([name, value]) => `<dt>${escapeHtml(name)}</dt><dd>${value}</dd>`).
 ${renderRetryState(options.retryState?.(ticket.id) ?? null)}
 <h2>History</h2>
 ${renderHistory(ticket, store.callsForTicket(ticket.id), store.boardItemsForTicket(ticket.id), context)}${renderPredecessors(store, ticket, context)}`;
-  return { status: 200, html: renderPage(request, { title, body }) };
+  return { status: 200, page: { title, body } };
 }
 
 /** Whether the ticket's model step is failing, and when it is tried again; never which runs wait. */

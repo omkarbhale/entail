@@ -4,7 +4,7 @@ import type { Forge } from "./forge/forge.ts";
 import { ForgeWriter, type InFlightWrites } from "./forge-writer.ts";
 import { readGlobalSettings } from "./global-settings.ts";
 import type { OperationalLog } from "./operational-log.ts";
-import { escapeHtml, renderPage } from "./page.ts";
+import { escapeHtml } from "./page.ts";
 import { readRepoSettings, REPO_FIELDS } from "./repo-settings.ts";
 import { REPO_SETTINGS_PATH } from "./repo-settings-page.ts";
 import { recordUnenrollment, removeUnenrollLabels, setPaused } from "./repo-switches.ts";
@@ -132,7 +132,7 @@ ${paused ? `<p class="muted">The repo is paused; it can be unenrolled directly.<
 <input type="hidden" name="${SWITCH_FIELDS.repo}" value="${repo.id}">
 <button type="submit">Unenroll ${escapeHtml(repo.path)}</button> <a href="${REPOS_PATH}">Cancel</a>
 </form>`;
-  return { status: 200, html: renderPage(request, { title: `Unenroll ${repo.path}`, body }) };
+  return { status: 200, page: { title: `Unenroll ${repo.path}`, body } };
 }
 
 function enrolledRepo(store: Store, asked: string | null): RepoRecord | null {
@@ -147,5 +147,5 @@ function notEnrolled(request: PageRequest, status: number): Reply {
 
 function problem(request: PageRequest, title: string, message: string, status: number): Reply {
   const body = `<h1>${escapeHtml(title)}</h1>\n<p class="error" role="alert">${escapeHtml(message)}</p>\n<p><a href="${REPOS_PATH}">Back to the repos</a></p>`;
-  return { status, html: renderPage(request, { title, body }) };
+  return { status, page: { title, body } };
 }
