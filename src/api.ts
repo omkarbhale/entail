@@ -53,7 +53,7 @@ import { loggedRepos, readLog, readSettings, repoState, writeSettings, type Glob
  *   DELETE /api/repos/:owner/:name            unenrolls
  *   POST   /api/repos/:owner/:name/check      checks the repo now, and answers with what the check did
  *   POST   /api/repos/:owner/:name/backlog    judges the issues open on GitHub that have no call yet
- *   GET    /api/settings                      the owner's name, the default model and effort, the notice command (read only here)
+ *   GET    /api/settings                      the owner's name, the default model and effort, the notice and start commands (read only here)
  *   PATCH  /api/settings                      {"owner"?: string, "model"?: string, "effort"?: string}
  *
  * A call is on an issue or on a PR: each item carries `kind` ("issue" or
@@ -240,6 +240,7 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
     if (method === "PATCH") {
       const change = await readJson(request);
       if ("notice" in change) throw new OwnerError(400, "the notice command is set from the command line, not here: entail settings --notice '<command>' (or --notice none)");
+      if ("start" in change) throw new OwnerError(400, "the start command is set from the command line, not here: entail settings --start '<command>' (or --start none)");
       return send(response, 200, changed(settingsView(changeSettings(dataDirectory, options.defaultModel, change))));
     }
     return send(response, 405, { error: `${method} is not allowed on ${path}` });
@@ -276,7 +277,7 @@ function status(options: ApiOptions): StatusView {
 }
 
 function settingsView(settings: GlobalSettings): SettingsView {
-  return { owner: settings.owner, model: settings.model, effort: settings.effort, notice: settings.notice ?? null };
+  return { owner: settings.owner, model: settings.model, effort: settings.effort, notice: settings.notice ?? null, start: settings.start ?? null };
 }
 
 /** Server-sent events: one `data:` line of JSON per event, and a comment every 25 s so the connection stays open. */
@@ -296,7 +297,7 @@ function events(options: ApiOptions, request: IncomingMessage, response: ServerR
 export function changeSettings(dataDirectory: string, defaultModel: string, change: Record<string, unknown>): GlobalSettings {
   const settings = readSettings(dataDirectory, { model: defaultModel });
   for (const key of Object.keys(change)) {
-    if (!["owner", "model", "effort", "notice"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
+    if (!["owner", "model", "effort", "notice", "start"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
   }
   if (change.owner !== undefined) {
     if (typeof change.owner !== "string" || change.owner.trim() === "" || /[\r\n]/u.test(change.owner)) throw new OwnerError(400, "owner is the owner's name, on one line");
@@ -313,6 +314,10 @@ export function changeSettings(dataDirectory: string, defaultModel: string, chan
   if (change.notice !== undefined) {
     if (change.notice !== null && (typeof change.notice !== "string" || /[\r\n]/u.test(change.notice))) throw new OwnerError(400, "notice is a command on one line, or null for no notices");
     settings.notice = change.notice === null || change.notice.trim() === "" ? null : change.notice.trim();
+  }
+  if (change.start !== undefined) {
+    if (change.start !== null && (typeof change.start !== "string" || /[\r\n]/u.test(change.start))) throw new OwnerError(400, "start is a command on one line, or null to start nothing");
+    settings.start = change.start === null || change.start.trim() === "" ? null : change.start.trim();
   }
   writeSettings(dataDirectory, settings);
   return settings;

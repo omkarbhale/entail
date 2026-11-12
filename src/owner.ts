@@ -550,6 +550,14 @@ function logRow(repo: string, entry: CallEntry, statuses: Map<number, CallStatus
     const by = entries.find((other) => other.id === status.by);
     if (by !== undefined) trail.push({ at: by.at, text: "Judged again after an edit" });
   }
+  // Work started for this call: for entail's go, the owner's action on it, or the go run again on the owner's word.
+  const ours = (id: number) => id === entry.id || isActionOn(entries, id, entry.id) || entries.some((other) => other.type === "call" && other.id === id && other.owner !== null && isActionOn(entries, other.owner.action, entry.id));
+  for (const started of entries) {
+    if (started.type !== "started") continue;
+    const acted = entries.find((other) => other.type === "acted" && other.id === started.for);
+    if (acted?.type !== "acted" || !ours(acted.for)) continue;
+    trail.push({ at: started.at, text: started.exit === 0 ? `Started work: ${started.command}` : `The start command failed (${started.error ?? `exit ${started.exit}`}): ${started.command}` });
+  }
   const reopened = entries.filter((other) => other.type === "reopened" && entries.some((act) => act.type === "acted" && act.id === other.after && act.issue === entry.issue.number && (act.for === entry.id || isActionOn(entries, act.for, entry.id))));
   for (const reopen of reopened) trail.push({ at: reopen.at, text: "Reopened on GitHub after entail closed it" });
   trail.sort((a, b) => a.at.localeCompare(b.at));
@@ -605,6 +613,8 @@ export type LogItem =
   | ({ kind: "call" } & Omit<CallView, "kind"> & { callKind: CallView["kind"] })
   | { kind: "owner"; repo: string; at: string; action: OwnerAction; issue: CallEntry["issue"] | null; pr: LandingEntry["pr"] | null }
   | { kind: "acted"; repo: string; at: string; for: number; issue: number; url: string; closed: boolean }
+  /** entail ran the start command for a go that acted. */
+  | { kind: "started"; repo: string; at: string; issue: number; command: string; exit: number | null; error: string | null }
   /** entail acted on a PR: posted, and merged or closed it if it was to. */
   | { kind: "pr-acted"; repo: string; at: string; for: number; pr: number; url: string; merged: PrActedEntry["merged"]; refused: string | null; sentBack: boolean; closed: boolean }
   /** entail started or stopped following a PR. */
@@ -647,6 +657,9 @@ export function logItems(dataDirectory: string, book: readonly Case[], repoFilte
         }
         case "acted":
           items.push({ kind: "acted", repo, at: entry.at, for: entry.for, issue: entry.issue, url: entry.comment.url, closed: entry.closed });
+          break;
+        case "started":
+          items.push({ kind: "started", repo, at: entry.at, issue: entry.issue, command: entry.command, exit: entry.exit, error: entry.error ?? null });
           break;
         case "pr-acted":
           items.push({ kind: "pr-acted", repo, at: entry.at, for: entry.for, pr: entry.pr, url: entry.comment.url, merged: entry.merged, refused: entry.refused, sentBack: entry.sentBack, closed: entry.closed });
@@ -995,6 +1008,9 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
       }
       case "acted":
         lines.push(`${at}  ${where(item.issue)}  posted ${item.url}${item.closed ? " and closed the issue" : ""}`);
+        break;
+      case "started":
+        lines.push(`${at}  ${where(item.issue)}  ${item.exit === 0 ? "started work with" : "the start command failed"}: ${item.command}${item.exit === 0 ? "" : ` (${item.error ?? `exit ${item.exit}`})`}`);
         break;
       case "pr-acted": {
         const did = item.merged !== null ? ` and merged at ${item.merged.sha.slice(0, 7)}` : item.closed ? " and closed the PR unmerged" : item.refused !== null ? `; the merge did not happen: ${item.refused}` : "";

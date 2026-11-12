@@ -236,17 +236,20 @@ test("check now runs a pass for the repo, and the backlog asks entail to judge t
   assert.equal((await noLoop.call("GET", "/api/status")).body.watching, false);
 });
 
-test("the settings for every repo are read and changed, the notice command only read", async (t) => {
+test("the settings for every repo are read and changed, the notice and start commands only read", async (t) => {
   const api = await serve(t);
-  assert.deepEqual((await api.call("GET", "/api/settings")).body, { owner: null, model: "claude-opus-5-5", effort: "low", notice: null });
+  assert.deepEqual((await api.call("GET", "/api/settings")).body, { owner: null, model: "claude-opus-5-5", effort: "low", notice: null, start: null });
   const changed = await api.call("PATCH", "/api/settings", { owner: "Omkar", effort: "medium" });
-  assert.deepEqual(changed.body, { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null });
-  assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null });
+  assert.deepEqual(changed.body, { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null });
+  assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null });
   assert.equal((await api.call("PATCH", "/api/settings", { owner: "two\nlines" })).status, 400);
   const refused = await api.call("PATCH", "/api/settings", { owner: "Other", notice: "touch /tmp/x" });
   assert.equal(refused.status, 400);
   assert.match(String(refused.body.error), /entail settings --notice/u);
-  assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null });
+  const noStart = await api.call("PATCH", "/api/settings", { start: "touch /tmp/x" });
+  assert.equal(noStart.status, 400);
+  assert.match(String(noStart.body.error), /entail settings --start/u);
+  assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null });
 });
 
 test("the board hears every change live, over server-sent events", async (t) => {

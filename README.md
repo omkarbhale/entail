@@ -4,7 +4,7 @@ entail is the owner's stand-in for product decisions on a repo. The test it appl
 
 ## Status
 
-entail is being rebuilt. On 2026-11-12 it was started over in this repository around those two judgments, one per issue and one per PR; the first build made wrong calls, and [docs/restart-2026-11-12.md](docs/restart-2026-11-12.md) says why, what carried over and where the old tree is in history. The call on an issue and the call on a PR work: entail watches enrolled repos, posts each call on its issue, judges each PR that closes an issue it said go on, merges it at the judged head or sends it back with what needs to change, and takes the owner's confirmations, overrides and answers on its board or from the command line. Starting work from a go is not built yet.
+entail is being rebuilt. On 2026-11-12 it was started over in this repository around those two judgments, one per issue and one per PR; the first build made wrong calls, and [docs/restart-2026-11-12.md](docs/restart-2026-11-12.md) says why, what carried over and where the old tree is in history. The call on an issue and the call on a PR work: entail watches enrolled repos, posts each call on its issue, judges each PR that closes an issue it said go on, merges it at the judged head or sends it back with what needs to change, takes the owner's confirmations, overrides and answers on its board or from the command line, and hands each go to a command the owner sets to start the work. It runs as a per-user service, so it keeps going without a terminal.
 
 ## Use
 
@@ -14,7 +14,18 @@ You need Node 24 or newer, `git`, `gh` logged in, and `claude` logged in.
 npm ci && npm run build
 node dist/cli.js enroll owner/repo             # watch a repo; it starts in confirm mode
 node dist/cli.js run --dry-run                 # one pass that prints what it would post, and changes nothing
-node dist/cli.js run                           # poll every minute, post each call, serve the board on http://127.0.0.1:4380/
+node dist/cli.js service install               # run entail now, at every login and after a crash
+node dist/cli.js open                          # the board, on http://127.0.0.1:4380/
+node dist/cli.js status                        # running or not, each repo's last check and confirm mode, what waits
+node dist/cli.js settings --notice '<command>' # optional: told in one line when something starts waiting
+node dist/cli.js settings --start '<command>'  # optional: a go hands its issue to this command to start the work
+```
+
+From there the owner files issues and answers on the board; nothing else needs a terminal. The rest is there when wanted:
+
+```sh
+node dist/cli.js run                           # entail by hand instead of the service: poll every minute, post, serve the board
+node dist/cli.js service status                # or: service uninstall, which stops and removes it
 node dist/cli.js waiting                       # the questions and calls to confirm waiting on you
 node dist/cli.js confirm owner/repo#12         # or: override owner/repo#12 no "reason", answer owner/repo#12 go "answer"
 node dist/cli.js calls owner/repo              # the log: every call and every answer, with its reason
@@ -24,6 +35,8 @@ node dist/cli.js replay                        # the case book through both judg
 ```
 
 `node dist/cli.js help` lists every command and option.
+
+**Running.** `entail service install` writes a systemd user unit (Linux, WSL with systemd on) or a launchd agent (macOS) that runs the same `entail run`, with the same data directory and port, from login on and again after a crash; `entail service uninstall` stops and removes it, and `entail service status` says where it stands. One copy runs per machine: the service and `entail run` by hand never run together. A crash or a restart loses nothing: every call and owner's action is in the log before entail acts on it, an action whose undo window closed meanwhile is completed, an undone one is dropped, and a comment already posted is found by its marker and never posted twice.
 
 **Watching.** `run` polls each enrolled repo. Each issue filed after it was enrolled gets a call, and gets one again whenever its title or body is edited; a comment with a line starting `/entail` gets a call on its issue too, on any issue. Each call is one model run, Opus 5.5 at low effort unless the settings say otherwise (`entail settings`, for every repo or one), paid on the logged-in `claude`.
 
@@ -37,9 +50,11 @@ node dist/cli.js replay                        # the case book through both judg
 
 **Notices.** When something starts waiting, entail can run one command the owner sets (`entail settings --notice '<command>'`, or `--notice none`; the board shows it but does not set it) with one line and a link appended as its last two arguments, such as `entail: 1 question and 3 calls to confirm waiting on you http://127.0.0.1:4380/#/waiting`; never the question itself. [`examples/`](examples/) holds a command that appends the line to a file and one that drops it into firstmate's inbox. By default there is none.
 
+**Starting work.** When a go acts (at once with confirm mode off; once the owner confirms it, answers go or overrides to go when it is on), entail can run one command the owner sets (`entail settings --start '<command>'`, or `--start none`; the board shows it but does not set it) with `/bin/sh -c` and the handoff on standard input as one line of JSON: the repo, the issue's number, URL and title, the call's reason, the criteria with their sources, and the `VISION.md` commit. Never on a no or an ask. Work is not started twice for an issue (a later go retries only after a start that failed); the log records that it started, by which command and with what exit status, and a command that fails is recorded and never holds up the call. entail depends on no executor: [`examples/start-to-file.sh`](examples/start-to-file.sh) appends the handoff to a file. The PR that later closes the issue is judged at landing like any other. By default there is none.
+
 **The board's API.** The board reads and writes through a small JSON API on the same address, the single path that records answers; the browser never talks to GitHub. It serves what is waiting and what is held in its undo window (`GET /api/waiting`), the log by day (`GET /api/log`), one call (`GET /api/calls/:id`), confirm, override, answer and undo (`POST /api/calls/:id/confirm|override|answer|undo`), the repos (`GET|POST /api/repos`, `PATCH|DELETE /api/repos/:owner/:name`, `POST /api/repos/:owner/:name/check|backlog`), the settings (`GET|PATCH /api/settings`), entail's status (`GET /api/status`) and live updates as server-sent events (`GET /api/events`). `src/api.ts` documents each. Each call it returns carries `kind`, "issue" or "pr"; a PR's call also carries `pr`, with the criteria checklist, the facts read from GitHub, the beyond-the-criteria sort and what entail did on the PR. It answers only on the loopback host, and takes writes only as JSON from no other origin.
 
-**What entail keeps.** Everything lives in entail's data directory (`~/.local/share/entail` on Linux, `~/Library/Application Support/entail` on macOS): one append-only log per repo in `log/github.com/<owner>/<name>.jsonl` holding every enrollment, setting, call on an issue or a PR (with what it read), owner's action, post and merge, from which everything shown is derived; the owner's case book in `cases/`; pins in `pins/<host>/<owner>/<name>.md`, one topic per line; which waiting items the owner was last told about in `notices.json`; and the settings, mirrors, cursors and operational log.
+**What entail keeps.** Everything lives in entail's data directory (`~/.local/share/entail` on Linux, `~/Library/Application Support/entail` on macOS): one append-only log per repo in `log/github.com/<owner>/<name>.jsonl` holding every enrollment, setting, call on an issue or a PR (with what it read), owner's action, post and merge, from which everything shown is derived; the owner's case book in `cases/`; pins in `pins/<host>/<owner>/<name>.md`, one topic per line; which waiting items the owner was last told about in `notices.json`; the lock held by the running copy in `entail.lock`; and the settings, mirrors, cursors and operational log.
 
 `judge` reads the issue and its comments, the repo's `VISION.md` and the repo itself at its default branch, the owner's pins for the repo, and the most relevant past cases, and answers go (with the criteria the PR must meet), no (with the reason) or ask (with the one question). A change that is large or hard to undo is always ask. The prompt is in `src/judgment.ts`.
 

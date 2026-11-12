@@ -5,6 +5,7 @@ import type { ForgeFacts, LandingOwnerCall, OwnerCall } from "./case-book.ts";
 import type { Criterion, IssueCall } from "./judgment.ts";
 import type { LandingCall } from "./landing.ts";
 import { DEFAULT_EFFORT, EFFORTS, type Effort } from "./model-runner.ts";
+import type { Handoff } from "./starts.ts";
 
 /**
  * What entail decided and what the owner said back, one append-only log per
@@ -257,6 +258,20 @@ export interface ActedEntry extends EntryBase {
   issue: number;
   comment: { id: number; url: string };
   closed: boolean;
+  /** Set when this act is a go acting and a start command was set: the work to start, run once (see `src/starts.ts`). */
+  start?: { command: string; handoff: Handoff };
+}
+
+/** entail ran the start command for a go that acted: by which command, and how it exited. */
+export interface StartedEntry extends EntryBase {
+  type: "started";
+  /** The acted entry whose start this was. */
+  for: number;
+  issue: number;
+  command: string;
+  /** The command's exit status; null when it did not exit on its own. */
+  exit: number | null;
+  error?: string;
 }
 
 export type OwnerAction = ConfirmedEntry | OverriddenEntry | AnsweredEntry;
@@ -275,7 +290,8 @@ export type Entry =
   | UnfollowedEntry
   | LandingEntry
   | LandingFailedEntry
-  | PrActedEntry;
+  | PrActedEntry
+  | StartedEntry;
 
 /** An entry as written, before it has an id and a time. */
 export type NewEntry = Entry extends infer E ? (E extends Entry ? Omit<E, "id" | "at"> : never) : never;
@@ -396,6 +412,11 @@ export interface GlobalSettings {
    * `src/notices.ts`.
    */
   notice?: string | null;
+  /**
+   * The command entail runs when a go acts, with the handoff as JSON on its
+   * standard input; null starts nothing. See `src/starts.ts`.
+   */
+  start?: string | null;
 }
 
 export function readSettings(dataDirectory: string, defaults: { model: string }): GlobalSettings {
@@ -411,6 +432,7 @@ export function readSettings(dataDirectory: string, defaults: { model: string })
     model: typeof parsed.model === "string" && parsed.model !== "" ? parsed.model : defaults.model,
     effort: (EFFORTS as readonly unknown[]).includes(parsed.effort) ? (parsed.effort as Effort) : DEFAULT_EFFORT,
     notice: typeof parsed.notice === "string" && parsed.notice.trim() !== "" ? parsed.notice : null,
+    start: typeof parsed.start === "string" && parsed.start.trim() !== "" ? parsed.start : null,
   };
 }
 
@@ -583,6 +605,18 @@ export function pendingWork(entries: readonly Entry[], now: Date = new Date()): 
     else if (!rerunFor.has(entry.id)) pending.push({ kind: "rerun", action: entry, call });
   }
   return pending;
+}
+
+/** The acted entries whose work is still to start, in log order: each with a start and no `started` entry for it. */
+export function pendingStarts(entries: readonly Entry[]): (ActedEntry & { start: NonNullable<ActedEntry["start"]> })[] {
+  const started = new Set(entries.flatMap((entry) => (entry.type === "started" ? [entry.for] : [])));
+  return entries.filter((entry): entry is ActedEntry & { start: NonNullable<ActedEntry["start"]> } => entry.type === "acted" && entry.start !== undefined && !started.has(entry.id));
+}
+
+/** Whether work on an issue was started already: its start command exited 0, or a start is still to run. */
+export function workStarted(entries: readonly Entry[], issue: number): boolean {
+  const started = new Map(entries.flatMap((entry) => (entry.type === "started" ? [[entry.for, entry] as const] : [])));
+  return entries.some((entry) => entry.type === "acted" && entry.issue === issue && entry.start !== undefined && (started.has(entry.id) ? started.get(entry.id)!.exit === 0 : true));
 }
 
 /** The owner's actions still held, not undone and not yet acted on, with when their windows close. */

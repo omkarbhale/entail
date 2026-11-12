@@ -36,6 +36,7 @@ import {
   mentionKey,
   newEntryId,
   pendingLanding,
+  pendingStarts,
   pendingWork,
   readLog,
   type ActedEntry,
@@ -54,7 +55,9 @@ import {
   type Pending,
   type RepoState,
   type Trigger,
+  workStarted,
 } from "./records.ts";
+import { handoffFor, runStart } from "./starts.ts";
 import { readVision } from "./vision.ts";
 
 /**
@@ -75,6 +78,9 @@ import { readVision } from "./vision.ts";
  * PR it sent back too often. A new push is judged again; nothing is reused.
  * The owner's action on a PR's call is acted on the same way, once its
  * window has closed.
+ *
+ * When a go acts and the owner set a start command, entail runs it with the
+ * handoff, once per issue, and records that work was started (`src/starts.ts`).
  *
  * Every call and every act is appended to the repo's log. With `dryRun` the
  * pass changes nothing: no log entry, no cursor, no comment, no close, no
@@ -163,6 +169,8 @@ export interface PassOptions {
   actOnly?: boolean;
   /** Told when a repo has been checked for changes, with what the check did. */
   onChecked?: (repo: string, outcome: { ok: boolean; judged: number; posted: number }) => void;
+  /** Runs the start command; {@link runStart} unless replaced in tests. */
+  startWork?: typeof runStart;
 }
 
 export interface PassReport {
@@ -323,7 +331,7 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
   for (const pending of pendingWork([...readLog(options.dataDirectory, repo), ...planned], now())) {
     options.signal?.throwIfAborted();
     try {
-      if (await act(options, repo, forge, pending, record)) posted++;
+      if (await act(options, repo, forge, pending, record, () => [...readLog(options.dataDirectory, repo), ...planned])) posted++;
     } catch (error) {
       if (options.signal?.aborted) throw error;
       acted = false;
@@ -345,6 +353,12 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
       options.log?.warn("pr-act-failed", { repo, pr, error: message });
       options.print(`${repo}#${pr}: entail could not act on the pull request: ${message}; it tries again next pass`);
     }
+  }
+
+  // Work starts after the go that starts it was posted; a crash before the start is recorded runs it at the next pass.
+  for (const acted of pendingStarts([...readLog(options.dataDirectory, repo), ...planned])) {
+    options.signal?.throwIfAborted();
+    await startWork(options, repo, acted, record);
   }
 
   if (ok && !options.dryRun && key !== null) options.cursors.set(key, batch.cursor);
@@ -493,16 +507,19 @@ function ownerComment(owner: OwnerRun): { author: string; createdAt: string; bod
  * its marker is already there, closes the issue if it is to be closed, and
  * records that it acted. Returns whether it acted.
  */
-async function act(options: PassOptions, repo: string, forge: WatchForge, pending: Pending, record: (entry: NewEntry) => Entry): Promise<boolean> {
+async function act(options: PassOptions, repo: string, forge: WatchForge, pending: Pending, record: (entry: NewEntry) => Entry, entries: () => Entry[]): Promise<boolean> {
   const post = postFor(pending, options.owner);
   if (post === null) return false;
+  const command = options.settings.start ?? null;
+  const handoff = command === null ? null : handoffFor(repo, pending);
+  const start = command !== null && handoff !== null && !workStarted(entries(), handoff.issue.number) ? { start: { command, handoff } } : {};
   const body = composeComment(options.owner, post.markerFor, post.text);
   const name = `${repo}#${post.issue}`;
   // The owner's action reaches the case book as its window closes, before anything is posted for it.
   if (!options.dryRun && pending.kind !== "call") await writeCase(join(options.dataDirectory, OWNER_CASE_BOOK), caseFor(repo, pending.call, pending.action));
   if (options.dryRun) {
     options.print(`would post on ${name}${post.close ? " and close it" : post.reopen ? " and reopen it if closed" : ""}:\n${indent(body)}`);
-    record({ type: "acted", for: post.markerFor, issue: post.issue, comment: { id: 0, url: "(dry run)" }, closed: post.close });
+    record({ type: "acted", for: post.markerFor, issue: post.issue, comment: { id: 0, url: "(dry run)" }, closed: post.close, ...start });
     return true;
   }
   const comments = await forge.comments("issue", post.issue);
@@ -511,10 +528,33 @@ async function act(options: PassOptions, repo: string, forge: WatchForge, pendin
   if (post.close) await forge.closeIssue(post.issue, "not-planned");
   const reopened = post.reopen && (await forge.issue(post.issue))?.state === "closed";
   if (reopened) await forge.reopenIssue(post.issue);
-  record({ type: "acted", for: post.markerFor, issue: post.issue, comment, closed: post.close });
+  record({ type: "acted", for: post.markerFor, issue: post.issue, comment, closed: post.close, ...start });
   options.log?.info("acted", { repo, issue: post.issue, for: post.markerFor, comment: comment.url, closed: post.close, alreadyPosted: already !== undefined });
   options.print(`${name}: ${already === undefined ? "posted" : "found already posted"} ${comment.url}${post.close ? ", closed the issue" : reopened ? ", reopened the issue" : ""}`);
   return true;
+}
+
+/**
+ * Runs the start command for a go that acted and records that work was
+ * started, by which command and with what exit status. A command that fails
+ * is recorded and logged, and is not run again: the call stands either way.
+ */
+async function startWork(options: PassOptions, repo: string, acted: ReturnType<typeof pendingStarts>[number], record: (entry: NewEntry) => Entry): Promise<void> {
+  const { command, handoff } = acted.start;
+  const name = `${repo}#${acted.issue}`;
+  if (options.dryRun) {
+    options.print(`would start work on ${name} with: ${command}\n${indent(JSON.stringify(handoff, null, 2))}`);
+    return;
+  }
+  const result = await (options.startWork ?? runStart)(command, handoff);
+  record({ type: "started", for: acted.id, issue: acted.issue, command, exit: result.exit, ...(result.error === undefined ? {} : { error: result.error }) });
+  if (result.exit === 0) {
+    options.log?.info("started", { repo, issue: acted.issue, command });
+    options.print(`${name}: started work with ${command}`);
+  } else {
+    options.log?.warn("start-failed", { repo, issue: acted.issue, command, exit: result.exit, error: result.error });
+    options.print(`${name}: the start command failed (${result.error ?? `exit ${result.exit}`}); the call stands`);
+  }
 }
 
 // PRs.
