@@ -29,11 +29,12 @@ export interface ClaudeRunnerOptions {
 
 /**
  * The arguments of one run: structured JSON output against the request's
- * schema, the request's model, read-only tools, and isolation from the
+ * schema, the request's model and effort, read-only tools, and isolation from the
  * owner's settings, MCP servers, permission prompts and saved sessions. The
  * prompt goes on stdin.
  */
 export function claudeArguments(request: ModelRunRequest): string[] {
+  const effort = request.effort === undefined ? [] : ["--effort", request.effort];
   return [
     "-p",
     "--output-format",
@@ -42,6 +43,7 @@ export function claudeArguments(request: ModelRunRequest): string[] {
     emitJsonSchema(request.schema),
     "--model",
     request.model,
+    ...effort,
     "--tools",
     "Read,Grep,Glob",
     "--setting-sources",

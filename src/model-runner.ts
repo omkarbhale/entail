@@ -3,6 +3,11 @@ import { checkAgainst, type Schema } from "./schema.ts";
 /** The model every run uses unless the caller names another: Opus 5.5. */
 export const DEFAULT_MODEL = "claude-opus-5-5";
 
+/** The effort levels `claude --effort` takes. */
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+export type Effort = (typeof EFFORTS)[number];
+
 /** One model run, as the judgment that needs it asks for it. */
 export interface ModelRunRequest<T = unknown> {
   /** What the run is for, named by the judgment that asks for it, such as the call on an issue or on a PR. */
@@ -19,6 +24,8 @@ export interface ModelRunRequest<T = unknown> {
   sha: string;
   /** The model to run, {@link DEFAULT_MODEL} by default. */
   model: string;
+  /** How hard the model works on the run; the model's own default when left out. */
+  effort?: Effort;
 }
 
 /** What entail records about a run besides its output. */

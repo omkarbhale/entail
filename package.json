@@ -3,8 +3,12 @@
   "version": "0.0.0",
   "description": "The owner's stand-in for product decisions on a repo: go, no or ask on each issue, merge or send back on each PR.",
   "type": "module",
+  "bin": {
+    "entail": "dist/cli.js"
+  },
   "files": [
-    "dist"
+    "dist",
+    "cases"
   ],
   "engines": {
     "node": ">=24"
