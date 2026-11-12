@@ -144,7 +144,7 @@ test("an item links the vision lines and the past cases its call rests on", (t) 
   const [item] = waitingItems(directory, [past]);
   assert.equal(item!.id, rested.id);
   assert.deepEqual(item!.restsOn, {
-    visionLines: [{ text: "New features are opt-in.", url: `https://github.com/acme/tally/blob/${"c".repeat(40)}/VISION.md#L4` }],
+    visionLines: [{ text: "New features are opt-in.", url: `https://github.com/acme/tally/blob/${"c".repeat(40)}/VISION.md#L4`, line: 4 }],
     cases: [
       { slug: "acme-tally-3", title: "acme/tally#3", url: "https://github.com/acme/tally/issues/3" },
       { slug: "gone-case", title: "gone-case", url: null },
@@ -176,7 +176,7 @@ test("each owner's answer applies only where it fits", async (t) => {
 
   // A call judged again before the owner settled it cannot be settled.
   const newer = call(directory, "acme/tally", 1, ASK);
-  await assert.rejects(answerCall(directory, ask.id, "Omkar", "go", "x"), /not waiting for an answer \(superseded\)/u);
+  await assert.rejects(answerCall(directory, ask.id, "Omkar", "go", "x"), /the issue was edited and entail judged it again/u);
   await answerCall(directory, newer.id, "Omkar", "no", "No.");
 
   const [view] = repoViews(directory, SETTINGS);

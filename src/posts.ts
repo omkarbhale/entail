@@ -57,6 +57,18 @@ export function postFor(pending: Pending, owner: string): Post | null {
       const words = action.type === "overridden" ? action.reason : action.answer;
       return { issue: call.issue.number, markerFor: action.id, text: join(head, escape(words), "Closing the issue as not planned."), close: true, reopen: false };
     }
+    case "owner-go": {
+      // Go, but differently: the owner's line is the criterion, word for word, in place of entail's.
+      const { call, action } = pending;
+      const head = `**Go**, by ${owner}, keeping entail's go but not its criteria.`;
+      return {
+        issue: call.issue.number,
+        markerFor: action.id,
+        text: join(head, `What the PR must do beyond solving the issue, in ${owner}'s words:\n\n- ${escape(action.reason).replace(/\n+/gu, " ")}`),
+        close: false,
+        reopen: true,
+      };
+    }
   }
 }
 
