@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { OWNER_CASE_BOOK, readLandingCaseBook } from "../src/case-book.ts";
 import { commentRuleViolations } from "../src/comment-rules.ts";
-import { answerCall, confirmCall, itemView, overrideCall, waitingItems } from "../src/owner.ts";
+import { answerCall, confirmCall, HOLD_MS, itemView, overrideCall, undoAction, waitingItems, waitingResponse } from "../src/owner.ts";
 import { landingStatuses, readLog, type CallEntry, type LandingEntry, type PrActedEntry } from "../src/records.ts";
 import { mergeMethod } from "../src/watch.ts";
 import { harness, landingAnswer, OWNER, REPO, verdict, type Harness } from "./watch-fixture.ts";
@@ -211,13 +212,14 @@ test("in confirm mode a merge call waits for the owner, the board item carries t
   assert.equal(itemView(h.dataDirectory, item!.id, []).pr!.number, 4);
 
   await confirmCall(h.dataDirectory, item!.id, OWNER);
+  assert.equal(existsSync(join(h.dataDirectory, OWNER_CASE_BOOK, "acme-tally-pr-4")), false, "the case is written when entail acts, not when the owner does");
+
+  await h.pass();
   const [past] = await readLandingCaseBook(join(h.dataDirectory, OWNER_CASE_BOOK));
   assert.equal(past!.slug, "acme-tally-pr-4");
   assert.equal(past!.call, "merge");
   assert.equal(past!.head, HEAD1);
   assert.match(past!.reasonFrom, /confirmed by Omkar on the board/u);
-
-  await h.pass();
   assert.deepEqual(h.forge.merges, [{ pr: 4, sha: HEAD1, method: "squash" }]);
   assert.match(prPosts(h, 4)[1]!.body, new RegExp(`Omkar confirmed this call on the board: merge\\.\\n\\nMerged at \`${HEAD1}\`\\.`, "u"));
   assert.deepEqual(waitingItems(h.dataDirectory, []), []);
@@ -361,13 +363,58 @@ test("the owner overrides a merge with a send-back in their words, recorded and 
   const [item] = waitingItems(h.dataDirectory, []).filter((i) => i.kind === "pr");
   await assert.rejects(overrideCall(h.dataDirectory, item!.id, OWNER, "merge", "x"), /already merge; confirm it instead/u);
   await overrideCall(h.dataDirectory, item!.id, OWNER, "send-back", "Keep the README example working too.");
+  await h.pass();
   const [past] = await readLandingCaseBook(join(h.dataDirectory, OWNER_CASE_BOOK));
   assert.equal(past!.call, "send-back");
   assert.match(past!.notes, /## entail's call, overridden\n\nentail called merge/u);
-  await h.pass();
   assert.deepEqual(h.forge.merges, []);
   assert.match(prPosts(h, 4).at(-1)!.body, /\*\*Send back\*\*, by Omkar, overriding entail's call on the board\.\n\nKeep the README example working too\./u);
   assert.equal(prActs(h).at(-1)!.sentBack, true);
+});
+
+test("an owner's action on a PR held in its window reaches neither GitHub nor the case book until the window closes, and an undone one never does", async (t) => {
+  const NOW = new Date("2026-11-12T12:00:00Z");
+  const at = (ms: number) => new Date(NOW.getTime() + ms);
+  const h = harness(t);
+  await goIssue(h);
+  h.forge.openPull(4, "Read standard input", { head: HEAD1, closes: [1] });
+  h.forge.report(HEAD1, ["test", "passed"]);
+  h.scriptLanding(4, met());
+  await h.pass({ now: () => NOW });
+  const [item] = waitingItems(h.dataDirectory, []).filter((i) => i.kind === "pr");
+  const postsBefore = prPosts(h, 4).length;
+  const caseDirectory = join(h.dataDirectory, OWNER_CASE_BOOK, "acme-tally-pr-4");
+
+  // Confirmed and held: the board shows it as held and nothing else happens.
+  const action = await confirmCall(h.dataDirectory, item!.id, OWNER, NOW, { holdMs: HOLD_MS });
+  assert.equal(action.holdUntil, "2026-11-12T12:00:10.000Z");
+  assert.deepEqual(waitingItems(h.dataDirectory, []).filter((one) => one.kind === "pr"), []);
+  const held = waitingResponse(h.dataDirectory, [], { now: at(1_000) }).held;
+  assert.deepEqual(held.map((one) => [one.item.kind, one.item.id]), [["pr", item!.id]]);
+  await h.pass({ now: () => at(9_999), actOnly: true });
+  assert.equal(prPosts(h, 4).length, postsBefore);
+  assert.deepEqual(h.forge.merges, []);
+  assert.equal(existsSync(caseDirectory), false);
+
+  // Undone: the call waits again, and a later pass does nothing for it.
+  const { call } = undoAction(h.dataDirectory, item!.id, OWNER, at(5_000));
+  assert.equal(call.status, "waiting");
+  assert.deepEqual(waitingItems(h.dataDirectory, []).filter((one) => one.kind === "pr").map((one) => one.id), [item!.id]);
+  await h.pass({ now: () => at(60_000), actOnly: true });
+  assert.deepEqual(h.forge.merges, []);
+  assert.equal(existsSync(caseDirectory), false);
+
+  // Overridden and held, then the window closes: the case is written, then the PR is sent back.
+  await overrideCall(h.dataDirectory, item!.id, OWNER, "send-back", "Not this release.", at(61_000), { holdMs: HOLD_MS });
+  await h.pass({ now: () => at(70_999), actOnly: true });
+  assert.equal(existsSync(caseDirectory), false);
+  assert.equal(prPosts(h, 4).length, postsBefore);
+  await h.pass({ now: () => at(71_000), actOnly: true });
+  const [past] = await readLandingCaseBook(join(h.dataDirectory, OWNER_CASE_BOOK));
+  assert.equal(past!.call, "send-back");
+  assert.match(prPosts(h, 4).at(-1)!.body, /Not this release\./u);
+  assert.deepEqual(h.forge.merges, []);
+  assert.throws(() => undoAction(h.dataDirectory, item!.id, OWNER, at(65_000)), /too late to undo/u);
 });
 
 test("a PR merged or closed by someone else is no longer followed, and its waiting call leaves the board", async (t) => {

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { landingPrecedentsFor, precedentsFor, renderIssue, renderPullRequest, type Case, type LandingCase, type OwnerCall } from "./case-book.ts";
+import { join } from "node:path";
+import { landingPrecedentsFor, OWNER_CASE_BOOK, precedentsFor, renderIssue, renderPullRequest, writeCase, writeLandingCase, type Case, type LandingCase, type OwnerCall } from "./case-book.ts";
 import { ChangeDeduplicator } from "./changes.ts";
 import { composeComment, markedTickets } from "./comment-rules.ts";
 import type { CursorStore } from "./cursors.ts";
@@ -20,7 +21,7 @@ import { ciGreen, ciProblems, formatLandingCall, judgeLanding, LANDING_PROMPT_VE
 import { forgeRemote, Mirror } from "./mirror.ts";
 import type { ModelRunner } from "./model-runner.ts";
 import type { OperationalLog } from "./operational-log.ts";
-import { runSettings } from "./owner.ts";
+import { caseFor, landingCaseFor, runSettings } from "./owner.ts";
 import { readPins } from "./pins.ts";
 import { postFor, pullRequestPostFor, type MergeResult } from "./posts.ts";
 import {
@@ -37,6 +38,7 @@ import {
   pendingLanding,
   pendingWork,
   readLog,
+  type ActedEntry,
   repoState,
   SEND_BACK_LIMIT,
   JUDGMENT_ATTEMPTS,
@@ -63,15 +65,20 @@ import { readVision } from "./vision.ts";
  * (unless the repo is in confirm mode), and post what the owner decided on
  * the board.
  *
+ * An owner's action taken on the board is acted on only once its undo window
+ * has closed: entail then writes it to the owner's case book and posts it.
+ *
  * The pass also follows each open PR that the forge says closes an issue
  * entail called go on: once CI has finished at a head it has not judged, the
  * landing judgment makes the call on that head, and entail posts it on the
  * PR, merges at that head (unless the repo is in confirm mode), or closes a
  * PR it sent back too often. A new push is judged again; nothing is reused.
+ * The owner's action on a PR's call is acted on the same way, once its
+ * window has closed.
  *
  * Every call and every act is appended to the repo's log. With `dryRun` the
- * pass changes nothing: no log entry, no cursor, no comment, no close and no
- * merge; it prints what it would do instead.
+ * pass changes nothing: no log entry, no cursor, no comment, no close, no
+ * merge and no case; it prints what it would do instead.
  */
 
 /** What a pass needs of a forge. */
@@ -150,6 +157,12 @@ export interface PassOptions {
   print: (text: string) => void;
   now?: () => Date;
   signal?: AbortSignal;
+  /** Only these repos; every enrolled repo when left out. */
+  only?: readonly string[];
+  /** Read nothing new from the forge: only act on what the log says is still to do, such as an owner's action whose window closed. */
+  actOnly?: boolean;
+  /** Told when a repo has been checked for changes, with what the check did. */
+  onChecked?: (repo: string, outcome: { ok: boolean; judged: number; posted: number }) => void;
 }
 
 export interface PassReport {
@@ -174,6 +187,7 @@ export async function runPass(options: PassOptions): Promise<PassReport> {
   const report: PassReport = { repos: 0, judged: 0, posted: 0, failed: [] };
   for (const repo of loggedRepos(options.dataDirectory)) {
     options.signal?.throwIfAborted();
+    if (options.only !== undefined && !options.only.includes(repo)) continue;
     const entries = readLog(options.dataDirectory, repo);
     const state = repoState(repo, entries);
     if (!state.enrolled) continue;
@@ -183,8 +197,10 @@ export async function runPass(options: PassOptions): Promise<PassReport> {
       report.judged += outcome.judged;
       report.posted += outcome.posted;
       if (!outcome.ok) report.failed.push(repo);
+      if (options.actOnly !== true) options.onChecked?.(repo, outcome);
     } catch (error) {
       if (options.signal?.aborted) throw error;
+      if (options.actOnly !== true) options.onChecked?.(repo, { ok: false, judged: 0, posted: 0 });
       report.failed.push(repo);
       // Forget what was seen, so the changes are read and weighed again next pass.
       options.seen.delete(repo);
@@ -206,12 +222,16 @@ interface IssueWork {
 async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]): Promise<{ ok: boolean; judged: number; posted: number }> {
   const { repo } = state;
   const forge = options.forgeFor(repo);
-  const project = await forge.project();
-  const key = projectKey(project);
-  const batch = await forge.changesSince(options.cursors.get(key));
+  const now = () => options.now?.() ?? new Date();
+  let key: string | null = null;
+  let batch: { changes: Change[]; cursor: string } = { changes: [], cursor: "" };
+  if (options.actOnly !== true) {
+    key = projectKey(await forge.project());
+    batch = await forge.changesSince(options.cursors.get(key));
+  }
   let seen = options.seen.get(repo);
   if (seen === undefined) options.seen.set(repo, (seen = new ChangeDeduplicator()));
-  const fresh = seen.fresh(batch.changes);
+  const fresh = options.actOnly === true ? [] : seen.fresh(batch.changes);
 
   let reading: Promise<RepoReading> | null = null;
   const context: JudgeContext = {
@@ -222,21 +242,22 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
   };
   const planned: Entry[] = [];
   const record = (entry: NewEntry): Entry => {
-    const now = options.now?.() ?? new Date();
     if (options.dryRun) {
-      const written = { id: newEntryId(), at: now.toISOString(), ...entry } as Entry;
+      const written = { id: newEntryId(), at: now().toISOString(), ...entry } as Entry;
       planned.push(written);
       return written;
     }
-    return appendEntry(options.dataDirectory, repo, entry, now) as Entry;
+    return appendEntry(options.dataDirectory, repo, entry, now()) as Entry;
   };
 
   let ok = true;
   let judged = 0;
+  const judgedNow = new Set<number>();
   for (const work of issueWork(fresh, entries, state)) {
     options.signal?.throwIfAborted();
     const issue = work.issue ?? (await forge.issue(work.number));
     if (issue === null) continue;
+    noteReopened(issue, entries, record);
     const trigger = triggerFor(issue, work, entries, state);
     if (trigger === null) continue;
     const entry = await judgeIssue(context, issue, trigger, work.mentions, null);
@@ -245,16 +266,36 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
       continue;
     }
     record(entry);
+    judgedNow.add(issue.number);
     judged++;
   }
 
+  // The owner asked for the open backlog: each issue on it with no call yet, while it is still open.
+  if (options.actOnly !== true) {
+    const called = latestCalls(entries);
+    for (const number of backlogIssues(entries)) {
+      if (called.has(number) || judgedNow.has(number)) continue;
+      options.signal?.throwIfAborted();
+      const issue = await forge.issue(number);
+      if (issue === null || issue.state !== "open") continue;
+      const entry = await judgeIssue(context, issue, "backlog", [], null);
+      if (entry === null) {
+        ok = false;
+        continue;
+      }
+      record(entry);
+      judged++;
+    }
+  }
+
   // The owner said go on the board: the judgment runs again with their word, for the criteria.
-  for (const pending of pendingWork([...readLog(options.dataDirectory, repo), ...planned])) {
+  for (const pending of pendingWork([...readLog(options.dataDirectory, repo), ...planned], now())) {
     if (pending.kind !== "rerun") continue;
     options.signal?.throwIfAborted();
     const issue = await forge.issue(pending.call.issue.number);
     if (issue === null) continue;
     const { action } = pending;
+    if (!options.dryRun) await writeCase(join(options.dataDirectory, OWNER_CASE_BOOK), caseFor(repo, pending.call, action));
     const word: OwnerWord = {
       action: action.id,
       kind: action.type === "overridden" ? "override" : "answer",
@@ -270,14 +311,16 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
     judged++;
   }
 
-  const landed = await passPullRequests(context, project, fresh, record, planned);
-  judged += landed.judged;
-  if (!landed.ok) ok = false;
+  if (options.actOnly !== true) {
+    const landed = await passPullRequests(context, await forge.project(), fresh, record, planned);
+    judged += landed.judged;
+    if (!landed.ok) ok = false;
+  }
 
   // One post that fails, such as on an issue deleted since, does not hold up the others; it is tried again next pass.
   let posted = 0;
   let acted = true;
-  for (const pending of pendingWork([...readLog(options.dataDirectory, repo), ...planned])) {
+  for (const pending of pendingWork([...readLog(options.dataDirectory, repo), ...planned], now())) {
     options.signal?.throwIfAborted();
     try {
       if (await act(options, repo, forge, pending, record)) posted++;
@@ -290,7 +333,7 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
       options.print(`${repo}#${issue}: entail could not act on the issue: ${message}; it tries again next pass`);
     }
   }
-  for (const pending of pendingLanding([...readLog(options.dataDirectory, repo), ...planned])) {
+  for (const pending of pendingLanding([...readLog(options.dataDirectory, repo), ...planned], now())) {
     options.signal?.throwIfAborted();
     const pr = pending.kind === "landing" ? pending.entry.pr.number : pending.landing.pr.number;
     try {
@@ -304,10 +347,30 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
     }
   }
 
-  if (ok && !options.dryRun) options.cursors.set(key, batch.cursor);
+  if (ok && !options.dryRun && key !== null) options.cursors.set(key, batch.cursor);
   // A judgment that did not run is tried again: the changes are read again from the old cursor.
   if (!ok) options.seen.delete(repo);
   return { ok: ok && acted, judged, posted };
+}
+
+/** The issues the owner asked entail to judge from the open backlog, in the order asked. */
+function backlogIssues(entries: readonly Entry[]): number[] {
+  const issues: number[] = [];
+  for (const entry of entries) if (entry.type === "backlog") for (const issue of entry.issues) if (!issues.includes(issue)) issues.push(issue);
+  return issues;
+}
+
+/**
+ * Records an issue someone reopened on GitHub after entail closed it. It is
+ * kept in the log as what happened, not as the owner's word: GitHub does not
+ * say here who reopened it.
+ */
+function noteReopened(issue: Issue, entries: readonly Entry[], record: (entry: NewEntry) => Entry): void {
+  if (issue.state !== "open") return;
+  const last = entries.findLast((entry): entry is ActedEntry => entry.type === "acted" && entry.issue === issue.number);
+  if (last === undefined || !last.closed) return;
+  if (entries.some((entry) => entry.type === "reopened" && entry.after === last.id)) return;
+  record({ type: "reopened", issue: issue.number, after: last.id });
 }
 
 /** The issues a batch of changes asks to weigh: each changed issue, and each issue with a new `/entail` mention. */
@@ -398,7 +461,7 @@ async function judgeIssue(context: JudgeContext, issue: Issue, trigger: Trigger,
   options.print(`${name} (${why}): ${issue.title}\n${indent(formatCall(judgment.call))}`);
   return {
     type: "call",
-    issue: { number: issue.number, title: issue.title, url: issue.url, author: issue.author.username },
+    issue: { number: issue.number, title: issue.title, url: issue.url, author: issue.author.username, createdAt: issue.createdAt },
     trigger,
     mentions,
     content: contentHash(issue),
@@ -435,6 +498,8 @@ async function act(options: PassOptions, repo: string, forge: WatchForge, pendin
   if (post === null) return false;
   const body = composeComment(options.owner, post.markerFor, post.text);
   const name = `${repo}#${post.issue}`;
+  // The owner's action reaches the case book as its window closes, before anything is posted for it.
+  if (!options.dryRun && pending.kind !== "call") await writeCase(join(options.dataDirectory, OWNER_CASE_BOOK), caseFor(repo, pending.call, pending.action));
   if (options.dryRun) {
     options.print(`would post on ${name}${post.close ? " and close it" : post.reopen ? " and reopen it if closed" : ""}:\n${indent(body)}`);
     record({ type: "acted", for: post.markerFor, issue: post.issue, comment: { id: 0, url: "(dry run)" }, closed: post.close });
@@ -652,6 +717,8 @@ async function actOnPullRequest(
     record({ type: "pr-acted", for: post.markerFor, pr: post.pr, comment: { id: 0, url: "(dry run)" }, merged: null, refused: null, sentBack: post.sentBack, closed: post.close });
     return true;
   }
+  // The owner's action reaches the case book as its window closes, before anything is posted or merged for it.
+  if (pending.kind !== "landing") await writeLandingCase(join(options.dataDirectory, OWNER_CASE_BOOK), landingCaseFor(repo, landing, pending.action));
   const merge = post.merge ? await mergeAtHead(options, forge, landing) : null;
   const body = composeComment(options.owner, post.markerFor, post.text(merge));
   const comments = await forge.comments("pr", post.pr);

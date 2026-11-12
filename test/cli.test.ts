@@ -90,7 +90,7 @@ test("from the command line the owner sets their name, reads what waits, confirm
   assert.equal(await main(["waiting"]), 0);
   assert.match(out.pop()!, /acme\/tally#12: Count words in footnotes\n.*\n {2}NO, to confirm \(call \d+\): Footnotes are not prose\./u);
   assert.equal(await main(["confirm", "acme/tally#12"]), 0);
-  assert.match(out.pop()!, /acme\/tally#12: your confirmation is recorded under Omkar and written to the case book/u);
+  assert.match(out.pop()!, /acme\/tally#12: your confirmation is recorded under Omkar; entail writes it to the case book and acts on the issue on its next pass/u);
   assert.equal(await main(["confirm", "acme/tally#12"]), 1);
   assert.match(out.pop()!, /not waiting to be confirmed \(confirmed\)/u);
   assert.equal(await main(["confirm", "acme/tally#13"]), 1);
@@ -101,5 +101,5 @@ test("from the command line the owner sets their name, reads what waits, confirm
   assert.match(log, /#12 {2}NO by entail: Count words in footnotes\n {6}Footnotes are not prose\.\n {6}confirmed by Omkar/u);
   assert.match(log, /#12 {2}CONFIRMED by Omkar/u);
   assert.match(log, /acme\/tally  Omkar set confirm mode off\n/u, "the model was already the default, so only confirm mode changed");
-  assert.ok(existsSync(join(dataDirectory, "cases", "acme-tally-12", "call.md")));
+  assert.ok(!existsSync(join(dataDirectory, "cases", "acme-tally-12", "call.md")), "the case is written when entail acts on the confirmation");
 });

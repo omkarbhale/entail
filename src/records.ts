@@ -58,9 +58,9 @@ export interface SettingsEntry extends EntryBase, ByOwner {
 /**
  * What made entail judge an issue. `landing` is not a run: it is the
  * question a cancelled PR leaves for the owner when what blocked it was a
- * product call.
+ * product call. `backlog` is the owner asking for the open backlog.
  */
-export type Trigger = "new" | "edit" | "mention" | "owner" | "landing";
+export type Trigger = "new" | "edit" | "mention" | "owner" | "landing" | "backlog";
 
 /** A `/entail` comment, known by its id and the time it was last edited. */
 export interface Mention {
@@ -85,7 +85,8 @@ export interface OwnerWord {
 /** One call entail made on an issue, with everything it read to make it. */
 export interface CallEntry extends EntryBase {
   type: "call";
-  issue: { number: number; title: string; url: string; author: string };
+  /** The issue; `createdAt` (ISO) is when it was filed, and is missing from calls logged before it was kept. */
+  issue: { number: number; title: string; url: string; author: string; createdAt?: string };
   trigger: Trigger;
   /** The `/entail` comments this call answers. */
   mentions: Mention[];
@@ -189,28 +190,64 @@ export interface PrActedEntry extends EntryBase {
   closed: boolean;
 }
 
+/**
+ * What every owner's action carries besides its words. An action taken on
+ * the board is held for a short window (`holdUntil`, ISO) in which the owner
+ * can undo it; entail acts on GitHub for it only once the window has closed.
+ * An action with no `holdUntil` is acted on at the next pass.
+ */
+interface Held {
+  holdUntil?: string;
+}
+
 /** The owner confirmed a call as it stands. */
-export interface ConfirmedEntry extends EntryBase, ByOwner {
+export interface ConfirmedEntry extends EntryBase, ByOwner, Held {
   type: "confirmed";
   call: number;
 }
 
-/** The owner replaced a call with their own, with their reason. */
-export interface OverriddenEntry extends EntryBase, ByOwner {
+/**
+ * The owner replaced a call with their own, with their reason. With
+ * `differently`, the owner kept entail's go but not its criteria: the reason
+ * is the owner's line, recorded word for word as the one criterion the PR
+ * must meet, and entail does not derive criteria from it.
+ */
+export interface OverriddenEntry extends EntryBase, ByOwner, Held {
   type: "overridden";
   call: number;
   /** go or no on an issue's call; merge or send-back on a PR's. */
   to: OwnerCall | LandingOwnerCall;
   reason: string;
+  differently?: true;
 }
 
 /** The owner answered a call's question, and made the call with it. */
-export interface AnsweredEntry extends EntryBase, ByOwner {
+export interface AnsweredEntry extends EntryBase, ByOwner, Held {
   type: "answered";
   call: number;
   /** go or no on an issue's call; merge or send-back on a PR's. */
   to: OwnerCall | LandingOwnerCall;
   answer: string;
+}
+
+/** The owner undid one of their actions while it was held: entail acts on it neither on GitHub nor in the case book. */
+export interface UndoneEntry extends EntryBase, ByOwner {
+  type: "undone";
+  action: number;
+}
+
+/** The owner asked entail to judge the issues that were open when the repo was enrolled. */
+export interface BacklogEntry extends EntryBase, ByOwner {
+  type: "backlog";
+  issues: number[];
+}
+
+/** Someone reopened on GitHub an issue entail had closed: recorded, not taken as the owner's word. */
+export interface ReopenedEntry extends EntryBase {
+  type: "reopened";
+  issue: number;
+  /** The acted entry whose close was undone on GitHub. */
+  after: number;
 }
 
 /** entail acted on GitHub for an entry: its comment posted, and the issue closed if it was to be. */
@@ -231,6 +268,9 @@ export type Entry =
   | CallEntry
   | OwnerAction
   | ActedEntry
+  | UndoneEntry
+  | BacklogEntry
+  | ReopenedEntry
   | FollowedEntry
   | UnfollowedEntry
   | LandingEntry
@@ -344,12 +384,18 @@ function safeReaddir(directory: string): string[] {
 
 export const SETTINGS_FILE = "settings.json";
 
-/** Settings for every repo: the owner's name on comments, and the model and effort a repo uses unless it names its own. */
+/** Settings for every repo: the owner's name on comments, the model and effort a repo uses unless it names its own, and where notices go. */
 export interface GlobalSettings {
   /** The owner's display name, as comments name them; the logged-in GitHub username when unset. */
   owner: string | null;
   model: string;
   effort: Effort;
+  /**
+   * The command entail runs when something starts waiting on the owner, with
+   * one line and a link and never the question; null sends no notice. See
+   * `src/notices.ts`.
+   */
+  notice?: string | null;
 }
 
 export function readSettings(dataDirectory: string, defaults: { model: string }): GlobalSettings {
@@ -364,6 +410,7 @@ export function readSettings(dataDirectory: string, defaults: { model: string })
     owner: typeof parsed.owner === "string" && parsed.owner.trim() !== "" ? parsed.owner : null,
     model: typeof parsed.model === "string" && parsed.model !== "" ? parsed.model : defaults.model,
     effort: (EFFORTS as readonly unknown[]).includes(parsed.effort) ? (parsed.effort as Effort) : DEFAULT_EFFORT,
+    notice: typeof parsed.notice === "string" && parsed.notice.trim() !== "" ? parsed.notice : null,
   };
 }
 
@@ -421,12 +468,37 @@ export type CallStatus =
   /** A PR's call: the PR was merged or closed before the owner settled it. */
   | { status: "closed" };
 
+export function isOwnerAction(entry: Entry): entry is OwnerAction {
+  return entry.type === "confirmed" || entry.type === "overridden" || entry.type === "answered";
+}
+
+/** The owner's actions that were undone. */
+export function undoneActions(entries: readonly Entry[]): Set<number> {
+  const undone = new Set<number>();
+  for (const entry of entries) if (entry.type === "undone") undone.add(entry.action);
+  return undone;
+}
+
+/** Whether an action is still in its window, where the owner can undo it and entail does not act on it. */
+export function isHeld(action: OwnerAction, now: Date): boolean {
+  return action.holdUntil !== undefined && Date.parse(action.holdUntil) > now.getTime();
+}
+
+/** The owner's action that stands on each call: the first one not undone. */
+export function standingActions(entries: readonly Entry[]): Map<number, OwnerAction> {
+  const undone = undoneActions(entries);
+  const actions = new Map<number, OwnerAction>();
+  for (const entry of entries) {
+    if (isOwnerAction(entry) && !undone.has(entry.id) && !actions.has(entry.call)) actions.set(entry.call, entry);
+  }
+  return actions;
+}
+
 /** Each call in a log with where it stands, oldest first. */
 export function callStatuses(entries: readonly Entry[]): Map<number, CallStatus> {
-  const actions = new Map<number, OwnerAction>();
+  const actions = standingActions(entries);
   const latestByIssue = new Map<number, number>();
   for (const entry of entries) {
-    if ((entry.type === "confirmed" || entry.type === "overridden" || entry.type === "answered") && !actions.has(entry.call)) actions.set(entry.call, entry);
     if (entry.type === "call") latestByIssue.set(entry.issue.number, entry.id);
   }
   const statuses = new Map<number, CallStatus>();
@@ -469,16 +541,21 @@ export type Pending =
   | { kind: "confirmed"; action: ConfirmedEntry; call: CallEntry }
   /** An override to no or a no answer: closed with the owner's words. */
   | { kind: "owner-no"; action: OverriddenEntry | AnsweredEntry; call: CallEntry }
+  /** A go, but differently: posted with the owner's line as its criterion, with no judgment run again. */
+  | { kind: "owner-go"; action: OverriddenEntry; call: CallEntry }
   /** An override to go or a go answer, waiting for the judgment to run again on the owner's word. */
   | { kind: "rerun"; action: OverriddenEntry | AnsweredEntry; call: CallEntry };
 
 /**
  * What entail has yet to do on GitHub, in log order: calls to post (only an
  * issue's latest call; one judged again before it was posted is not posted),
- * confirmations to post, owner's calls of no to post and close, and owner's
- * calls of go whose judgment has to run again on the owner's word.
+ * confirmations to post, owner's calls of no to post and close, owner's goes
+ * made differently to post, and owner's calls of go whose judgment has to run
+ * again on the owner's word. An owner's action still in its undo window, or
+ * undone, is not work yet.
  */
-export function pendingWork(entries: readonly Entry[]): Pending[] {
+export function pendingWork(entries: readonly Entry[], now: Date = new Date()): Pending[] {
+  const undone = undoneActions(entries);
   const acted = new Set<number>();
   const rerunFor = new Set<number>();
   const calls = new Map<number, CallEntry>();
@@ -497,14 +574,21 @@ export function pendingWork(entries: readonly Entry[]): Pending[] {
       if (latest.get(entry.issue.number)?.id === entry.id) pending.push({ kind: "call", entry });
       continue;
     }
-    if (entry.type !== "confirmed" && entry.type !== "overridden" && entry.type !== "answered") continue;
+    if (!isOwnerAction(entry) || undone.has(entry.id) || isHeld(entry, now)) continue;
     const call = calls.get(entry.call);
     if (call === undefined) continue;
     if (entry.type === "confirmed") pending.push({ kind: "confirmed", action: entry, call });
     else if (entry.to === "no") pending.push({ kind: "owner-no", action: entry, call });
+    else if (entry.type === "overridden" && entry.differently === true) pending.push({ kind: "owner-go", action: entry, call });
     else if (!rerunFor.has(entry.id)) pending.push({ kind: "rerun", action: entry, call });
   }
   return pending;
+}
+
+/** The owner's actions still held, not undone and not yet acted on, with when their windows close. */
+export function heldActions(entries: readonly Entry[], now: Date): OwnerAction[] {
+  const undone = undoneActions(entries);
+  return entries.filter((entry): entry is OwnerAction => isOwnerAction(entry) && !undone.has(entry.id) && isHeld(entry, now));
 }
 
 /** The criteria a call carries, none for a no. */
@@ -553,11 +637,10 @@ export function goCallOn(entries: readonly Entry[], issue: number): CallEntry | 
 
 /** Each landing call in a log with where it stands with the owner, oldest first. */
 export function landingStatuses(entries: readonly Entry[]): Map<number, CallStatus> {
-  const actions = new Map<number, OwnerAction>();
+  const actions = standingActions(entries);
   const latest = latestLandings(entries);
   const stopped = new Set<number>();
   for (const entry of entries) {
-    if ((entry.type === "confirmed" || entry.type === "overridden" || entry.type === "answered") && !actions.has(entry.call)) actions.set(entry.call, entry);
     if (entry.type === "unfollowed") stopped.add(entry.pr);
     if (entry.type === "followed") stopped.delete(entry.pr.number);
   }
@@ -585,9 +668,11 @@ export type LandingPending =
  * What entail has yet to do on PRs, in log order: each PR's latest landing
  * call to post (and act on, unless it waits for the owner), and each owner's
  * action on a PR's latest call. Nothing is done for a PR entail stopped
- * following, or for a call a newer one on the same PR replaced.
+ * following, or for a call a newer one on the same PR replaced. An owner's
+ * action still in its undo window, or undone, is not work yet.
  */
-export function pendingLanding(entries: readonly Entry[]): LandingPending[] {
+export function pendingLanding(entries: readonly Entry[], now: Date = new Date()): LandingPending[] {
+  const undone = undoneActions(entries);
   const acted = new Set<number>();
   const landings = new Map<number, LandingEntry>();
   for (const entry of entries) {
@@ -604,7 +689,7 @@ export function pendingLanding(entries: readonly Entry[]): LandingPending[] {
       if (current(entry)) pending.push({ kind: "landing", entry });
       continue;
     }
-    if (entry.type !== "confirmed" && entry.type !== "overridden" && entry.type !== "answered") continue;
+    if (!isOwnerAction(entry) || undone.has(entry.id) || isHeld(entry, now)) continue;
     const landing = landings.get(entry.call);
     if (landing === undefined || !current(landing)) continue;
     if (entry.type === "confirmed") pending.push({ kind: "landing-confirmed", action: entry, landing });

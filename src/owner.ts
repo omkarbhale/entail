@@ -1,26 +1,16 @@
-import { join } from "node:path";
-import {
-  caseSlug,
-  LANDING_CALLS,
-  landingCaseSlug,
-  OWNER_CASE_BOOK,
-  OWNER_CALLS,
-  writeCase,
-  writeLandingCase,
-  type Case,
-  type ForgeFacts,
-  type LandingCase,
-  type LandingOwnerCall,
-  type OwnerCall,
-} from "./case-book.ts";
-import type { Criterion } from "./judgment.ts";
-import { ciGreen, type BeyondItem, type CriterionCheck, type Guard } from "./landing.ts";
+import { readFileSync } from "node:fs";
+import type { ActionView, CallView, HeldView, LogFilter, LogPage, LogRow, PullRequestView, RepoView, TrailStep, WaitingResponse } from "./api-types.ts";
+import { caseSlug, LANDING_CALLS, landingCaseSlug, OWNER_CALLS, type Case, type LandingCase, type LandingOwnerCall, type OwnerCall } from "./case-book.ts";
+import { ciGreen } from "./landing.ts";
 import { EFFORTS, type Effort } from "./model-runner.ts";
+import { parsePins, pinsFile } from "./pins.ts";
 import {
   appendEntry,
   callStatuses,
   criteriaOf,
+  heldActions,
   HOST,
+  isOwnerAction,
   isRepo,
   landingStatuses,
   latestCalls,
@@ -28,6 +18,7 @@ import {
   loggedRepos,
   readLog,
   repoState,
+  standingActions,
   type AnsweredEntry,
   type CallEntry,
   type LandingEntry,
@@ -39,22 +30,29 @@ import {
   type OverriddenEntry,
   type OwnerAction,
   type RepoState,
+  type UndoneEntry,
 } from "./records.ts";
 import { collapseWhitespace, splitVisionLines } from "./vision.ts";
+
+export type { CallView, PullRequestView } from "./api-types.ts";
 
 /**
  * The owner's side: what waits on them, the log, the repos and their
  * settings, and the owner's three answers to a call (confirm it, override it
  * with a reason, answer its question). Both the board's API and the CLI come
  * through here. Every owner action is appended to the repo's log under the
- * owner's name and, when it settles an issue, written to the owner's case
- * book; entail acts on GitHub for it on its next pass.
+ * owner's name at once. On the board it is held for a short window in which
+ * the owner can undo it; once the window closes, entail writes it to the
+ * owner's case book and acts on GitHub for it (see `src/watch.ts`).
  */
+
+/** How long an action taken on the board can be undone before entail acts on it. */
+export const HOLD_MS = 10_000;
 
 /** An owner's request entail cannot carry out, with the HTTP status it answers to. */
 export class OwnerError extends Error {
-  readonly status: 400 | 404 | 409;
-  constructor(status: 400 | 404 | 409, message: string) {
+  readonly status: 400 | 404 | 409 | 502;
+  constructor(status: 400 | 404 | 409 | 502, message: string) {
     super(message);
     this.name = "OwnerError";
     this.status = status;
@@ -89,6 +87,20 @@ export function unenroll(dataDirectory: string, repoText: string, by: string, no
   if (!repoState(repo, readLog(dataDirectory, repo)).enrolled) throw new OwnerError(404, `${repo} is not enrolled`);
   appendEntry(dataDirectory, repo, { type: "unenrolled", by }, now);
   return repoState(repo, readLog(dataDirectory, repo));
+}
+
+/**
+ * Asks entail to judge the issues that were open when the repo was enrolled,
+ * which it otherwise judges only once they are edited or mentioned.
+ */
+export function askBacklog(dataDirectory: string, repoText: string, by: string, issues: readonly number[], now = new Date()): number[] {
+  const repo = repoName(repoText);
+  const entries = readLog(dataDirectory, repo);
+  if (!repoState(repo, entries).enrolled) throw new OwnerError(404, `${repo} is not enrolled`);
+  const judged = latestCalls(entries);
+  const wanted = [...new Set(issues)].filter((issue) => Number.isSafeInteger(issue) && issue > 0 && !judged.has(issue)).sort((a, b) => a - b);
+  appendEntry(dataDirectory, repo, { type: "backlog", by, issues: wanted }, now);
+  return wanted;
 }
 
 export interface RepoSettingsChange {
@@ -137,30 +149,40 @@ export function runSettings(state: RepoState, settings: GlobalSettings): { model
   return { model: state.model ?? settings.model, effort: state.effort ?? settings.effort };
 }
 
-export interface RepoView extends RepoState {
-  /** The model and effort its calls are made with now. */
-  uses: { model: string; effort: Effort };
-  calls: number;
-  waiting: number;
-  /** Calls the owner checked in confirm mode, and how many of them they confirmed as they stood. */
-  checked: number;
-  agreed: number;
+/** How many calls the owner must have checked, and how many of them confirmed, before the board suggests confirm mode off. */
+export const CONFIRM_OFF_AFTER = { checked: 5, agreement: 0.8 } as const;
+
+export interface RepoViewOptions {
+  /** Every repo with a log, enrolled or not. */
+  all?: boolean;
+  /** When each repo was last checked in this run. */
+  checkedAt?: (repo: string) => string | null;
 }
 
-export function repoViews(dataDirectory: string, settings: GlobalSettings, options: { all?: boolean } = {}): RepoView[] {
+export function repoViews(dataDirectory: string, settings: GlobalSettings, options: RepoViewOptions = {}): RepoView[] {
   return loggedRepos(dataDirectory).flatMap((repo) => {
     const entries = readLog(dataDirectory, repo);
     const state = repoState(repo, entries);
     if (!state.enrolled && options.all !== true) return [];
     const statuses = [...callStatuses(entries).values(), ...landingStatuses(entries).values()];
+    // Only confirmations and overrides count toward agreement; answers to questions do not.
+    const checked = statuses.filter((status) => status.status === "confirmed" || status.status === "overridden").length;
+    const agreed = statuses.filter((status) => status.status === "confirmed").length;
+    const lastVision = entries.findLast((entry): entry is CallEntry | LandingEntry => (entry.type === "call" || entry.type === "landing") && entry.vision !== null)?.vision ?? null;
+    const file = pinsFile(dataDirectory, { host: HOST, path: repo });
     return [
       {
         ...state,
         uses: runSettings(state, settings),
         calls: entries.filter((entry) => (entry.type === "call" && entry.owner === null && entry.trigger !== "landing") || entry.type === "landing").length,
         waiting: statuses.filter((status) => status.status === "waiting").length,
-        checked: statuses.filter((status) => status.status === "confirmed" || status.status === "overridden").length,
-        agreed: statuses.filter((status) => status.status === "confirmed").length,
+        checked,
+        agreed,
+        suggestConfirmOff: state.confirm && checked >= CONFIRM_OFF_AFTER.checked && agreed / checked >= CONFIRM_OFF_AFTER.agreement,
+        vision: lastVision === null ? null : { commit: lastVision.commit, url: `https://${HOST}/${repo}/blob/${lastVision.commit}/VISION.md` },
+        pins: { file, topics: readPinsNow(file) },
+        checkedAt: options.checkedAt?.(repo) ?? null,
+        backlogAsked: entries.some((entry) => entry.type === "backlog" && entry.at >= (state.since ?? "")),
       },
     ];
   });
@@ -168,95 +190,34 @@ export function repoViews(dataDirectory: string, settings: GlobalSettings, optio
 
 // What a call rests on, with links.
 
-/**
- * A call as the owner reads it: on an issue (go, no or ask) or, with `kind`
- * "pr", on a PR that closes an issue (merge, send-back or ask). A PR's call
- * names the issue it closes in `issue`, carries the criteria entail set for
- * that issue in `criteria`, and everything about the PR in `pr`.
- */
-export interface CallView {
-  id: number;
-  /** "issue" for the call on an issue, "pr" for the landing call on a PR. */
-  kind: "issue" | "pr";
-  repo: string;
-  issue: { number: number; title: string; url: string; author: string };
-  /** The issue as the judgment read it: title, body and comments, as markdown. */
-  issueText: string;
-  /** The commit VISION.md was read at, or null when the repo had none. */
-  visionCommit: string | null;
-  call: "go" | "no" | "ask" | "merge" | "send-back";
-  reason: string;
-  /** The criteria the call set (on an issue) or the PR was judged against (on a PR). */
-  criteria: Criterion[];
-  /** For ask: the question and what makes it one. */
-  question: { question: string; why: string; large: boolean } | null;
-  restsOn: { visionLines: { text: string; url: string | null }[]; cases: { slug: string; title: string; url: string | null }[] };
-  judgedAt: string;
-  /** What made entail judge: on an issue, as recorded; on a PR, "opened" for its first judged head and "push" for a later one. */
-  trigger: CallEntry["trigger"] | "opened" | "push";
-  /** The owner's word this call was run on, when it was. */
-  owner: CallEntry["owner"];
-  model: string;
-  effort: Effort;
-  costUsd: number | null;
-  confirmMode: boolean;
-  status: CallStatus["status"];
-  /** The owner's action on it, when there is one. */
-  settledBy: OwnerAction | null;
-  /** The comment entail posted for it, once posted; on a PR, `closed` means the PR was cancelled. */
-  posted: { url: string; closed: boolean } | null;
-  /** On a PR's call, everything about the PR; null on an issue's. */
-  pr: PullRequestView | null;
+function readPinsNow(file: string): string[] {
+  try {
+    return parsePins(readFileSync(file, "utf8"));
+  } catch {
+    return [];
+  }
 }
 
-/** A PR's call as the board shows it, beside the shared fields of {@link CallView}. */
-export interface PullRequestView {
-  number: number;
-  title: string;
-  url: string;
-  author: string;
-  /** The head judged; a merge happens at it and nowhere else. */
-  head: string;
-  /** The default branch's commit the diff was taken against. */
-  base: string;
-  /** Whether it solves the issue's problem, and the evidence. */
-  solves: { solved: boolean; evidence: string };
-  /** Each criterion marked met or unmet, with the evidence relied on. */
-  checklist: CriterionCheck[];
-  /** What it does beyond its criteria, each sorted needed, harmless or unwanted. */
-  beyond: BeyondItem[];
-  /** For a send-back: what needs to change. */
-  needsToChange: string[];
-  /** For a send-back: whether what blocks it is a product question for the owner. */
-  productCall: boolean;
-  /** Set when a mechanical rule changed the model's call: CI not green, or VISION.md or a pinned path changed. */
-  guard: Guard | null;
-  /** Read from the forge at the head, never from the PR's description. */
-  facts: ForgeFacts & { ciGreen: boolean; touched: { vision: boolean; pins: string[] } };
-  /** Send-backs posted on the PR before this call. */
-  sendBacks: number;
-  /** Whether this call cancels the PR: closes it unmerged with the reason. */
-  cancel: boolean;
-  /** What entail did on the PR for this call or the owner's action on it, once it acted. */
-  outcome: { merged: { sha: string; commit: string | null } | null; refused: string | null; closed: boolean } | null;
-}
+// A call as the owner reads it.
 
 /** A call as the owner reads it, with links to the issue, the vision lines and the past cases it rests on. */
 export function callView(repo: string, entry: CallEntry, status: CallStatus, entries: readonly Entry[], book: readonly Case[]): CallView {
   const acted = entries.find((other) => other.type === "acted" && other.for === entry.id);
+  const chain = waitingChain(entry, entries);
   return {
     id: entry.id,
     kind: "issue",
     repo,
     issue: entry.issue,
     issueText: entry.issueText,
+    body: issueBody(entry.issueText),
     visionCommit: entry.vision?.commit ?? null,
     call: entry.call.call,
     reason: entry.call.reason,
     criteria: criteriaOf(entry.call),
     question: entry.call.call === "ask" ? { question: entry.call.question, why: entry.call.why, large: entry.call.large } : null,
     restsOn: {
-      visionLines: entry.call.restsOn.visionLines.map((text) => ({ text, url: visionLineUrl(repo, entry, text) })),
+      visionLines: entry.call.restsOn.visionLines.map((text) => ({ text, ...visionLineLink(repo, entry, text) })),
       cases: entry.call.restsOn.cases.map((slug) => {
         const past = book.find((candidate) => candidate.slug === slug);
         return {
@@ -277,6 +238,8 @@ export function callView(repo: string, entry: CallEntry, status: CallStatus, ent
     settledBy: "action" in status ? status.action : null,
     posted: acted?.type === "acted" ? { url: acted.comment.url, closed: acted.closed } : null,
     pr: null,
+    rejudged: chain.length > 1,
+    waitingSince: chain.at(-1)!.at,
   };
 }
 
@@ -286,6 +249,7 @@ export function landingView(repo: string, entry: LandingEntry, status: CallStatu
   // What entail did for this call, or for the owner's action on it.
   const acted = entries.findLast((other): other is PrActedEntry => other.type === "pr-acted" && (other.for === entry.id || other.for === settledBy?.id));
   const firstHead = entries.find((other): other is LandingEntry => other.type === "landing" && other.pr.number === entry.pr.number);
+  const chain = landingChain(entry, entries);
   const { call } = entry;
   return {
     id: entry.id,
@@ -293,6 +257,7 @@ export function landingView(repo: string, entry: LandingEntry, status: CallStatu
     repo,
     issue: { ...entry.issue, author: "" },
     issueText: entry.issueText,
+    body: issueBody(entry.prText),
     visionCommit: entry.vision?.commit ?? null,
     call: call.call,
     reason: call.reason,
@@ -309,6 +274,8 @@ export function landingView(repo: string, entry: LandingEntry, status: CallStatu
     status: status.status,
     settledBy,
     posted: acted === undefined ? null : { url: acted.comment.url, closed: acted.closed },
+    rejudged: chain.length > 1,
+    waitingSince: chain.at(-1)!.at,
     pr: {
       ...entry.pr,
       head: entry.head,
@@ -329,7 +296,7 @@ export function landingView(repo: string, entry: LandingEntry, status: CallStatu
 
 function restsOnView(repo: string, vision: LandingEntry["vision"], restsOn: { visionLines: string[]; cases: string[] }, book: readonly Case[]): CallView["restsOn"] {
   return {
-    visionLines: restsOn.visionLines.map((text) => ({ text, url: vision === null ? null : visionLineAt(repo, vision, text) })),
+    visionLines: restsOn.visionLines.map((text) => ({ text, ...visionLineAt(repo, vision, text) })),
     cases: restsOn.cases.map((slug) => {
       const past = book.find((candidate) => candidate.slug === slug);
       return { slug, title: past === undefined ? slug : `${past.repo}#${past.issue}`, url: past === undefined ? null : `https://${HOST}/${past.repo}/issues/${past.issue}` };
@@ -344,25 +311,85 @@ export function itemView(dataDirectory: string, id: number, book: readonly Case[
   return landingView(found.repo, found.entry, landingStatuses(found.entries).get(id)!, found.entries, book);
 }
 
+/**
+ * The call and the calls on the same issue it replaced while they waited on
+ * the owner, newest first: an issue edited while its item waits is judged
+ * again and its item replaced in place, keeping its place in the order.
+ */
+function waitingChain(entry: CallEntry, entries: readonly Entry[]): CallEntry[] {
+  const chain = [entry];
+  if (entry.owner !== null) return chain;
+  const { actions, callsByIssue } = indexOf(entries);
+  const calls = callsByIssue.get(entry.issue.number) ?? [];
+  const earlier = calls.slice(0, calls.indexOf(entry));
+  for (let index = earlier.length - 1; index >= 0; index--) {
+    const previous = earlier[index]!;
+    const waited = previous.owner === null && !actions.has(previous.id) && (previous.call.call === "ask" || previous.confirm);
+    if (!waited) break;
+    chain.push(previous);
+  }
+  return chain;
+}
+
+/** The same for a PR: its call and the calls on earlier heads it replaced while they waited. */
+function landingChain(entry: LandingEntry, entries: readonly Entry[]): LandingEntry[] {
+  const chain = [entry];
+  const { actions, landingsByPr } = indexOf(entries);
+  const landings = landingsByPr.get(entry.pr.number) ?? [];
+  const earlier = landings.slice(0, landings.indexOf(entry));
+  for (let index = earlier.length - 1; index >= 0; index--) {
+    const previous = earlier[index]!;
+    if (actions.has(previous.id) || !(previous.call.call === "ask" || previous.confirm)) break;
+    chain.push(previous);
+  }
+  return chain;
+}
+
+const indexes = new WeakMap<readonly Entry[], { actions: Map<number, OwnerAction>; callsByIssue: Map<number, CallEntry[]>; landingsByPr: Map<number, LandingEntry[]> }>();
+
+/** What a log's views look up again and again, worked out once per log read. */
+function indexOf(entries: readonly Entry[]) {
+  let index = indexes.get(entries);
+  if (index === undefined) {
+    const callsByIssue = new Map<number, CallEntry[]>();
+    const landingsByPr = new Map<number, LandingEntry[]>();
+    for (const entry of entries) {
+      if (entry.type === "call") callsByIssue.set(entry.issue.number, [...(callsByIssue.get(entry.issue.number) ?? []), entry]);
+      if (entry.type === "landing") landingsByPr.set(entry.pr.number, [...(landingsByPr.get(entry.pr.number) ?? []), entry]);
+    }
+    index = { actions: standingActions(entries), callsByIssue, landingsByPr };
+    indexes.set(entries, index);
+  }
+  return index;
+}
+
+/** The issue's body as judged: the issue text without its title line and its comments. */
+export function issueBody(issueText: string): string {
+  const withoutTitle = issueText.replace(/^# .*\n?/u, "");
+  const comments = withoutTitle.search(/^## Comments$/mu);
+  const body = (comments === -1 ? withoutTitle : withoutTitle.slice(0, comments)).trim();
+  return body === "(no description)" ? "" : body;
+}
+
 /** A link to a vision line at the commit the call read it at, to the line when it is found. */
-function visionLineUrl(repo: string, entry: CallEntry, text: string): string | null {
-  if (entry.vision === null) return null;
+function visionLineLink(repo: string, entry: CallEntry, text: string): { url: string | null; line: number | null } {
   return visionLineAt(repo, entry.vision, text);
 }
 
-function visionLineAt(repo: string, vision: { commit: string; text: string }, text: string): string {
+function visionLineAt(repo: string, vision: { commit: string; text: string } | null, text: string): { url: string | null; line: number | null } {
+  if (vision === null) return { url: null, line: null };
   const entry = { vision };
   const base = `https://${HOST}/${repo}/blob/${entry.vision.commit}/VISION.md`;
   const wanted = collapseWhitespace(text.replace(/^>\s*/u, ""));
   const line = wanted === "" ? undefined : splitVisionLines(entry.vision.text).find((candidate) => candidate.identity.includes(wanted));
-  return line === undefined ? base : `${base}#L${line.lineNumber}`;
+  return line === undefined ? { url: base, line: null } : { url: `${base}#L${line.lineNumber}`, line: line.lineNumber };
 }
 
-// What waits on the owner, and the log.
+// What waits on the owner.
 
 /** Everything waiting on the owner across enrolled repos, on issues and PRs: questions first, then calls to confirm, oldest first within each. */
 export function waitingItems(dataDirectory: string, book: readonly Case[], repoFilter?: string): CallView[] {
-  const items: CallView[] = [];
+  const items: { view: CallView; position: number }[] = [];
   for (const repo of loggedRepos(dataDirectory)) {
     if (repoFilter !== undefined && repo !== repoFilter) continue;
     const entries = readLog(dataDirectory, repo);
@@ -372,18 +399,208 @@ export function waitingItems(dataDirectory: string, book: readonly Case[], repoF
     for (const entry of entries) {
       if (entry.type === "call") {
         const status = statuses.get(entry.id)!;
-        if (status.status === "waiting") items.push(callView(repo, entry, status, entries, book));
+        // Calls made in the same moment keep the order they were logged in, counted from the first call of the item.
+        if (status.status === "waiting") items.push({ view: callView(repo, entry, status, entries, book), position: entries.indexOf(waitingChain(entry, entries).at(-1)!) });
       } else if (entry.type === "landing") {
         const status = landings.get(entry.id)!;
-        if (status.status === "waiting") items.push(landingView(repo, entry, status, entries, book));
+        if (status.status === "waiting") items.push({ view: landingView(repo, entry, status, entries, book), position: entries.indexOf(landingChain(entry, entries).at(-1)!) });
       }
     }
   }
   const rank = (item: CallView) => (item.call === "ask" ? 0 : 1);
-  return items.sort((a, b) => rank(a) - rank(b) || a.judgedAt.localeCompare(b.judgedAt));
+  return items
+    .sort((a, b) => rank(a.view) - rank(b.view) || a.view.waitingSince.localeCompare(b.view.waitingSince) || a.position - b.position)
+    .map((item) => item.view);
 }
 
-/** One line of the log as the owner reads it. */
+/**
+ * What the board's Waiting page reads: the items waiting, the owner's actions
+ * still in their undo window (so a reload or a second tab shows the receipt),
+ * and how many calls entail acted on alone since `since`.
+ */
+export function waitingResponse(dataDirectory: string, book: readonly Case[], options: { repo?: string; since?: string; now: Date }): WaitingResponse {
+  const held: HeldView[] = [];
+  let count = 0;
+  const repos = new Set<string>();
+  for (const repo of loggedRepos(dataDirectory)) {
+    if (options.repo !== undefined && repo !== options.repo) continue;
+    const entries = readLog(dataDirectory, repo);
+    if (!repoState(repo, entries).enrolled) continue;
+    const statuses = callStatuses(entries);
+    const landings = landingStatuses(entries);
+    for (const action of heldActions(entries, options.now)) {
+      const call = entries.find((entry): entry is CallEntry | LandingEntry => (entry.type === "call" || entry.type === "landing") && entry.id === action.call);
+      if (call?.type === "call") held.push({ item: callView(repo, call, statuses.get(call.id)!, entries, book), action, holdUntil: action.holdUntil! });
+      else if (call?.type === "landing") held.push({ item: landingView(repo, call, landings.get(call.id)!, entries, book), action, holdUntil: action.holdUntil! });
+    }
+    if (options.since !== undefined) {
+      for (const entry of entries) {
+        if ((entry.type === "call" || entry.type === "landing") && entry.at > options.since && (entry.type === "call" ? statuses : landings).get(entry.id)?.status === "auto") {
+          count++;
+          repos.add(repo);
+        }
+      }
+    }
+  }
+  return { items: waitingItems(dataDirectory, book, options.repo), held, actedAlone: { count, repos: [...repos] } };
+}
+
+// The log, as the board pages it.
+
+export interface LogPageOptions {
+  repo?: string;
+  filter?: LogFilter;
+  /** Only days before this one, `YYYY-MM-DD`. */
+  before?: string;
+  /** The owner's time zone, which days are counted in. */
+  timeZone?: string;
+  /** A page holds whole days, and at least this many calls unless the log runs out. */
+  rows?: number;
+}
+
+/**
+ * One page of the log, newest first, in whole days: every call entail made,
+ * with the owner's action on it, the call run again on the owner's word, and
+ * the trail of what happened. Nothing is ever trimmed; older days are a
+ * `before=` away.
+ */
+export function logPage(dataDirectory: string, book: readonly Case[], options: LogPageOptions = {}): LogPage {
+  const dayOf = dayFormatter(options.timeZone);
+  const all: LogRow[] = [];
+  for (const repo of loggedRepos(dataDirectory)) {
+    if (options.repo !== undefined && repo !== options.repo) continue;
+    const entries = readLog(dataDirectory, repo);
+    const statuses = callStatuses(entries);
+    const landings = landingStatuses(entries);
+    for (const entry of entries) {
+      if (entry.type === "call" && entry.owner === null) all.push(logRow(repo, entry, statuses, entries, book, dayOf));
+      else if (entry.type === "landing") all.push(landingRow(repo, entry, landings, entries, book, dayOf));
+    }
+  }
+  const matches: Record<LogFilter, (row: LogRow) => boolean> = {
+    all: () => true,
+    waiting: (row) => row.call.status === "waiting",
+    overridden: (row) => row.call.status === "overridden",
+    questions: (row) => row.call.call === "ask",
+    prs: (row) => row.call.kind === "pr",
+  };
+  const counts = Object.fromEntries((Object.keys(matches) as LogFilter[]).map((key) => [key, all.filter(matches[key]).length])) as Record<LogFilter, number>;
+  const wanted = all
+    .filter(matches[options.filter ?? "all"])
+    .filter((row) => options.before === undefined || row.day < options.before)
+    .sort((a, b) => b.call.judgedAt.localeCompare(a.call.judgedAt));
+  const size = options.rows ?? 30;
+  const rows: LogRow[] = [];
+  let index = 0;
+  while (index < wanted.length && (rows.length < size || wanted[index]!.day === rows.at(-1)!.day)) rows.push(wanted[index++]!);
+  // `before` is exclusive: the next page starts on the day before this page's last.
+  return { rows, next: index < wanted.length ? rows.at(-1)!.day : null, counts };
+}
+
+function dayFormatter(timeZone: string | undefined): (iso: string) => string {
+  let format: Intl.DateTimeFormat;
+  try {
+    format = new Intl.DateTimeFormat("en-CA", { timeZone: timeZone ?? "UTC", year: "numeric", month: "2-digit", day: "2-digit" });
+  } catch {
+    format = new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", year: "numeric", month: "2-digit", day: "2-digit" });
+  }
+  return (iso) => format.format(new Date(iso));
+}
+
+const TRIGGER_WORDS: Record<CallEntry["trigger"], string> = {
+  landing: " after a PR was cancelled",
+  new: "",
+  edit: " after an edit",
+  mention: " on an /entail comment",
+  owner: " on the owner's word",
+  backlog: " from the open backlog",
+};
+
+function logRow(repo: string, entry: CallEntry, statuses: Map<number, CallStatus>, entries: readonly Entry[], book: readonly Case[], dayOf: (iso: string) => string): LogRow {
+  const call = callView(repo, entry, statuses.get(entry.id)!, entries, book);
+  const trail: TrailStep[] = [{ at: entry.at, text: `Judged: ${entry.call.call}${TRIGGER_WORDS[entry.trigger]} · ${entry.model}, ${entry.effort}` }];
+  const actedFor = (id: number) => entries.find((other) => other.type === "acted" && other.for === id);
+  const posted = actedFor(entry.id);
+  if (posted?.type === "acted") {
+    trail.push({ at: posted.at, text: entry.call.call === "ask" ? "Posted a note on the issue that a question is waiting on the board" : posted.closed ? "Posted the call on the issue and closed it" : "Posted the call on the issue", url: posted.comment.url });
+  }
+  const undone = new Map(entries.filter((other): other is UndoneEntry => other.type === "undone").map((other) => [other.action, other]));
+  let ownerCall: CallView | null = null;
+  for (const action of entries.filter((other): other is OwnerAction => isOwnerAction(other) && other.call === entry.id)) {
+    trail.push({ at: action.at, text: actionWords(action) });
+    const undo = undone.get(action.id);
+    if (undo !== undefined) {
+      trail.push({ at: undo.at, text: `${undo.by} undid it; nothing was sent to GitHub` });
+      continue;
+    }
+    const rerun = entries.find((other): other is CallEntry => other.type === "call" && other.owner?.action === action.id);
+    if (rerun !== undefined) {
+      ownerCall = callView(repo, rerun, statuses.get(rerun.id)!, entries, book);
+      trail.push({ at: rerun.at, text: `Added to the case book; judged again on ${action.by}'s word, for the criteria` });
+      const rerunPosted = actedFor(rerun.id);
+      if (rerunPosted?.type === "acted") trail.push({ at: rerunPosted.at, text: `Posted ${action.by}'s go on the issue`, url: rerunPosted.comment.url });
+    }
+    const carried = actedFor(action.id);
+    if (carried?.type === "acted") {
+      trail.push({ at: carried.at, text: `Added to the case book; posted on the issue${carried.closed ? " and closed it" : ""}`, url: carried.comment.url });
+    }
+  }
+  const status = statuses.get(entry.id)!;
+  if (status.status === "superseded") {
+    const by = entries.find((other) => other.id === status.by);
+    if (by !== undefined) trail.push({ at: by.at, text: "Judged again after an edit" });
+  }
+  const reopened = entries.filter((other) => other.type === "reopened" && entries.some((act) => act.type === "acted" && act.id === other.after && act.issue === entry.issue.number && (act.for === entry.id || isActionOn(entries, act.for, entry.id))));
+  for (const reopen of reopened) trail.push({ at: reopen.at, text: "Reopened on GitHub after entail closed it" });
+  trail.sort((a, b) => a.at.localeCompare(b.at));
+  return { day: dayOf(entry.at), call, ownerCall, reopened: reopened.length > 0, trail };
+}
+
+/** A PR's call in the log, with what followed it. */
+function landingRow(repo: string, entry: LandingEntry, statuses: Map<number, CallStatus>, entries: readonly Entry[], book: readonly Case[], dayOf: (iso: string) => string): LogRow {
+  const call = landingView(repo, entry, statuses.get(entry.id)!, entries, book);
+  const trail: TrailStep[] = [{ at: entry.at, text: `Judged PR #${entry.pr.number}: ${entry.call.call} · ${entry.model}, ${entry.effort}` }];
+  const actedFor = (id: number) => entries.find((other): other is PrActedEntry => other.type === "pr-acted" && other.for === id);
+  const posted = actedFor(entry.id);
+  if (posted !== undefined) trail.push({ at: posted.at, text: prActedWords(posted, entry.call.call), url: posted.comment.url });
+  const undone = new Map(entries.filter((other): other is UndoneEntry => other.type === "undone").map((other) => [other.action, other]));
+  for (const action of entries.filter((other): other is OwnerAction => isOwnerAction(other) && other.call === entry.id)) {
+    trail.push({ at: action.at, text: actionWords(action) });
+    const undo = undone.get(action.id);
+    if (undo !== undefined) {
+      trail.push({ at: undo.at, text: `${undo.by} undid it; nothing was sent to GitHub` });
+      continue;
+    }
+    const carried = actedFor(action.id);
+    if (carried !== undefined) trail.push({ at: carried.at, text: `Added to the case book; ${prActedWords(carried, action.type === "confirmed" ? entry.call.call : (action.to as LandingOwnerCall)).toLowerCase()}`, url: carried.comment.url });
+  }
+  const status = statuses.get(entry.id)!;
+  if (status.status === "superseded") {
+    const by = entries.find((other) => other.id === status.by);
+    if (by !== undefined) trail.push({ at: by.at, text: "Judged again after a push" });
+  }
+  trail.sort((a, b) => a.at.localeCompare(b.at));
+  return { day: dayOf(entry.at), call, ownerCall: null, reopened: false, trail };
+}
+
+function prActedWords(acted: PrActedEntry, call: string): string {
+  if (acted.merged !== null) return "Merged the PR and commented on it";
+  if (acted.closed) return "Closed the PR with the reason";
+  if (acted.refused !== null) return `Did not merge: ${acted.refused}`;
+  return acted.sentBack || call === "send-back" ? "Sent the PR back with a comment" : "Commented on the PR";
+}
+
+function isActionOn(entries: readonly Entry[], actionId: number, callId: number): boolean {
+  return entries.some((entry) => isOwnerAction(entry) && entry.id === actionId && entry.call === callId);
+}
+
+function actionWords(action: OwnerAction): string {
+  if (action.type === "confirmed") return `${action.by} confirmed`;
+  if (action.type === "overridden") return `${action.by} overrode: ${action.differently === true ? "go, differently" : action.to}`;
+  return `${action.by} answered: ${action.to}`;
+}
+
+/** The log of one repo, or of every repo, oldest first, every entry: for `entail calls`. */
 export type LogItem =
   | ({ kind: "call" } & Omit<CallView, "kind"> & { callKind: CallView["kind"] })
   | { kind: "owner"; repo: string; at: string; action: OwnerAction; issue: CallEntry["issue"] | null; pr: LandingEntry["pr"] | null }
@@ -392,7 +609,7 @@ export type LogItem =
   | { kind: "pr-acted"; repo: string; at: string; for: number; pr: number; url: string; merged: PrActedEntry["merged"]; refused: string | null; sentBack: boolean; closed: boolean }
   /** entail started or stopped following a PR. */
   | { kind: "pr"; repo: string; at: string; entry: Extract<Entry, { type: "followed" | "unfollowed" | "landing-failed" }> }
-  | { kind: "repo"; repo: string; at: string; entry: Extract<Entry, { type: "enrolled" | "unenrolled" | "settings" }> };
+  | { kind: "repo"; repo: string; at: string; entry: Extract<Entry, { type: "enrolled" | "unenrolled" | "settings" | "undone" | "backlog" | "reopened" }> };
 
 /**
  * The log of one repo, or of every repo, oldest first: each repo's in the
@@ -514,36 +731,51 @@ function ownerWords(text: unknown, what: string): string {
   return text.trim();
 }
 
+/** How an owner's action is taken: on the board it is held for {@link HOLD_MS} so it can be undone. */
+export interface ActOptions {
+  /** How long the action can be undone before entail acts on it; 0, the default, acts on the next pass. */
+  holdMs?: number;
+}
+
 /**
  * Confirms a call waiting in confirm mode, on an issue (go or no) or a PR
  * (merge or send-back): entail then acts on it as it stands.
  */
-export async function confirmCall(dataDirectory: string, id: number, by: string, now = new Date()): Promise<ConfirmedEntry> {
+export async function confirmCall(dataDirectory: string, id: number, by: string, now = new Date(), options: ActOptions = {}): Promise<ConfirmedEntry> {
   const found = findItem(dataDirectory, id);
   if (found.entry.type === "landing") {
     const status = landingStatuses(found.entries).get(id)!;
     if (found.entry.call.call === "ask") throw new OwnerError(409, `call ${id} is a question: answer it`);
     if (status.status !== "waiting") throw new OwnerError(409, `call ${id} is not waiting to be confirmed (${status.status})`);
-    return actOnLanding(dataDirectory, found.repo, found.entry, { type: "confirmed", by, call: id }, now);
+    return record(dataDirectory, found.repo, { type: "confirmed", by, call: id }, now, options);
   }
   const { repo, entries, entry: call } = found;
   const status = statusOf(entries, call);
   if (call.call.call === "ask") throw new OwnerError(409, `call ${id} is a question: answer it`);
+  if (status.status === "superseded") throw new OwnerError(409, `the issue was edited and entail judged it again: read the new call`);
   if (status.status !== "waiting") throw new OwnerError(409, `call ${id} is not waiting to be confirmed (${status.status})`);
-  const action = await act(dataDirectory, repo, call, { type: "confirmed", by, call: id }, now);
-  return action;
+  return record(dataDirectory, repo, { type: "confirmed", by, call: id }, now, options);
 }
 
+export interface OverrideOptions extends ActOptions {
+  /** Keep entail's go, but with the owner's line as its one criterion instead of entail's. */
+  differently?: boolean;
+}
+
+/**
 /**
  * Replaces a call with the owner's own call and reason: go or no on an
  * issue, merge or send-back on a PR. A call that entail already acted on can
  * be overridden too; one judged again since cannot, and neither can a
- * question, which is answered.
+ * question, which is answered. A go can be overridden with a go made
+ * differently: the owner's line becomes, word for word, the criterion the PR
+ * must meet. That is for an issue's go only.
  */
-export async function overrideCall(dataDirectory: string, id: number, by: string, to: unknown, reason: unknown, now = new Date()): Promise<OverriddenEntry> {
+export async function overrideCall(dataDirectory: string, id: number, by: string, to: unknown, reason: unknown, now = new Date(), options: OverrideOptions = {}): Promise<OverriddenEntry> {
   const found = findItem(dataDirectory, id);
   if (found.entry.type === "landing") {
     const landing = found.entry;
+    if (options.differently === true) throw new OwnerError(409, `only a go on an issue can be made differently`);
     const owner = landingOwnerCall(to);
     const words = ownerWords(reason, "a reason");
     const status = landingStatuses(found.entries).get(id)!;
@@ -551,20 +783,25 @@ export async function overrideCall(dataDirectory: string, id: number, by: string
     if (status.status === "superseded") throw new OwnerError(409, `call ${id} was replaced by a newer call on the PR`);
     if (status.status === "closed") throw new OwnerError(409, `the PR of call ${id} is merged or closed`);
     if (status.status === "overridden" || status.status === "answered") throw new OwnerError(409, `call ${id} is already the owner's (${status.status})`);
+    if (status.status === "confirmed") throw new OwnerError(409, `call ${id} was confirmed`);
     if (owner === landing.call.call) throw new OwnerError(409, `call ${id} is already ${owner}; confirm it instead`);
-    return actOnLanding(dataDirectory, found.repo, landing, { type: "overridden", by, call: id, to: owner, reason: words }, now);
+    return record(dataDirectory, found.repo, { type: "overridden", by, call: id, to: owner, reason: words }, now, options);
   }
   const { repo, entries, entry: call } = found;
   const owner = ownerCall(to);
-  const words = ownerWords(reason, "a reason");
+  const words = ownerWords(reason, options.differently === true ? "the line that becomes the criterion" : "a reason");
   const status = statusOf(entries, call);
   if (call.call.call === "ask" && call.owner === null) throw new OwnerError(409, `call ${id} is a question: answer it`);
-  if (status.status === "superseded") throw new OwnerError(409, `call ${id} was replaced by a newer call on the issue`);
+  if (status.status === "superseded") throw new OwnerError(409, `the issue was edited and entail judged it again: read the new call`);
   if (status.status === "overridden" || status.status === "answered") throw new OwnerError(409, `call ${id} is already the owner's (${status.status})`);
+  if (status.status === "confirmed") throw new OwnerError(409, `call ${id} was confirmed`);
   const effective = call.owner?.call ?? call.call.call;
+  if (options.differently === true) {
+    if (owner !== "go" || effective !== "go") throw new OwnerError(409, `only a go can be overridden with a go made differently`);
+    return record(dataDirectory, repo, { type: "overridden", by, call: id, to: "go", reason: words, differently: true }, now, options);
+  }
   if (owner === effective) throw new OwnerError(409, `call ${id} is already ${owner}; confirm it instead`);
-  const action = await act(dataDirectory, repo, call, { type: "overridden", by, call: id, to: owner, reason: words }, now);
-  return action;
+  return record(dataDirectory, repo, { type: "overridden", by, call: id, to: owner, reason: words }, now, options);
 }
 
 /**
@@ -572,7 +809,7 @@ export async function overrideCall(dataDirectory: string, id: number, by: string
  * issue, where a go runs the judgment again with the answer; merge or
  * send-back on a PR.
  */
-export async function answerCall(dataDirectory: string, id: number, by: string, to: unknown, answer: unknown, now = new Date()): Promise<AnsweredEntry> {
+export async function answerCall(dataDirectory: string, id: number, by: string, to: unknown, answer: unknown, now = new Date(), options: ActOptions = {}): Promise<AnsweredEntry> {
   const found = findItem(dataDirectory, id);
   if (found.entry.type === "landing") {
     const owner = landingOwnerCall(to);
@@ -580,16 +817,45 @@ export async function answerCall(dataDirectory: string, id: number, by: string, 
     const status = landingStatuses(found.entries).get(id)!;
     if (found.entry.call.call !== "ask") throw new OwnerError(409, `call ${id} is a ${found.entry.call.call}, not a question: confirm or override it`);
     if (status.status !== "waiting") throw new OwnerError(409, `call ${id} is not waiting for an answer (${status.status})`);
-    return actOnLanding(dataDirectory, found.repo, found.entry, { type: "answered", by, call: id, to: owner, answer: words }, now);
+    return record(dataDirectory, found.repo, { type: "answered", by, call: id, to: owner, answer: words }, now, options);
   }
   const { repo, entries, entry: call } = found;
   const owner = ownerCall(to);
   const words = ownerWords(answer, "an answer");
   const status = statusOf(entries, call);
   if (call.call.call !== "ask") throw new OwnerError(409, `call ${id} is a ${call.call.call}, not a question: confirm or override it`);
+  if (status.status === "superseded") throw new OwnerError(409, `the issue was edited and entail judged it again: read the new question`);
   if (status.status !== "waiting") throw new OwnerError(409, `call ${id} is not waiting for an answer (${status.status})`);
-  const action = await act(dataDirectory, repo, call, { type: "answered", by, call: id, to: owner, answer: words }, now);
-  return action;
+  return record(dataDirectory, repo, { type: "answered", by, call: id, to: owner, answer: words }, now, options);
+}
+
+/**
+ * Undoes the owner's action on a call while it is still held. Once the
+ * window has closed entail is acting on it, and it can no longer be undone
+ * here; it can be overridden instead.
+ */
+export function undoAction(dataDirectory: string, id: number, by: string, now = new Date()): { undone: ActionView; call: CallView } {
+  const { repo, entries, entry } = findItem(dataDirectory, id);
+  const action = standingActions(entries).get(entry.id);
+  if (action === undefined) throw new OwnerError(409, `nothing on call ${id} to undo`);
+  const acted = entries.some(
+    (other) => ((other.type === "acted" || other.type === "pr-acted") && other.for === action.id) || (other.type === "call" && other.owner?.action === action.id),
+  );
+  if (acted || action.holdUntil === undefined || Date.parse(action.holdUntil) <= now.getTime()) {
+    throw new OwnerError(409, "too late to undo: entail is already acting on it; override the call instead");
+  }
+  appendEntry(dataDirectory, repo, { type: "undone", by, action: action.id }, now);
+  const after = readLog(dataDirectory, repo);
+  const view = entry.type === "call" ? callView(repo, entry, statusOf(after, entry), after, []) : landingView(repo, entry, landingStatuses(after).get(entry.id)!, after, []);
+  return { undone: action, call: view };
+}
+
+type NewOwnerAction = Omit<ConfirmedEntry, "id" | "at"> | Omit<OverriddenEntry, "id" | "at"> | Omit<AnsweredEntry, "id" | "at">;
+
+function record<E extends NewOwnerAction>(dataDirectory: string, repo: string, entry: E, now: Date, options: ActOptions): E & { id: number; at: string } {
+  const holdMs = options.holdMs ?? 0;
+  const held = holdMs > 0 ? { ...entry, holdUntil: new Date(now.getTime() + holdMs).toISOString() } : entry;
+  return appendEntry(dataDirectory, repo, held, now) as E & { id: number; at: string };
 }
 
 /** The case an owner's action makes: the issue as judged, the vision it was judged under, and the owner's call with its reason. */
@@ -616,7 +882,9 @@ export function caseFor(repo: string, call: CallEntry, action: OwnerAction): Cas
   }
   const words = action.type === "overridden" ? action.reason : action.answer;
   const notes = [`## ${action.by}'s words\n\n${quote(words)}`];
-  if (action.type === "overridden") {
+  if (action.type === "overridden" && action.differently === true) {
+    notes.push(`## entail's go, made differently\n\nentail called go: ${call.call.reason}\n\n${action.by} kept the go and replaced its criteria with their line above, word for word.`);
+  } else if (action.type === "overridden") {
     notes.push(`## entail's call, overridden\n\nentail called ${asCalled}: ${call.call.reason}`);
   } else if (call.call.call === "ask") {
     notes.push(`## entail's question\n\n${quote(call.call.question)}\n\nWhy it was a question: ${call.call.why}`);
@@ -627,7 +895,9 @@ export function caseFor(repo: string, call: CallEntry, action: OwnerAction): Cas
     reason: oneLine(words),
     reasonFrom:
       action.type === "overridden"
-        ? `${action.by}'s override on the board, quoted below; the one-line reason is its first paragraph`
+        ? action.differently === true
+          ? `${action.by}'s go made differently on the board, quoted below; their line is the criterion`
+          : `${action.by}'s override on the board, quoted below; the one-line reason is its first paragraph`
         : `${action.by}'s answer on the board to entail's question, quoted below; the one-line reason is its first paragraph`,
     notes: notes.join("\n\n"),
   };
@@ -677,21 +947,6 @@ export function landingCaseFor(repo: string, landing: LandingEntry, action: Owne
   };
 }
 
-/** Writes the owner's case first, then logs the action, so a case that cannot be written leaves the call still waiting. */
-type NewOwnerAction = Omit<ConfirmedEntry, "id" | "at"> | Omit<OverriddenEntry, "id" | "at"> | Omit<AnsweredEntry, "id" | "at">;
-
-async function act<E extends NewOwnerAction>(dataDirectory: string, repo: string, call: CallEntry, entry: E, now: Date): Promise<E & { id: number; at: string }> {
-  const draft = { id: 0, at: now.toISOString(), ...entry } as unknown as OwnerAction;
-  await writeCase(join(dataDirectory, OWNER_CASE_BOOK), caseFor(repo, call, draft));
-  return appendEntry(dataDirectory, repo, entry, now);
-}
-
-async function actOnLanding<E extends NewOwnerAction>(dataDirectory: string, repo: string, landing: LandingEntry, entry: E, now: Date): Promise<E & { id: number; at: string }> {
-  const draft = { id: 0, at: now.toISOString(), ...entry } as unknown as OwnerAction;
-  await writeLandingCase(join(dataDirectory, OWNER_CASE_BOOK), landingCaseFor(repo, landing, draft));
-  return appendEntry(dataDirectory, repo, entry, now);
-}
-
 function oneLine(text: string): string {
   return text.trim().split(/\n\s*\n/u)[0]!.replace(/\s+/gu, " ").trim();
 }
@@ -734,7 +989,7 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         const { action } = item;
         const issue = item.pr?.number ?? item.issue?.number ?? null;
         if (action.type === "confirmed") lines.push(`${at}  ${where(issue)}  CONFIRMED by ${action.by} (call ${action.call})`);
-        if (action.type === "overridden") lines.push(`${at}  ${where(issue)}  OVERRIDDEN by ${action.by} to ${action.to} (call ${action.call})`, `      ${oneLine(action.reason)}`);
+        if (action.type === "overridden") lines.push(`${at}  ${where(issue)}  OVERRIDDEN by ${action.by} to ${action.differently === true ? "go, differently" : action.to} (call ${action.call})`, `      ${oneLine(action.reason)}`);
         if (action.type === "answered") lines.push(`${at}  ${where(issue)}  ANSWERED by ${action.by}: ${action.to} (call ${action.call})`, `      ${oneLine(action.answer)}`);
         break;
       }
@@ -763,6 +1018,9 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
           ].filter((change) => change !== null);
           lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} set ${changes.join(", ")}`);
         }
+        if (entry.type === "undone") lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} undid their action ${entry.action}; nothing was sent to GitHub`);
+        if (entry.type === "backlog") lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} asked entail to judge the open backlog: ${entry.issues.length === 0 ? "nothing left to judge" : entry.issues.map((issue) => `#${issue}`).join(", ")}`);
+        if (entry.type === "reopened") lines.push(`${at}  ${where(entry.issue)}  reopened on GitHub after entail closed it`);
         break;
       }
     }
