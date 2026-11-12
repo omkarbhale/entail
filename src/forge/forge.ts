@@ -269,6 +269,19 @@ export type CloseReason = "completed" | "not-planned";
  */
 export type MergeOutcome = { merged: true; mergeCommitSha: string | null } | { merged: false; refusal: string };
 
+/**
+ * One file a PR changes, as the forge lists it. A renamed file names the path
+ * it had before, so a rename away from a path counts as changing that path.
+ */
+export interface ChangedFile {
+  path: string;
+  status: "added" | "removed" | "modified" | "renamed" | "copied" | "changed" | "unchanged";
+  /** The path before a rename or copy; null otherwise. */
+  previousPath: string | null;
+  additions: number;
+  deletions: number;
+}
+
 /** A PR's state as read to settle a merge: open, closed without merging, or merged. */
 export interface PullRequestState {
   state: "open" | "closed" | "merged";
@@ -383,6 +396,9 @@ export interface Forge {
   /** Reopens an issue, as when the owner overrides a no to go. An open issue stays open. */
   reopenIssue(issueNumber: number): Promise<void>;
 
+  /** Closes a PR without merging it, as when entail cancels a PR that keeps failing. A closed PR stays closed. */
+  closePullRequest(prNumber: number): Promise<void>;
+
   /**
    * Merges a PR only at `sha`, never bypassing rules and never through the
    * forge's auto-merge. Every definitive outcome but merged is returned as a
@@ -405,6 +421,12 @@ export interface Forge {
 
   /** One PR, read live, with whether the forge would merge it and whether it conflicts. */
   pullRequest(number: number): Promise<PullRequest>;
+
+  /**
+   * Every file the PR changes at its current head, as the forge lists them,
+   * sorted by path. Never read from the PR's description.
+   */
+  pullRequestFiles(number: number): Promise<ChangedFile[]>;
 
   /** Every comment on a PR's conversation, oldest first. The PR's description is {@link PullRequest.body}. */
   pullRequestComments(number: number): Promise<PullRequestComment[]>;

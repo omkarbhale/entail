@@ -3,14 +3,29 @@ import { once } from "node:events";
 import { join } from "node:path";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 import { changeSettings, createApi } from "./api.ts";
-import { DEFAULT_CASE_BOOK, OWNER_CASE_BOOK, precedentsFor, readCaseBook, readCaseBooks, renderIssue, type Case } from "./case-book.ts";
+import {
+  DEFAULT_CASE_BOOK,
+  landingPrecedentsFor,
+  OWNER_CASE_BOOK,
+  precedentsFor,
+  readCaseBook,
+  readCaseBooks,
+  readLandingCaseBook,
+  readLandingCaseBooks,
+  renderIssue,
+  renderPullRequest,
+  type Case,
+  type LandingCase,
+} from "./case-book.ts";
 import { ChangeDeduplicator } from "./changes.ts";
 import { ClaudeRunner } from "./claude-runner.ts";
 import { CursorStore } from "./cursors.ts";
 import { ensureDataDirectory } from "./data-directory.ts";
 import { createForge } from "./forge/create-forge.ts";
 import type { Forge, ForgeSetting } from "./forge/forge.ts";
+import { allChecksFinished } from "./forge/forge.ts";
 import { formatCall, judge, type JudgeOptions } from "./judgment.ts";
+import { formatLandingCall, judgeLanding } from "./landing.ts";
 import { acquireLock } from "./lock.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS, type Effort, type RunFacts } from "./model-runner.ts";
@@ -23,7 +38,7 @@ import {
   enroll,
   formatLog,
   formatWaiting,
-  latestCallOn,
+  latestItemOn,
   logItems,
   overrideCall,
   OwnerError,
@@ -33,9 +48,9 @@ import {
   waitingItems,
 } from "./owner.ts";
 import { pinsFile } from "./pins.ts";
-import { readSettings, type GlobalSettings } from "./records.ts";
-import { formatReplay, replay } from "./replay.ts";
-import { mirrorReader, runPass, type PassOptions } from "./watch.ts";
+import { goCallOn, readLog, readSettings, sendBacksPosted, type GlobalSettings } from "./records.ts";
+import { formatReplay, replay, replayLandings } from "./replay.ts";
+import { mirrorReader, mirrorReaders, runPass, type PassOptions } from "./watch.ts";
 
 /** The port the board's API is served on unless --port names another. */
 export const DEFAULT_PORT = 4380;
@@ -51,10 +66,11 @@ const USAGE = `usage:
   entail run [--once] [--dry-run] [--interval <seconds>] [--port <n>]
   entail waiting [<owner/repo>] [--json]
   entail confirm <owner/repo>#<n>
-  entail override <owner/repo>#<n> go|no <reason>
-  entail answer <owner/repo>#<n> go|no <answer>
+  entail override <owner/repo>#<n> go|no|merge|send-back <reason>
+  entail answer <owner/repo>#<n> go|no|merge|send-back <answer>
   entail calls [<owner/repo>] [--json]
   entail judge <owner/repo>#<n> [--model <model>] [--effort <level>] [--json]
+  entail land <owner/repo>#<pr> [--issue <n>] [--model <model>] [--effort <level>] [--json]
   entail replay [--model <model>] [--effort <level>] [--cases <dir>] [--concurrency <n>] [--json]
 
 enroll     watch a repo: entail makes the call on each issue filed or edited from now
@@ -65,18 +81,26 @@ repos      the enrolled repos with confirm mode, model, effort and what waits on
 settings   with a repo, its confirm mode, model and effort ("default" uses the one for
            every repo); without, your name on comments and the default model and effort.
 run        poll every enrolled repo, make each call once per edit, post it, and serve the
-           board's API on 127.0.0.1 (port ${DEFAULT_PORT} by default). --once makes one pass;
-           --dry-run makes one pass that posts, closes and records nothing and prints
-           what it would post.
+           board's API on 127.0.0.1 (port ${DEFAULT_PORT} by default). Each PR that closes an
+           issue entail said go on is judged at each new head once CI has finished:
+           merged at that head, sent back with what needs to change, or asked about.
+           --once makes one pass; --dry-run makes one pass that posts, closes, merges
+           and records nothing and prints what it would do.
 waiting    the questions and calls to confirm waiting on you, across repos.
-confirm    confirm the latest call on an issue: entail then acts on it.
-override   replace the latest go or no on an issue with your call and reason.
-answer     answer the question on an issue with your call and words.
+confirm    confirm the latest call on an issue or PR: entail then acts on it.
+override   replace the latest call on an issue (go or no) or a PR (merge or send-back)
+           with your call and reason.
+answer     answer the question on an issue (go or no) or a PR (merge or send-back)
+           with your call and words.
 calls      the log: every call with its reason, and every confirmation, override,
            answer and post, for one repo or all.
 judge      make the call on one issue and print it. It posts nothing.
-replay     run every case in the case book through the judgment and print agreement
-           with the owner's calls, disagreements first.
+land       make the landing call on one PR at its head and print it, against the
+           criteria of the go entail logged on the issue it closes (or --issue). It
+           posts and merges nothing.
+replay     run every case in the case book through its judgment (issue cases through
+           the call on an issue, landing cases through the call on a PR) and print
+           agreement with the owner's calls, disagreements first.
 
 --model    the model to run (default: the setting, ${DEFAULT_MODEL} unless changed)
 --effort   ${EFFORTS.join(", ")} (default: the setting, ${DEFAULT_EFFORT} unless changed)
@@ -112,6 +136,8 @@ export async function main(argv: string[]): Promise<number> {
         return await callsCommand(rest);
       case "judge":
         return await judgeCommand(rest);
+      case "land":
+        return await landCommand(rest);
       case "replay":
         return await replayCommand(rest);
       case undefined:
@@ -152,6 +178,11 @@ function settingsIn(dataDirectory: string): GlobalSettings {
 /** The case book: the one entail ships with, then the owner's own, whose cases win. */
 function caseBook(dataDirectory: string): Promise<Case[]> {
   return readCaseBooks([DEFAULT_CASE_BOOK, join(dataDirectory, OWNER_CASE_BOOK)]);
+}
+
+/** The landing cases of the same books. */
+function landingBook(dataDirectory: string): Promise<LandingCase[]> {
+  return readLandingCaseBooks([DEFAULT_CASE_BOOK, join(dataDirectory, OWNER_CASE_BOOK)]);
 }
 
 /** The owner's display name: the setting, else the GitHub account `gh` is logged in as. */
@@ -285,7 +316,7 @@ async function runCommand(args: string[]): Promise<number> {
   const forges = new Map<string, Forge>();
   const seen = new Map<string, ChangeDeduplicator>();
   const cursors = new CursorStore(dataDirectory);
-  const reader = mirrorReader(dataDirectory);
+  const { reader, prReader } = mirrorReaders(dataDirectory);
   const runner = new ClaudeRunner();
   const stop = new AbortController();
   const passOptions = async (): Promise<PassOptions> => ({
@@ -298,10 +329,12 @@ async function runCommand(args: string[]): Promise<number> {
       return forge;
     },
     reader,
+    prReader,
     runner,
     cursors,
     seen,
     book: () => caseBook(dataDirectory),
+    landingBook: () => landingBook(dataDirectory),
     log: dryRun ? null : log,
     dryRun,
     print: (text) => console.log(text),
@@ -310,7 +343,7 @@ async function runCommand(args: string[]): Promise<number> {
 
   try {
     if (single) {
-      if (dryRun) console.log("dry run: nothing is posted, closed or recorded\n");
+      if (dryRun) console.log("dry run: nothing is posted, closed, merged or recorded\n");
       const report = await runPass(await passOptions());
       console.log(`\n${report.repos} repos, ${report.judged} calls made, ${report.posted} ${dryRun ? "posts it would make" : "posts"}${report.failed.length > 0 ? `; not finished: ${report.failed.join(", ")}` : ""}`);
       return report.failed.length > 0 ? 1 : 0;
@@ -372,17 +405,21 @@ async function ownerCommand(command: "confirm" | "override" | "answer", args: st
   const { positionals } = parse(args, {});
   const expected = command === "confirm" ? 1 : 3;
   if (positionals.length !== expected) {
-    throw new UsageError(command === "confirm" ? "confirm takes one issue, as owner/repo#n" : `${command} takes an issue, go or no, and your ${command === "override" ? "reason" : "answer"} in quotes`);
+    throw new UsageError(
+      command === "confirm"
+        ? "confirm takes one issue or PR, as owner/repo#n"
+        : `${command} takes an issue or PR, your call (go or no on an issue, merge or send-back on a PR), and your ${command === "override" ? "reason" : "answer"} in quotes`,
+    );
   }
   const reference = parseIssueReference(positionals[0]!);
   const dataDirectory = ensureDataDirectory();
-  const id = latestCallOn(dataDirectory, reference.path, reference.number);
+  const id = latestItemOn(dataDirectory, reference.path, reference.number);
   const by = await ownerName(dataDirectory);
   const name = `${repoName(reference.path)}#${reference.number}`;
   if (command === "confirm") await confirmCall(dataDirectory, id, by);
   else if (command === "override") await overrideCall(dataDirectory, id, by, positionals[1], positionals[2]);
   else await answerCall(dataDirectory, id, by, positionals[1], positionals[2]);
-  console.log(`${name}: your ${command === "confirm" ? "confirmation" : command === "override" ? "override" : "answer"} is recorded under ${by} and written to the case book; entail acts on the issue on its next pass.`);
+  console.log(`${name}: your ${command === "confirm" ? "confirmation" : command === "override" ? "override" : "answer"} is recorded under ${by} and written to the case book; entail acts on it on its next pass.`);
   return 0;
 }
 
@@ -443,6 +480,78 @@ async function judgeCommand(args: string[]): Promise<number> {
   return judgment.ok ? 0 : 1;
 }
 
+async function landCommand(args: string[]): Promise<number> {
+  const { values, positionals } = parse(args, { ...RUN_OPTIONS, issue: { type: "string" } });
+  if (positionals.length !== 1) throw new UsageError("land takes one PR reference");
+  const reference = parseIssueReference(positionals[0]!);
+  const withSettings = runOptions(values);
+  const dataDirectory = ensureDataDirectory();
+  const options = withSettings(settingsIn(dataDirectory));
+  const repo = repoName(reference.path);
+  const forge = createForge({ forge: "github", host: GITHUB, path: reference.path });
+  const pr = await forge.pullRequest(reference.number);
+  const entries = readLog(dataDirectory, repo);
+
+  let issueNumber: number;
+  if (values.issue !== undefined) {
+    issueNumber = Number(values.issue);
+    if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) throw new UsageError("--issue is an issue number");
+  } else {
+    const linked = await forge.linkedIssues(reference.number);
+    const judged = linked.find((number) => goCallOn(entries, number) !== null);
+    if (judged === undefined && linked.length === 0) throw new Error(`${repo}#${reference.number} closes no issue by GitHub's link data; name one with --issue`);
+    issueNumber = judged ?? linked[0]!;
+  }
+  const go = goCallOn(entries, issueNumber);
+  let issueText: string;
+  if (go !== null) issueText = go.issueText;
+  else {
+    const issue = await forge.issue(issueNumber);
+    if (issue === null) throw new Error(`${repo}#${issueNumber} is not an issue`);
+    const comments = await forge.comments("issue", issueNumber);
+    issueText = renderIssue({ title: issue.title, body: issue.body, comments: comments.map((c) => ({ author: c.author.username, createdAt: c.createdAt, body: c.body })) });
+  }
+  const criteria = go === null || go.call.call === "no" ? [] : go.call.criteria;
+
+  const report = await forge.checks(reference.number, pr.headSha, []);
+  if (!allChecksFinished(report)) console.error(`entail: CI has not finished at ${pr.headSha}; judging what has reported so far`);
+  const files = await forge.pullRequestFiles(reference.number);
+  const reading = await mirrorReaders(dataDirectory).prReader(repo, forge, reference.number, pr.headSha);
+  try {
+    const judgment = await judgeLanding(
+      new ClaudeRunner(),
+      {
+        repo,
+        pr: { number: reference.number, text: renderPullRequest(pr) },
+        head: pr.headSha,
+        base: reading.base,
+        issue: { number: issueNumber, text: issueText },
+        criteria,
+        vision: reading.vision,
+        pins: reading.pins,
+        facts: { checks: report.checks, required: report.required, files },
+        diff: reading.diff,
+        precedents: landingPrecedentsFor(await landingBook(dataDirectory), repo, issueText),
+        sendBacks: [],
+        checkout: reading.checkout,
+      },
+      options,
+    );
+    if (values.json) console.log(JSON.stringify(judgment, null, 2));
+    else if (judgment.ok) {
+      console.log(`${repo}#${reference.number} at ${pr.headSha}, closing #${issueNumber}: ${pr.title}`);
+      console.log(go === null ? `(#${issueNumber} has no go in entail's log: judged against no criteria)\n` : `(against the criteria of call ${go.id} on #${issueNumber}; ${sendBacksPosted(entries, reference.number)} send-backs posted before)\n`);
+      console.log(formatLandingCall(judgment.call));
+      console.log(`\n${runLine(judgment.facts, options)}`);
+    } else {
+      console.error(`entail: the run gave no call (${judgment.failure.kind}): ${judgment.failure.message}`);
+    }
+    return judgment.ok ? 0 : 1;
+  } finally {
+    await reading.release();
+  }
+}
+
 async function replayCommand(args: string[]): Promise<number> {
   const { values, positionals } = parse(args, { ...RUN_OPTIONS, cases: { type: "string" }, concurrency: { type: "string" } });
   if (positionals.length > 0) throw new UsageError("replay takes no arguments");
@@ -452,7 +561,8 @@ async function replayCommand(args: string[]): Promise<number> {
   const dataDirectory = ensureDataDirectory();
   const options = withSettings(settingsIn(dataDirectory));
   const book = values.cases === undefined ? await caseBook(dataDirectory) : await readCaseBook(values.cases);
-  if (book.length === 0) throw new Error("the case book has no cases");
+  const landings = values.cases === undefined ? await landingBook(dataDirectory) : await readLandingCaseBook(values.cases);
+  if (book.length === 0 && landings.length === 0) throw new Error("the case book has no cases");
 
   // One mirror per repo, brought up to date once; each case is read at its own commit.
   const mirrors = new Map<string, Promise<Mirror>>();
@@ -473,15 +583,37 @@ async function replayCommand(args: string[]): Promise<number> {
     return mirror.checkout(past.visionCommit);
   };
 
-  const results = await replay(new ClaudeRunner(), book, checkoutOf, { ...options, concurrency });
+  // A landing case is read at its PR's head, fetched from the forge's PR ref, and diffed against its base.
+  const readingOf = async (past: LandingCase) => {
+    const mirror = await mirrorOf(past.repo);
+    await mirror.fetchPullRequestHead(past.pr, past.head);
+    if (!(await mirror.hasCommit(past.head))) throw new Error(`case ${past.slug}: ${past.repo} has no commit ${past.head} for PR #${past.pr}`);
+    if (!(await mirror.hasCommit(past.base))) throw new Error(`case ${past.slug}: ${past.repo} has no commit ${past.base}`);
+    const diff = await mirror.pullRequestDiff(past.base, past.head);
+    const checkout = await mirror.checkout(past.head);
+    return { checkout: checkout.directory, diff };
+  };
+
+  const runner = new ClaudeRunner();
+  const results = await replay(runner, book, checkoutOf, { ...options, concurrency });
+  const landed = await replayLandings(runner, landings, readingOf, { ...options, concurrency });
   if (values.json) {
-    console.log(JSON.stringify(results.map((result) => ({ case: result.case.slug, owner: result.case.call, agrees: result.agrees, judgment: result.judgment })), null, 2));
+    console.log(
+      JSON.stringify(
+        [
+          ...results.map((result) => ({ kind: "issue", case: result.case.slug, owner: result.case.call, agrees: result.agrees, judgment: result.judgment })),
+          ...landed.map((result) => ({ kind: "landing", case: result.case.slug, owner: result.case.call, agrees: result.agrees, judgment: result.judgment })),
+        ],
+        null,
+        2,
+      ),
+    );
   } else {
-    console.log(formatReplay(results));
-    const cost = results.reduce((sum, result) => sum + (result.judgment.facts?.estimatedCostUsd ?? 0), 0);
+    console.log(formatReplay(results, landed));
+    const cost = [...results, ...landed].reduce((sum, result) => sum + (result.judgment.facts?.estimatedCostUsd ?? 0), 0);
     console.log(`${options.model} at ${options.effort} effort, about $${cost.toFixed(2)}`);
   }
-  return results.every((result) => result.agrees === true) ? 0 : 1;
+  return [...results, ...landed].every((result) => result.agrees === true) ? 0 : 1;
 }
 
 function runLine(facts: RunFacts, options: JudgeOptions): string {

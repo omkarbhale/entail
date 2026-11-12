@@ -1,8 +1,9 @@
 import { randomInt } from "node:crypto";
 import { appendFileSync, closeSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { OwnerCall } from "./case-book.ts";
+import type { ForgeFacts, LandingOwnerCall, OwnerCall } from "./case-book.ts";
 import type { Criterion, IssueCall } from "./judgment.ts";
+import type { LandingCall } from "./landing.ts";
 import { DEFAULT_EFFORT, EFFORTS, type Effort } from "./model-runner.ts";
 
 /**
@@ -54,8 +55,12 @@ export interface SettingsEntry extends EntryBase, ByOwner {
   effort?: Effort | null;
 }
 
-/** What made entail judge an issue. */
-export type Trigger = "new" | "edit" | "mention" | "owner";
+/**
+ * What made entail judge an issue. `landing` is not a run: it is the
+ * question a cancelled PR leaves for the owner when what blocked it was a
+ * product call.
+ */
+export type Trigger = "new" | "edit" | "mention" | "owner" | "landing";
 
 /** A `/entail` comment, known by its id and the time it was last edited. */
 export interface Mention {
@@ -102,6 +107,88 @@ export interface CallEntry extends EntryBase {
   costUsd: number | null;
 }
 
+/** A PR as the log names it. */
+export interface PullRequestRef {
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+}
+
+/** entail follows a PR: the forge says it closes an issue entail called go on. */
+export interface FollowedEntry extends EntryBase {
+  type: "followed";
+  pr: PullRequestRef;
+  issue: number;
+}
+
+/** entail stopped following a PR: it was merged or closed, by entail or anyone else. */
+export interface UnfollowedEntry extends EntryBase {
+  type: "unfollowed";
+  pr: number;
+  state: "merged" | "closed";
+}
+
+/** A landing judgment on a PR's head gave no call: counted, so a head is judged at most {@link JUDGMENT_ATTEMPTS} times. */
+export interface LandingFailedEntry extends EntryBase {
+  type: "landing-failed";
+  pr: number;
+  head: string;
+  reason: string;
+}
+
+/** How many times a PR's head is judged when the judgment gives no call, before landing stalls on it until a new head arrives. */
+export const JUDGMENT_ATTEMPTS = 3;
+
+/** One landing call: the call on a PR at one head, with everything it read to make it. */
+export interface LandingEntry extends EntryBase {
+  type: "landing";
+  pr: PullRequestRef;
+  issue: { number: number; title: string; url: string };
+  /** The call on the issue whose criteria the PR was judged against. */
+  issueCall: number;
+  issueText: string;
+  /** The PR's title and description as judged: its author's words. */
+  prText: string;
+  /** The PR's head commit judged; a merge happens at it and nowhere else. */
+  head: string;
+  /** The default branch's commit the diff was taken against. */
+  base: string;
+  vision: { commit: string; text: string } | null;
+  /** The criteria the issue's go set, which the PR was judged against. */
+  criteria: Criterion[];
+  /** CI and the changed files, read from the forge at the head. */
+  facts: ForgeFacts;
+  /** What the changed files touch that only the owner can let merge. */
+  touched: { vision: boolean; pins: string[] };
+  call: LandingCall;
+  /** How many send-backs entail had posted on the PR before this call. */
+  sendBacks: number;
+  /** A send-back past the limit: the PR is closed with the reason instead. */
+  cancel: boolean;
+  confirm: boolean;
+  model: string;
+  effort: Effort;
+  promptVersion: string;
+  costUsd: number | null;
+}
+
+/** entail acted on a PR for a landing call or an owner's action on one: commented, and merged or closed if it was to. */
+export interface PrActedEntry extends EntryBase {
+  type: "pr-acted";
+  for: number;
+  pr: number;
+  comment: { id: number; url: string };
+  /** The merge made at the judged head, when one was. */
+  merged: { sha: string; commit: string | null } | null;
+  /** Why a merge that was called for did not happen. */
+  refused: string | null;
+  /** Whether this post sent the PR back. */
+  sentBack: boolean;
+  /** Whether the PR was closed unmerged: cancelled. */
+  closed: boolean;
+}
+
 /** The owner confirmed a call as it stands. */
 export interface ConfirmedEntry extends EntryBase, ByOwner {
   type: "confirmed";
@@ -112,7 +199,8 @@ export interface ConfirmedEntry extends EntryBase, ByOwner {
 export interface OverriddenEntry extends EntryBase, ByOwner {
   type: "overridden";
   call: number;
-  to: OwnerCall;
+  /** go or no on an issue's call; merge or send-back on a PR's. */
+  to: OwnerCall | LandingOwnerCall;
   reason: string;
 }
 
@@ -120,7 +208,8 @@ export interface OverriddenEntry extends EntryBase, ByOwner {
 export interface AnsweredEntry extends EntryBase, ByOwner {
   type: "answered";
   call: number;
-  to: OwnerCall;
+  /** go or no on an issue's call; merge or send-back on a PR's. */
+  to: OwnerCall | LandingOwnerCall;
   answer: string;
 }
 
@@ -135,7 +224,18 @@ export interface ActedEntry extends EntryBase {
 
 export type OwnerAction = ConfirmedEntry | OverriddenEntry | AnsweredEntry;
 
-export type Entry = EnrolledEntry | UnenrolledEntry | SettingsEntry | CallEntry | OwnerAction | ActedEntry;
+export type Entry =
+  | EnrolledEntry
+  | UnenrolledEntry
+  | SettingsEntry
+  | CallEntry
+  | OwnerAction
+  | ActedEntry
+  | FollowedEntry
+  | UnfollowedEntry
+  | LandingEntry
+  | LandingFailedEntry
+  | PrActedEntry;
 
 /** An entry as written, before it has an id and a time. */
 export type NewEntry = Entry extends infer E ? (E extends Entry ? Omit<E, "id" | "at"> : never) : never;
@@ -316,8 +416,10 @@ export type CallStatus =
   | { status: "confirmed" | "overridden" | "answered"; action: OwnerAction }
   /** A call run on the owner's word: the owner's call. */
   | { status: "owner" }
-  /** The issue was judged again before the owner settled this call. */
-  | { status: "superseded"; by: number };
+  /** The issue, or the PR, was judged again before the owner settled this call. */
+  | { status: "superseded"; by: number }
+  /** A PR's call: the PR was merged or closed before the owner settled it. */
+  | { status: "closed" };
 
 /** Each call in a log with where it stands, oldest first. */
 export function callStatuses(entries: readonly Entry[]): Map<number, CallStatus> {
@@ -408,4 +510,105 @@ export function pendingWork(entries: readonly Entry[]): Pending[] {
 /** The criteria a call carries, none for a no. */
 export function criteriaOf(call: IssueCall): Criterion[] {
   return call.call === "no" ? [] : call.criteria;
+}
+
+// PRs.
+
+/** After this many send-backs of one PR, the next call that would send it back cancels it. */
+export const SEND_BACK_LIMIT = 3;
+
+/** The PRs entail follows and has not stopped following, by number, with the issue each closes. */
+export function followedPullRequests(entries: readonly Entry[]): Map<number, FollowedEntry> {
+  const followed = new Map<number, FollowedEntry>();
+  for (const entry of entries) {
+    if (entry.type === "followed") followed.set(entry.pr.number, entry);
+    if (entry.type === "unfollowed") followed.delete(entry.pr);
+  }
+  return followed;
+}
+
+/** The latest landing call on each PR. */
+export function latestLandings(entries: readonly Entry[]): Map<number, LandingEntry> {
+  const latest = new Map<number, LandingEntry>();
+  for (const entry of entries) if (entry.type === "landing") latest.set(entry.pr.number, entry);
+  return latest;
+}
+
+/** How many send-backs entail has posted on a PR. */
+export function sendBacksPosted(entries: readonly Entry[], pr: number): number {
+  return entries.filter((entry) => entry.type === "pr-acted" && entry.pr === pr && entry.sentBack).length;
+}
+
+/**
+ * The call on an issue a PR is judged against: its latest call, when that
+ * call (or the owner's word it was run on) is go. Null when the issue has no
+ * go, so a PR closing it is not entail's to land.
+ */
+export function goCallOn(entries: readonly Entry[], issue: number): CallEntry | null {
+  const call = latestCalls(entries).get(issue);
+  if (call === undefined) return null;
+  const effective = call.owner?.call ?? call.call.call;
+  return effective === "go" ? call : null;
+}
+
+/** Each landing call in a log with where it stands with the owner, oldest first. */
+export function landingStatuses(entries: readonly Entry[]): Map<number, CallStatus> {
+  const actions = new Map<number, OwnerAction>();
+  const latest = latestLandings(entries);
+  const stopped = new Set<number>();
+  for (const entry of entries) {
+    if ((entry.type === "confirmed" || entry.type === "overridden" || entry.type === "answered") && !actions.has(entry.call)) actions.set(entry.call, entry);
+    if (entry.type === "unfollowed") stopped.add(entry.pr);
+    if (entry.type === "followed") stopped.delete(entry.pr.number);
+  }
+  const statuses = new Map<number, CallStatus>();
+  for (const entry of entries) {
+    if (entry.type !== "landing") continue;
+    const action = actions.get(entry.id);
+    const newest = latest.get(entry.pr.number)!;
+    if (action) statuses.set(entry.id, { status: action.type, action });
+    else if (newest.id !== entry.id) statuses.set(entry.id, { status: "superseded", by: newest.id });
+    else if (stopped.has(entry.pr.number)) statuses.set(entry.id, { status: "closed" });
+    else if (entry.call.call === "ask" || entry.confirm) statuses.set(entry.id, { status: "waiting" });
+    else statuses.set(entry.id, { status: "auto" });
+  }
+  return statuses;
+}
+
+/** A landing call or an owner's action on one that entail still has to act on GitHub for. */
+export type LandingPending =
+  | { kind: "landing"; entry: LandingEntry }
+  | { kind: "landing-confirmed"; action: ConfirmedEntry; landing: LandingEntry }
+  | { kind: "landing-owner"; action: OverriddenEntry | AnsweredEntry; to: LandingOwnerCall; landing: LandingEntry };
+
+/**
+ * What entail has yet to do on PRs, in log order: each PR's latest landing
+ * call to post (and act on, unless it waits for the owner), and each owner's
+ * action on a PR's latest call. Nothing is done for a PR entail stopped
+ * following, or for a call a newer one on the same PR replaced.
+ */
+export function pendingLanding(entries: readonly Entry[]): LandingPending[] {
+  const acted = new Set<number>();
+  const landings = new Map<number, LandingEntry>();
+  for (const entry of entries) {
+    if (entry.type === "pr-acted") acted.add(entry.for);
+    if (entry.type === "landing") landings.set(entry.id, entry);
+  }
+  const latest = latestLandings(entries);
+  const followed = followedPullRequests(entries);
+  const current = (landing: LandingEntry) => latest.get(landing.pr.number)?.id === landing.id && followed.has(landing.pr.number);
+  const pending: LandingPending[] = [];
+  for (const entry of entries) {
+    if (acted.has(entry.id)) continue;
+    if (entry.type === "landing") {
+      if (current(entry)) pending.push({ kind: "landing", entry });
+      continue;
+    }
+    if (entry.type !== "confirmed" && entry.type !== "overridden" && entry.type !== "answered") continue;
+    const landing = landings.get(entry.call);
+    if (landing === undefined || !current(landing)) continue;
+    if (entry.type === "confirmed") pending.push({ kind: "landing-confirmed", action: entry, landing });
+    else if (entry.to === "merge" || entry.to === "send-back") pending.push({ kind: "landing-owner", action: entry, to: entry.to, landing });
+  }
+  return pending;
 }
