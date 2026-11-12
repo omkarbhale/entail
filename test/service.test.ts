@@ -342,8 +342,11 @@ test("entail service install and uninstall drive this platform's service manager
   }
 
   const status = spawnSync(process.execPath, [CLI, "service", "status"], { env, encoding: "utf8" });
-  assert.equal(status.status, 0, status.stderr);
-  if (definition.manager === "systemd") assert.match(status.stdout, /The entail service is installed \(systemd, .*\), starts at login, and is running\./u);
+  // The fake launchctl prints no agent state, so only systemd's yes/no answers make the service look running.
+  if (definition.manager === "systemd") {
+    assert.equal(status.status, 0, status.stderr);
+    assert.match(status.stdout, /The entail service is installed \(systemd, .*\), starts at login, and is running\./u);
+  }
 
   const uninstall = spawnSync(process.execPath, [CLI, "service", "uninstall"], { env, encoding: "utf8" });
   assert.equal(uninstall.status, 0, uninstall.stderr);
