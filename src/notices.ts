@@ -5,14 +5,15 @@ import type { CallView } from "./api-types.ts";
 
 /**
  * How the owner learns that something is waiting: one line and a link, sent
- * by a command the owner sets (`entail settings --notice '<command>'`). The line never carries the question or any text of the issue,
- * and nothing is taken back from it: the answer is given on the board.
+ * by a command the owner sets (`entail settings --notice '<command>'`). The
+ * line never carries the question or any text of the issue, and nothing is
+ * taken back from it: the answer is given on the board.
  *
  * The command is a shell command line; entail runs it with `/bin/sh -c`
  * and the line and the link appended as its last two arguments, so a script
  * reads them as `$1` and `$2`. They are also in its environment as
- * `ENTAIL_NOTICE_LINE` and `ENTAIL_NOTICE_LINK`. entail depends on no particular sink: `examples/`
- * holds one command that appends the line to a file and one that drops it
+ * `ENTAIL_NOTICE_LINE` and `ENTAIL_NOTICE_LINK`. entail depends on no
+ * particular sink: `examples/` holds one command that appends the line to a file and one that drops it
  * into firstmate's inbox.
  */
 
