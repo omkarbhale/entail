@@ -39,6 +39,7 @@ import {
   readLog,
   repoState,
   SEND_BACK_LIMIT,
+  JUDGMENT_ATTEMPTS,
   sendBacksPosted,
   type CallEntry,
   type Entry,
@@ -449,6 +450,9 @@ async function act(options: PassOptions, repo: string, forge: WatchForge, pendin
 
 // PRs.
 
+/** How long after a PR last changed a head with no checks at all is taken as checks not yet reported. */
+const CHECKS_WINDOW_MS = 10 * 60 * 1000;
+
 /**
  * Follows and judges the repo's PRs: each open PR that changed this pass and
  * each PR already followed. A PR is followed once the forge's own link data
@@ -493,8 +497,14 @@ async function passPullRequests(
       }
       if (pr.draft || pr.baseBranch !== project.defaultBranch) continue;
       if (latest.get(number)?.head === pr.headSha) continue;
+      const failures = entries.filter((entry) => entry.type === "landing-failed" && entry.pr === number && entry.head === pr.headSha).length;
+      if (failures >= JUDGMENT_ATTEMPTS) {
+        if (changed.has(number)) options.print(`${name}: landing is stalled at ${pr.headSha.slice(0, 7)}: the judgment gave no call ${failures} times; it resumes with a new push`);
+        continue;
+      }
       const report = await forge.checks(number, pr.headSha, []);
-      if (!allChecksFinished(report) || !requiredChecksReported(report)) {
+      const unreported = report.checks.length === 0 && report.required.length === 0 && (options.now?.() ?? new Date()).getTime() - Date.parse(pr.updatedAt) < CHECKS_WINDOW_MS;
+      if (unreported || !allChecksFinished(report) || !requiredChecksReported(report)) {
         if (changed.has(number)) options.print(`${name}: waiting for CI to finish at ${pr.headSha.slice(0, 7)} before judging`);
         continue;
       }
@@ -504,7 +514,10 @@ async function passPullRequests(
         continue;
       }
       const entry = await judgePullRequest(context, pr, go, { checks: report.checks, required: report.required }, entries);
-      if (entry === null) continue;
+      if ("failed" in entry) {
+        record({ type: "landing-failed", pr: number, head: pr.headSha, reason: entry.failed });
+        continue;
+      }
       record(entry);
       judged++;
     } catch (error) {
@@ -522,14 +535,14 @@ function pullRequestRef(pr: PullRequest): LandingEntry["pr"] {
   return { number: pr.number, title: pr.title, url: pr.url, author: pr.author.username };
 }
 
-/** Makes the landing call on a PR's head; null when the run gave none, which is logged and tried again next pass. */
+/** Makes the landing call on a PR's head; `failed` with the reason when the run gave none. */
 async function judgePullRequest(
   context: JudgeContext,
   pr: PullRequest,
   go: CallEntry,
   checks: Pick<LandingEntry["facts"], "checks" | "required">,
   entries: readonly Entry[],
-): Promise<NewEntry | null> {
+): Promise<NewEntry | { failed: string }> {
   const { options, state, forge } = context;
   const { repo } = state;
   const name = `${repo}#${pr.number}`;
@@ -566,8 +579,8 @@ async function judgePullRequest(
     );
     if (!judgment.ok) {
       options.log?.warn("landing-failed", { repo, pr: pr.number, failure: judgment.failure.kind, message: judgment.failure.message });
-      options.print(`${name}: the landing judgment gave no call (${judgment.failure.kind}): ${judgment.failure.message}; it is tried again next pass`);
-      return null;
+      options.print(`${name}: the landing judgment gave no call (${judgment.failure.kind}): ${judgment.failure.message}; it is tried again next pass, up to ${JUDGMENT_ATTEMPTS} times at this head`);
+      return { failed: `${judgment.failure.kind}: ${judgment.failure.message}` };
     }
     const { call } = judgment;
     const cancel = call.call === "send-back" && sendBacks >= SEND_BACK_LIMIT;

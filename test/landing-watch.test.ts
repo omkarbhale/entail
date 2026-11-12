@@ -111,6 +111,36 @@ test("a PR is judged only once CI has finished, even with no change to the PR, a
   assert.equal(h.forge.merges.length, 1);
 });
 
+test("a head with no checks reported yet is not judged until the window has passed", async (t) => {
+  const h = harness(t, { confirm: false });
+  await goIssue(h);
+  h.forge.openPull(4, "Read standard input", { head: HEAD1, closes: [1] });
+  const pushed = Date.parse(h.forge.pulls.get(4)!.updatedAt);
+  h.scriptLanding(4, met());
+  await h.pass({ now: () => new Date(pushed + 60_000) });
+  assert.equal(landings(h).length, 0);
+  assert.deepEqual(h.forge.merges, []);
+  await h.pass({ now: () => new Date(pushed + 11 * 60_000) });
+  assert.equal(landings(h).length, 1);
+});
+
+test("a head whose judgment keeps giving no call is tried three times, then stalls until a new push", async (t) => {
+  const h = harness(t, { confirm: false });
+  await goIssue(h);
+  h.forge.openPull(4, "Read standard input", { head: HEAD1, closes: [1] });
+  h.forge.report(HEAD1, ["test", "passed"]);
+  h.scriptLanding(4, "fail", "fail", "fail", met());
+  for (let i = 0; i < 5; i++) await h.pass();
+  assert.equal(h.runner.requests.filter((r) => r.kind === "pr-call").length, 3);
+  assert.equal(readLog(h.dataDirectory, REPO).filter((e) => e.type === "landing-failed").length, 3);
+  assert.equal(landings(h).length, 0);
+
+  h.forge.editPull(4, { headSha: HEAD2 });
+  h.forge.report(HEAD2, ["test", "passed"]);
+  await h.pass();
+  assert.equal(landings(h).length, 1);
+});
+
 test("a send-back posts what needs to change once per head; a new push is judged again, never reused", async (t) => {
   const h = harness(t, { confirm: false });
   await goIssue(h);

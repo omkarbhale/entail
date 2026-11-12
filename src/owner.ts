@@ -391,7 +391,7 @@ export type LogItem =
   /** entail acted on a PR: posted, and merged or closed it if it was to. */
   | { kind: "pr-acted"; repo: string; at: string; for: number; pr: number; url: string; merged: PrActedEntry["merged"]; refused: string | null; sentBack: boolean; closed: boolean }
   /** entail started or stopped following a PR. */
-  | { kind: "pr"; repo: string; at: string; entry: Extract<Entry, { type: "followed" | "unfollowed" }> }
+  | { kind: "pr"; repo: string; at: string; entry: Extract<Entry, { type: "followed" | "unfollowed" | "landing-failed" }> }
   | { kind: "repo"; repo: string; at: string; entry: Extract<Entry, { type: "enrolled" | "unenrolled" | "settings" }> };
 
 /**
@@ -436,6 +436,7 @@ export function logItems(dataDirectory: string, book: readonly Case[], repoFilte
           break;
         case "followed":
         case "unfollowed":
+        case "landing-failed":
           items.push({ kind: "pr", repo, at: entry.at, entry });
           break;
         default:
@@ -747,6 +748,7 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
       }
       case "pr":
         if (item.entry.type === "followed") lines.push(`${at}  ${where(item.entry.pr.number)}  following PR "${item.entry.pr.title}", which closes #${item.entry.issue}`);
+        else if (item.entry.type === "landing-failed") lines.push(`${at}  ${where(item.entry.pr)}  the landing judgment at ${item.entry.head.slice(0, 7)} gave no call: ${item.entry.reason}`);
         else lines.push(`${at}  ${where(item.entry.pr)}  stopped following the PR: it is ${item.entry.state}`);
         break;
       case "repo": {

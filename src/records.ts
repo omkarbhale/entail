@@ -129,6 +129,17 @@ export interface UnfollowedEntry extends EntryBase {
   state: "merged" | "closed";
 }
 
+/** A landing judgment on a PR's head gave no call: counted, so a head is judged at most {@link JUDGMENT_ATTEMPTS} times. */
+export interface LandingFailedEntry extends EntryBase {
+  type: "landing-failed";
+  pr: number;
+  head: string;
+  reason: string;
+}
+
+/** How many times a PR's head is judged when the judgment gives no call, before landing stalls on it until a new head arrives. */
+export const JUDGMENT_ATTEMPTS = 3;
+
 /** One landing call: the call on a PR at one head, with everything it read to make it. */
 export interface LandingEntry extends EntryBase {
   type: "landing";
@@ -223,6 +234,7 @@ export type Entry =
   | FollowedEntry
   | UnfollowedEntry
   | LandingEntry
+  | LandingFailedEntry
   | PrActedEntry;
 
 /** An entry as written, before it has an id and a time. */
