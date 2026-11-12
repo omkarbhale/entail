@@ -1,6 +1,9 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { homedir, release } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 import { BOARD_DIRECTORY, changeSettings, createApi } from "./api.ts";
 import {
@@ -27,7 +30,7 @@ import type { Forge, ForgeSetting } from "./forge/forge.ts";
 import { allChecksFinished } from "./forge/forge.ts";
 import { formatCall, judge, type JudgeOptions } from "./judgment.ts";
 import { formatLandingCall, judgeLanding } from "./landing.ts";
-import { acquireLock } from "./lock.ts";
+import { acquireLock, holderIsRunning, readLock } from "./lock.ts";
 import { Loop } from "./loop.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS, type Effort, type RunFacts } from "./model-runner.ts";
@@ -54,6 +57,7 @@ import {
 import { pinsFile } from "./pins.ts";
 import { goCallOn, heldActions, loggedRepos, readLog, readSettings, sendBacksPosted, type GlobalSettings } from "./records.ts";
 import { formatReplay, replay, replayLandings } from "./replay.ts";
+import { installService, isWsl, machineServiceSystem, serviceStatus, uninstallService, type ServiceInputs } from "./service.ts";
 import { mirrorReader, mirrorReaders, runPass, type PassOptions } from "./watch.ts";
 
 /** The port the board and its API are served on unless --port names another. */
@@ -66,8 +70,11 @@ const USAGE = `usage:
   entail enroll <owner/repo> [--no-confirm] [--since <time>]
   entail unenroll <owner/repo>
   entail repos [--all] [--json]
-  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--owner <name>] [--notice <command>|none]
+  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--owner <name>] [--notice <command>|none] [--start <command>|none]
   entail run [--once] [--dry-run] [--interval <seconds>] [--port <n>]
+  entail service install|uninstall|status
+  entail status [--port <n>]
+  entail open [--port <n>]
   entail waiting [<owner/repo>] [--json]
   entail confirm <owner/repo>#<n>
   entail override <owner/repo>#<n> go|no|merge|send-back <reason>
@@ -83,15 +90,23 @@ enroll     watch a repo: entail makes the call on each issue filed or edited fro
 unenroll   stop watching a repo; its log is kept.
 repos      the enrolled repos with confirm mode, model, effort and what waits on you.
 settings   with a repo, its confirm mode, model and effort ("default" uses the one for
-           every repo); without, your name on comments, the default model and effort, and
-           the notice command entail runs with one line and a link when something starts
-           waiting on you (see examples/ in entail's checkout; "none" sends no notices).
+           every repo); without, your name on comments, the default model and effort, the
+           notice command entail runs with one line and a link when something starts
+           waiting on you, and the start command entail runs when a go acts, with the
+           issue, the reason and the criteria as JSON on its standard input (see examples/
+           in entail's checkout; "none" sets neither).
 run        poll every enrolled repo, make each call once per edit, post it, and serve the
            board on http://127.0.0.1:${DEFAULT_PORT}/ (--port names another). Each PR that closes
            an issue entail said go on is judged at each new head once CI has finished:
            merged at that head, sent back with what needs to change, or asked about.
            --once makes one pass; --dry-run makes one pass that posts, closes, merges
            and records nothing and prints what it would do.
+service    install: run \`entail run\` as a per-user service that starts at login and again
+           after a crash (a systemd user unit on Linux, a launchd agent on macOS);
+           uninstall: stop and remove it; status: whether it is installed and running.
+status     whether entail is running, each enrolled repo with its confirm mode and when
+           it was last checked, what waits on you, and the board's address.
+open       open the board in your browser.
 waiting    the questions and calls to confirm waiting on you, across repos.
 confirm    confirm the latest call on an issue or PR: entail then acts on it.
 override   replace the latest call on an issue (go or no) or a PR (merge or send-back)
@@ -132,6 +147,12 @@ export async function main(argv: string[]): Promise<number> {
         return await settingsCommand(rest);
       case "run":
         return await runCommand(rest);
+      case "service":
+        return await serviceCommand(rest);
+      case "status":
+        return await statusCommand(rest);
+      case "open":
+        return await openCommand(rest);
       case "waiting":
         return await waitingCommand(rest);
       case "confirm":
@@ -276,11 +297,18 @@ function reposCommand(args: string[]): number {
 }
 
 async function settingsCommand(args: string[]): Promise<number> {
-  const { values, positionals } = parse(args, { confirm: { type: "string" }, model: { type: "string" }, effort: { type: "string" }, owner: { type: "string" }, notice: { type: "string" } });
+  const { values, positionals } = parse(args, {
+    confirm: { type: "string" },
+    model: { type: "string" },
+    effort: { type: "string" },
+    owner: { type: "string" },
+    notice: { type: "string" },
+    start: { type: "string" },
+  });
   if (positionals.length > 1) throw new UsageError("settings takes at most one repo");
   const dataDirectory = ensureDataDirectory();
   if (positionals.length === 1) {
-    if (values.owner !== undefined || values.notice !== undefined) throw new UsageError("--owner and --notice are settings for every repo; leave the repo out");
+    if (values.owner !== undefined || values.notice !== undefined || values.start !== undefined) throw new UsageError("--owner, --notice and --start are settings for every repo; leave the repo out");
     const change: Record<string, unknown> = {};
     if (values.confirm !== undefined) {
       if (values.confirm !== "on" && values.confirm !== "off") throw new UsageError("--confirm is on or off");
@@ -302,9 +330,10 @@ async function settingsCommand(args: string[]): Promise<number> {
   const change: Record<string, unknown> = {};
   for (const key of ["owner", "model", "effort"] as const) if (values[key] !== undefined) change[key] = values[key];
   if (values.notice !== undefined) change.notice = values.notice === "none" ? null : values.notice;
+  if (values.start !== undefined) change.start = values.start === "none" ? null : values.start;
   const settings = Object.keys(change).length === 0 ? settingsIn(dataDirectory) : changeSettings(dataDirectory, DEFAULT_MODEL, change);
   console.log(
-    `your name on comments: ${settings.owner ?? "(not set: the GitHub account gh is logged in as)"}\ndefault model: ${settings.model}\ndefault effort: ${settings.effort}\nnotices: ${settings.notice ?? "none"}`,
+    `your name on comments: ${settings.owner ?? "(not set: the GitHub account gh is logged in as)"}\ndefault model: ${settings.model}\ndefault effort: ${settings.effort}\nnotices: ${settings.notice ?? "none"}\nstart work with: ${settings.start ?? "none"}`,
   );
   return 0;
 }
@@ -415,6 +444,140 @@ async function runCommand(args: string[]): Promise<number> {
   } finally {
     lock?.release();
   }
+}
+
+/** This machine, as the service sees it: the Node binary and the entail script running now. */
+function serviceInputs(): ServiceInputs {
+  return { platform: process.platform, env: process.env, home: homedir(), uid: process.getuid?.() ?? 0, node: process.execPath, cli: fileURLToPath(import.meta.url) };
+}
+
+async function serviceCommand(args: string[]): Promise<number> {
+  const { positionals } = parse(args, {});
+  const [action, ...extra] = positionals;
+  if (extra.length > 0 || (action !== "install" && action !== "uninstall" && action !== "status")) throw new UsageError("service takes install, uninstall or status");
+  const inputs = serviceInputs();
+  const system = machineServiceSystem(inputs);
+  if (action === "install") {
+    const { definition, replaced } = await installService(inputs, system);
+    console.log(`${replaced ? "Replaced" : "Installed"} the entail service (${definition.manager}, ${definition.path}): it runs entail run now, at every login, and again after a crash.`);
+    console.log(`The board: http://127.0.0.1:${DEFAULT_PORT}/ (entail open). Where it stands: entail status.`);
+    return 0;
+  }
+  if (action === "uninstall") {
+    const { definition, removed } = uninstallService(inputs, system);
+    console.log(removed ? `Stopped and removed the entail service (${definition.path}).` : `The entail service is not installed (${definition.path}).`);
+    return 0;
+  }
+  const status = serviceStatus(inputs, system);
+  console.log(serviceLine(status));
+  return status.installed && !status.active ? 1 : 0;
+}
+
+function serviceLine(status: ReturnType<typeof serviceStatus>): string {
+  const { definition, installed, active, enabled, running } = status;
+  if (!installed) return `The entail service is not installed${running ? `; entail is running by hand (pid ${running.pid})` : ""}. Install it with: entail service install`;
+  const logs = definition.manager === "systemd" ? "journalctl --user -u entail" : "launchctl print gui/$(id -u)/entail";
+  return `The entail service is installed (${definition.manager}, ${definition.path}), ${enabled ? "starts at login" : "does not start at login"}, and is ${active ? `running${running ? ` (pid ${running.pid}, since ${running.startedAt})` : ""}` : `not running: see ${logs}`}.`;
+}
+
+function portOption(value: string | undefined): number {
+  const port = value === undefined ? DEFAULT_PORT : Number(value);
+  if (!Number.isSafeInteger(port) || port <= 0 || port > 65535) throw new UsageError("--port is a port number");
+  return port;
+}
+
+/** What the running copy's API says: when each repo was last checked, or null when it cannot be reached. */
+async function readRunning(url: string): Promise<{ checkedAt: Map<string, string | null> } | null> {
+  try {
+    const response = await fetch(`${url}api/repos`, { signal: AbortSignal.timeout(2000) });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { repos?: { repo: string; checkedAt: string | null }[] };
+    return { checkedAt: new Map((body.repos ?? []).map((repo) => [repo.repo, repo.checkedAt])) };
+  } catch {
+    return null;
+  }
+}
+
+function ago(iso: string, now: Date): string {
+  const seconds = Math.max(0, Math.round((now.getTime() - Date.parse(iso)) / 1000));
+  if (seconds < 60) return `${seconds} s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
+  if (seconds < 86_400) return `${Math.round(seconds / 3600)} h ago`;
+  return `on ${iso.slice(0, 16).replace("T", " ")}`;
+}
+
+async function statusCommand(args: string[]): Promise<number> {
+  const { values, positionals } = parse(args, { port: { type: "string" } });
+  if (positionals.length > 0) throw new UsageError("status takes no arguments");
+  const url = `http://127.0.0.1:${portOption(values.port)}/`;
+  const dataDirectory = ensureDataDirectory();
+  const holder = readLock(dataDirectory);
+  const running = holder !== null && holderIsRunning(holder) ? holder : null;
+  let service: ReturnType<typeof serviceStatus> | null = null;
+  try {
+    const inputs = serviceInputs();
+    service = serviceStatus(inputs, machineServiceSystem(inputs));
+  } catch {
+    // No service manager here: the status says only whether entail runs.
+  }
+  const live = running === null ? null : await readRunning(url);
+  const how = service?.active ? "as the service" : "by hand";
+  console.log(
+    running === null
+      ? `entail is not running.${service?.installed ? " The service is installed but not running: entail service status." : " Start it with: entail service install (or entail run)."}`
+      : `entail is running ${how} (pid ${running.pid}, since ${running.startedAt.slice(0, 16).replace("T", " ")} UTC)${service?.installed && service.enabled ? " and starts at login" : ""}.`,
+  );
+  console.log(running === null ? `The board is at ${url} while it runs.` : live === null ? `The board does not answer at ${url} (another --port?).` : `The board: ${url}`);
+
+  const settings = settingsIn(dataDirectory);
+  const repos = repoViews(dataDirectory, settings);
+  const now = new Date();
+  console.log("");
+  if (repos.length === 0) console.log("No repo is enrolled. Enroll one with: entail enroll owner/repo");
+  const width = Math.max(0, ...repos.map((repo) => repo.repo.length));
+  for (const repo of repos) {
+    const checked = live?.checkedAt.get(repo.repo) ?? null;
+    console.log(
+      `${repo.repo.padEnd(width)}  confirm ${repo.confirm ? "on " : "off"}  ${checked === null ? (running === null ? "not checked: entail is not running" : "not checked yet") : `checked ${ago(checked, now)}`}  ${repo.waiting} waiting`,
+    );
+  }
+  const waiting = waitingItems(dataDirectory, await caseBook(dataDirectory));
+  const questions = waiting.filter((item) => item.call === "ask").length;
+  console.log(
+    `\n${waiting.length === 0 ? "Nothing waits on you." : `Waiting on you: ${[questions > 0 ? `${questions} question${questions === 1 ? "" : "s"}` : "", waiting.length - questions > 0 ? `${waiting.length - questions} call${waiting.length - questions === 1 ? "" : "s"} to confirm` : ""].filter((part) => part !== "").join(" and ")}${running === null ? "" : ` at ${url}#/waiting`}.`}`,
+  );
+  console.log(`Notices: ${settings.notice ?? "none"}. Start work with: ${settings.start ?? "none"}.`);
+  return 0;
+}
+
+async function openCommand(args: string[]): Promise<number> {
+  const { values, positionals } = parse(args, { port: { type: "string" } });
+  if (positionals.length > 0) throw new UsageError("open takes no arguments");
+  const url = `http://127.0.0.1:${portOption(values.port)}/`;
+  const holder = readLock(ensureDataDirectory());
+  if (holder === null || !holderIsRunning(holder)) {
+    console.error(`entail: entail is not running, so the board at ${url} is not there. Start it with: entail service install (or entail run)`);
+    return 1;
+  }
+  const opened = await openInBrowser(url);
+  console.log(opened ? `Opened the board: ${url}` : `The board is at ${url} (no browser opener found here: open it yourself).`);
+  return 0;
+}
+
+/** Opens a URL with the platform's opener: `open` on macOS, `xdg-open` on Linux, and on WSL `wslview`, `xdg-open` or Windows' `explorer.exe`. */
+async function openInBrowser(url: string): Promise<boolean> {
+  const openers = process.platform === "darwin" ? ["open"] : isWsl(release()) ? ["wslview", "xdg-open", "explorer.exe"] : ["xdg-open"];
+  for (const opener of openers) {
+    const child = spawn(opener, [url], { stdio: "ignore", detached: true });
+    const started = await new Promise<boolean>((resolve) => {
+      child.once("spawn", () => resolve(true));
+      child.once("error", () => resolve(false));
+    });
+    if (!started) continue;
+    child.unref();
+    return true;
+  }
+  return false;
 }
 
 async function waitingCommand(args: string[]): Promise<number> {

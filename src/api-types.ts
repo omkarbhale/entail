@@ -228,6 +228,8 @@ export interface SettingsView {
   model: string;
   effort: EffortName;
   notice: string | null;
+  /** The command run when a go acts, with the handoff on its standard input; set only from the command line. */
+  start: string | null;
 }
 
 export interface StatusView {

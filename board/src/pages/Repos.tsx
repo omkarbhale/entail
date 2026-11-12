@@ -319,7 +319,7 @@ function checkText(outcome: { ok: true; result: CheckResponse } | { ok: false; e
   return `Checked just now: ${parts.join(", ")}.`;
 }
 
-/** The notice command as set, read only; it is changed from the command line. */
+/** The notice and start commands as set, read only; they are changed from the command line. */
 function Notices({ settings }: { settings: SettingsView }) {
   const [name, setName] = useState(settings.owner ?? "");
   useEffect(() => setName(settings.owner ?? ""), [settings.owner]);
@@ -334,6 +334,12 @@ function Notices({ settings }: { settings: SettingsView }) {
         <b>Notices.</b> When something starts waiting, entail runs a command with one line and a link (<code>$1</code>, <code>$2</code>), never the question itself. Now: <code id="notice-command">{settings.notice ?? "none"}</code>
         <p className="hint">
           Change it from the command line: <code>entail settings --notice '&lt;command&gt;'</code> (or <code>--notice none</code>), e.g. <code>examples/notice-to-firstmate.sh</code> or <code>examples/notice-to-file.sh</code> in entail’s checkout. The line reads like “entail: 1 question and 3 calls to confirm waiting on you”; the tab title carries the count too.
+        </p>
+      </div>
+      <div className="setting">
+        <b>Starting work.</b> When a go acts (at once, or once you confirm it), entail runs a command with the issue, the reason and the criteria as JSON on its standard input, once per issue. Now: <code id="start-command">{settings.start ?? "none"}</code>
+        <p className="hint">
+          Change it from the command line: <code>entail settings --start '&lt;command&gt;'</code> (or <code>--start none</code>), e.g. <code>examples/start-to-file.sh</code> in entail’s checkout.
         </p>
       </div>
       <form onSubmit={saveName} className="setting">

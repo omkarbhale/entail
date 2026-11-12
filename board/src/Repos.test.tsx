@@ -116,4 +116,13 @@ describe("Repos", () => {
     expect(screen.queryByRole("textbox", { name: /Notices\./u })).toBeNull();
     expect(api.sent(/PATCH \/api\/settings/u)).toHaveLength(0);
   });
+
+  it("shows the start command read only, with how to change it", async () => {
+    const api = fakeApi();
+    api.state.settings = { ...api.state.settings, start: "examples/start-to-file.sh" };
+    renderBoard("#/repos");
+    expect((await screen.findAllByText("examples/start-to-file.sh", { selector: "code" })).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/entail settings --start '<command>'/u)).toBeTruthy();
+    expect(api.sent(/PATCH \/api\/settings/u)).toHaveLength(0);
+  });
 });
