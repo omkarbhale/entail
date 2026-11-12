@@ -39,6 +39,7 @@ export type Scenario =
   | "comment"
   | "label"
   | "close"
+  | "reopen"
   | "merge"
   | "merge-refused"
   | "settle-reads"
@@ -335,6 +336,11 @@ export function forgeContract(subject: ForgeContractSubject): void {
       const forge = forgeFor(t, "close");
       await forge.closeIssue(7, "not-planned");
       await forge.closeIssue(2, "completed");
+    });
+
+    test("an issue is reopened", async (t) => {
+      const forge = forgeFor(t, "reopen");
+      await forge.reopenIssue(7);
     });
 
     test("a PR is merged pinned to its sha, without bypassing rules or auto-merge", async (t) => {

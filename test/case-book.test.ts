@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { DEFAULT_CASE_BOOK, issueTitle, parseCall, precedentsFor, readCaseBook, renderCall, renderIssue, type Case } from "../src/case-book.ts";
+import { caseSlug, DEFAULT_CASE_BOOK, issueTitle, parseCall, precedentsFor, readCaseBook, readCaseBooks, renderCall, renderIssue, writeCase, type Case } from "../src/case-book.ts";
 
 function temporary(t: TestContext): string {
   const dir = mkdtempSync(join(tmpdir(), "entail-cases-"));
@@ -98,4 +98,23 @@ test("precedents are the same repo's cases first, then the ones sharing the most
     precedentsFor(book, "acme/tally", "# a dark theme\n", 2).map((past) => past.slug),
     ["c", "b"],
   );
+});
+
+test("a case written by the owner reads back, replaces an earlier one of the same issue, and wins over the shipped book", async (t) => {
+  const owners = temporary(t);
+  const shipped = await readCaseBook(DEFAULT_CASE_BOOK);
+  const base = shipped.find((past) => past.slug === "omkarbhale-entail-174")!;
+  assert.equal(caseSlug("OmkarBhale/entail", 174), "omkarbhale-entail-174");
+
+  await writeCase(owners, { ...base, call: "go", reason: "First thought.", notes: "" });
+  await writeCase(owners, { ...base, call: "go", reason: "On reflection, yes.", notes: "## The owner's words\n\n> yes" });
+  const [written] = await readCaseBook(owners);
+  assert.equal(written!.reason, "On reflection, yes.");
+  assert.equal(written!.issueText, base.issueText);
+  assert.equal(written!.vision, base.vision);
+
+  const book = await readCaseBooks([DEFAULT_CASE_BOOK, owners, join(owners, "missing")]);
+  assert.equal(book.length, shipped.length);
+  assert.equal(book.find((past) => past.slug === base.slug)!.call, "go");
+  await assert.rejects(writeCase(owners, { ...base, reason: "" }), /call.md has no reason/u);
 });

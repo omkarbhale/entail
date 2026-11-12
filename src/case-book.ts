@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +19,12 @@ import { fileURLToPath } from "node:url";
 
 /** The case book that ships with entail, next to `src/` and `dist/`. */
 export const DEFAULT_CASE_BOOK = fileURLToPath(new URL("../cases", import.meta.url));
+
+/**
+ * Where the owner's calls made on the board are written, inside entail's data
+ * directory: the owner's own case book, read next to the one entail ships with.
+ */
+export const OWNER_CASE_BOOK = "cases";
 
 /** The calls an owner makes on an issue. */
 export const OWNER_CALLS = ["go", "no"] as const;
@@ -77,8 +83,57 @@ export function issueTitle(issueText: string): string {
 /** Reads every case in the book, sorted by slug. A malformed case is an error naming it. */
 export async function readCaseBook(directory: string): Promise<Case[]> {
   const entries = await readdir(directory, { withFileTypes: true });
-  const slugs = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+  const slugs = entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith(".")).map((entry) => entry.name).sort();
   return Promise.all(slugs.map((slug) => readCase(join(directory, slug), slug)));
+}
+
+/**
+ * Reads several books as one: a book that does not exist is empty, and a case
+ * in a later book replaces a case of the same slug in an earlier one, so the
+ * owner's latest call on an issue is the one that counts.
+ */
+export async function readCaseBooks(directories: readonly string[]): Promise<Case[]> {
+  const bySlug = new Map<string, Case>();
+  for (const directory of directories) {
+    let book: Case[];
+    try {
+      book = await readCaseBook(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    for (const past of book) bySlug.set(past.slug, past);
+  }
+  return [...bySlug.values()].sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
+/** The slug of the case for an issue: `owner-name-number`. */
+export function caseSlug(repo: string, issue: number): string {
+  return `${repo.replace("/", "-")}-${issue}`.toLowerCase();
+}
+
+/**
+ * Writes a case into a book, replacing any case of the same slug whole: the
+ * three files are written to a fresh directory that then takes the case's place.
+ */
+export async function writeCase(directory: string, past: Case): Promise<string> {
+  // Checks the case reads back as written before anything is replaced.
+  parseCall(renderCall(past));
+  const target = join(directory, past.slug);
+  const staging = join(directory, `.${past.slug}.new-${process.pid}-${Date.now()}`);
+  await mkdir(staging, { recursive: true, mode: 0o700 });
+  await writeFile(join(staging, "issue.md"), past.issueText);
+  await writeFile(join(staging, "vision.md"), past.vision);
+  await writeFile(join(staging, "call.md"), renderCall(past));
+  const old = join(directory, `.${past.slug}.old-${process.pid}-${Date.now()}`);
+  try {
+    await rename(target, old);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  await rename(staging, target);
+  await rm(old, { recursive: true, force: true });
+  return target;
 }
 
 async function readCase(directory: string, slug: string): Promise<Case> {

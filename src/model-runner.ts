@@ -8,6 +8,9 @@ export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 export type Effort = (typeof EFFORTS)[number];
 
+/** The effort a run uses unless the caller names another: low, since live runs are few and deliberate. */
+export const DEFAULT_EFFORT: Effort = "low";
+
 /** One model run, as the judgment that needs it asks for it. */
 export interface ModelRunRequest<T = unknown> {
   /** What the run is for, named by the judgment that asks for it, such as the call on an issue or on a PR. */
