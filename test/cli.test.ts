@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { main, parseIssueReference } from "../src/cli.ts";
+import { resolveDataDirectory } from "../src/data-directory.ts";
 import { appendEntry } from "../src/records.ts";
 
 test("an issue reference is owner/repo#number", () => {
@@ -45,17 +46,20 @@ test("the owner's commands check their arguments before touching anything", asyn
 
 test("from the command line the owner sets their name, reads what waits, confirms it and reads the log", async (t) => {
   const home = mkdtempSync(join(tmpdir(), "entail-cli-"));
-  const previous = process.env.XDG_DATA_HOME;
+  const previous = { XDG_DATA_HOME: process.env.XDG_DATA_HOME, HOME: process.env.HOME };
   process.env.XDG_DATA_HOME = home;
+  process.env.HOME = home;
   t.after(() => {
-    if (previous === undefined) delete process.env.XDG_DATA_HOME;
-    else process.env.XDG_DATA_HOME = previous;
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     rmSync(home, { recursive: true, force: true });
   });
   const out: string[] = [];
   t.mock.method(console, "log", (message: string) => out.push(message));
   t.mock.method(console, "error", (message: string) => out.push(`error: ${message}`));
-  const dataDirectory = join(home, "entail");
+  const dataDirectory = resolveDataDirectory({ platform: process.platform, env: process.env, home });
 
   assert.equal(await main(["settings", "--owner", "Omkar", "--effort", "medium"]), 0);
   assert.match(out.pop()!, /your name on comments: Omkar\ndefault model: claude-opus-5-5\ndefault effort: medium/u);
