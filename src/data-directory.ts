@@ -10,8 +10,8 @@ export interface DataDirectoryInputs {
 }
 
 /**
- * The data directory holds the store, the records repo, the git mirrors, the
- * operational log, the status file and the lock (ADR-0017, ADR-0019).
+ * The data directory holds the git mirrors and their read-only checkouts,
+ * the change cursors, the operational log and the lock.
  *
  * - Linux and WSL: `$XDG_DATA_HOME/entail`, by default `~/.local/share/entail`.
  * - macOS: `~/Library/Application Support/entail`.

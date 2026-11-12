@@ -36,7 +36,7 @@ import {
 } from "./forge.ts";
 import { type ForgeMethod, type ForgeResponse, type Transport, TransportError } from "./transport.ts";
 
-/** The only GitHub host in MVP-1; GitHub Enterprise Server is out of it (ADR-0015). */
+/** The only GitHub host served; GitHub Enterprise Server is not. */
 export const GITHUB_HOST = "github.com";
 
 const PAGE_SIZE = 100;
@@ -123,7 +123,7 @@ const TRANSFERRED_QUERY = `query ($owner: String!, $name: String!, $number: Int!
  *
  * Change detection uses ETag-conditional reads of the repo's issues, issue and
  * PR comments, and PRs, newest update first, so any change alters the first
- * page and an unchanged list answers 304, which costs no rate limit (ADR-0015).
+ * page and an unchanged list answers 304, which costs no rate limit.
  */
 export class GitHubForge implements Forge {
   readonly setting: ForgeSetting;
@@ -158,7 +158,7 @@ export class GitHubForge implements Forge {
     }
   }
 
-  /** A user or bot account; an organization cannot open PRs, so it names no executor. */
+  /** A user or bot account; an organization cannot open issues or PRs. */
   async actorByUsername(username: string): Promise<Actor | null> {
     if (!GITHUB_USERNAME.test(username)) return null;
     const path = `users/${username}`;
@@ -868,7 +868,7 @@ function parseCursor(cursor: ChangeCursor): GitHubCursor {
 /** The `mergeable_state`s under which GitHub would merge a PR now; `unstable` means only checks it does not require failed. */
 const MERGEABLE_STATES = new Set(["clean", "unstable", "has_hooks"]);
 
-/** A check run's status: neutral and skipped count as passed (ADR-0015). */
+/** A check run's status: neutral and skipped count as passed. */
 function checkRunStatus(status: string, conclusion: unknown): CheckStatus {
   if (status !== "completed") return "pending";
   return conclusion === "success" || conclusion === "neutral" || conclusion === "skipped" ? "passed" : "failed";

@@ -1,12 +1,12 @@
 /**
- * The rules every comment entail posts follows, enforced by the one comment
- * writer (MVP-1 spec section 9, ADR-0015, ADR-0009):
+ * The rules every comment entail posts follows, checked before anything is
+ * posted:
  *
  * - its first line is the attribution line, naming the owner in the
  *   possessive, such as "Speaking from Omkar's entail:";
- * - it carries the hidden marker with its ticket's record id, by which entail
- *   finds its own comment again after a crash (see {@link MarkerFor} for the
- *   one comment posted where entail has no ticket);
+ * - it carries the hidden marker with its ticket's id, by which entail finds
+ *   its own comment again (see {@link MarkerFor} for the one comment posted
+ *   where entail has no ticket);
  * - no line starts with `/`, so no line is ever a GitLab quick action.
  */
 
@@ -54,15 +54,14 @@ const MARKER = /<!-- entail ticket (\d+) -->/g;
 const REPLY_MARKER = /<!-- entail reply (\d+) -->/g;
 
 /**
- * What a comment's hidden marker carries: its ticket's record id, or, for
- * entail's one reply to an `/entail` comment on a closed issue it has no
- * ticket for, the forge id of that `/entail` comment, since there is no
- * ticket record to name (ADR-0020).
+ * What a comment's hidden marker carries: its ticket's id, or, for entail's
+ * one reply to an `/entail` comment on a closed issue it has no ticket for,
+ * the forge id of that `/entail` comment, since there is no ticket to name.
  */
 export type MarkerFor = number | { reply: number };
 
 /**
- * The hidden marker carrying a ticket's record id, or the `/entail` comment a
+ * The hidden marker carrying a ticket's id, or the `/entail` comment a
  * reply answers: an HTML comment, which both forges hide when they render the
  * comment. It starts with `<`, so its line never starts with `/`.
  */
@@ -72,11 +71,11 @@ export function hiddenMarker(markerFor: MarkerFor): string {
     if (!Number.isSafeInteger(reply) || reply <= 0) throw new Error(`a comment's forge id is a positive integer, not ${reply}`);
     return `<!-- entail reply ${reply} -->`;
   }
-  if (!Number.isSafeInteger(markerFor) || markerFor <= 0) throw new Error(`a ticket's record id is a positive integer, not ${markerFor}`);
+  if (!Number.isSafeInteger(markerFor) || markerFor <= 0) throw new Error(`a ticket's id is a positive integer, not ${markerFor}`);
   return `<!-- entail ticket ${markerFor} -->`;
 }
 
-/** The ticket record ids of the hidden markers in a comment body, in order. */
+/** The ticket ids of the hidden markers in a comment body, in order. */
 export function markedTickets(body: string): number[] {
   return [...body.matchAll(MARKER)].map((match) => Number(match[1]));
 }

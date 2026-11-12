@@ -46,7 +46,7 @@ test("a display name that is empty or more than one line is refused", () => {
   assert.throws(() => attributionLine("Omkar\n/close"), /one line/);
 });
 
-test("the hidden marker carries the ticket's record id and starts with no slash", () => {
+test("the hidden marker carries the ticket's id and starts with no slash", () => {
   assert.equal(hiddenMarker(42), "<!-- entail ticket 42 -->");
   assert.deepEqual(markedTickets(`a\n${hiddenMarker(42)}\nb ${hiddenMarker(7)}`), [42, 7]);
   assert.throws(() => hiddenMarker(0));

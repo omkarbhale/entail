@@ -2,7 +2,7 @@ import type { Change } from "./forge/forge.ts";
 
 /**
  * Drops changes the core has already seen. A change is known by its kind, id
- * and update time (ADR-0015): an adapter may report the same change again, as
+ * and update time: an adapter may report the same change again, as
  * a cursor's overlap does, and it passes through only once, while a later
  * update to the same issue or comment passes through again. A copy older than
  * one already seen is stale and is dropped too.

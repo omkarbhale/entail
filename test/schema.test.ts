@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { criteriaSchema, gradeSchema, verdictSchema, type CriteriaOutput, type GradeOutput, type VerdictOutput } from "../src/model-schemas.ts";
 import { arrayOf, boolean, checkAgainst, emitJsonSchema, nullable, object, oneOf, string, type JsonSchema } from "../src/schema.ts";
 
 test("a schema is emitted as JSON Schema with every property required and no others allowed", () => {
@@ -41,56 +40,14 @@ function keywords(json: JsonSchema): string[] {
   });
 }
 
-for (const [name, schema] of [
-  ["verdict", verdictSchema],
-  ["criteria", criteriaSchema],
-  ["grade", gradeSchema],
-] as const) {
-  test(`the ${name} schema emits only plain JSON Schema keywords`, () => {
-    const json = JSON.parse(emitJsonSchema(schema)) as JsonSchema;
-    assert.equal(json.type, "object");
-    assert.deepEqual(keywords(json).filter((keyword) => !ALLOWED_KEYWORDS.has(keyword)), []);
+test("a nested schema emits only the plain JSON Schema keywords structured outputs accept", () => {
+  const schema = object({
+    call: oneOf(["go", "no", "ask"], "the call"),
+    reason: string(),
+    criteria: arrayOf(object({ id: string(), sentence: string(), path: nullable(string()) })),
+    sure: boolean(),
   });
-}
-
-test("a settled verdict in the spec's shape conforms to the verdict schema", () => {
-  const verdict: VerdictOutput = {
-    size: { value: "fits", reason: "one small change" },
-    readings: [{ id: "R1", reading: "read stdin when no file is given", observed_outcome: "`tally` counts piped text" }],
-    pins_touched: [],
-    vision_check: [{ line: "tally reads files or standard input.", mark: "matches" }],
-    verdict: "settled",
-    citations: [{ lines: ["tally reads files or standard input."], reading: "R1" }],
-    why_unopposed: null,
-    reading_chosen: null,
-    why_raised: null,
-    open_readings: [],
-    close_evidence: [],
-    questions: [],
-    reason: "the standard-input line chooses the reading",
-  };
-  assert.deepEqual(checkAgainst(verdictSchema, verdict), []);
-  assert.deepEqual(checkAgainst(verdictSchema, { ...verdict, verdict: "small" }), ['$.verdict is not one of "settled", "unopposed", "needs_the_owner", "close", "investigate"']);
-});
-
-test("criteria and a grade in the spec's shape conform to their schemas", () => {
-  const criteria: CriteriaOutput = {
-    outcome: "criteria",
-    criteria: [
-      { id: "C1", sentence: "Output is plain when piped.", source: { kind: "issue", ref: null }, checks: [], states_reading: "R1" },
-      { id: "C2", sentence: "The output format is unchanged.", source: { kind: "vision_line", ref: "tally prints one line per file." }, checks: [{ kind: "leaves_path", argument: "src/format.js" }], states_reading: null },
-    ],
-    records_overturned: [],
-    product_call: null,
-  };
-  const grade: GradeOutput = {
-    results: [{ id: "C1", result: "met", evidence: ["C1: ran `tally < a.txt | cat` — plain output"], reason: "the evidence shows it" }],
-    beyond_criteria: [],
-    reason: "every criterion is met",
-  };
-  assert.deepEqual(checkAgainst(criteriaSchema, criteria), []);
-  assert.deepEqual(checkAgainst(gradeSchema, grade), []);
-  assert.deepEqual(checkAgainst(criteriaSchema, { ...criteria, criteria: [{ ...criteria.criteria[0], checks: [{ kind: "runs_command", argument: "x" }] }] }), [
-    '$.criteria[0].checks[0].kind is not one of "changes_path", "leaves_path", "check_passes"',
-  ]);
+  const json = JSON.parse(emitJsonSchema(schema)) as JsonSchema;
+  assert.equal(json.type, "object");
+  assert.deepEqual(keywords(json).filter((keyword) => !ALLOWED_KEYWORDS.has(keyword)), []);
 });

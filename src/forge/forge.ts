@@ -1,6 +1,6 @@
 /**
  * The social layer of a forge: issues, PRs, comments, checks and identity, read through one
- * interface with one adapter per forge (ADR-0015). Nothing above this
+ * interface with one adapter per forge. Nothing above this
  * interface names a forge; repository content comes from git, not from here.
  */
 
@@ -10,7 +10,7 @@ export type ForgeKind = "github" | "gitlab";
 /**
  * A repo's forge setting: the forge, its host and the repo's path there. It
  * holds no credentials and no base URL; the owner's own CLI for the host
- * supplies both (ADR-0015).
+ * supplies both.
  */
 export interface ForgeSetting {
   forge: ForgeKind;
@@ -23,7 +23,7 @@ export interface ForgeSetting {
 /**
  * Someone acting on a forge: the forge, the host and the numeric user id. The
  * username is kept for display only and is never compared; use
- * {@link sameActor} for every identity comparison (ADR-0015).
+ * {@link sameActor} for every identity comparison.
  */
 export interface Actor {
   forge: ForgeKind;
@@ -39,9 +39,9 @@ export function sameActor(a: Actor, b: Actor): boolean {
 }
 
 /**
- * An enrolled repo's project as the forge knows it. Records are keyed on
- * forge, host and the numeric project id, so a renamed or transferred repo
- * keeps its records (ADR-0015).
+ * A repo's project as the forge knows it. Anything kept about a repo is
+ * keyed on forge, host and the numeric project id, so a renamed or
+ * transferred repo keeps it.
  */
 export interface Project {
   forge: ForgeKind;
@@ -53,7 +53,7 @@ export interface Project {
   defaultBranch: string;
 }
 
-/** The key a project's records and operational state are kept under. */
+/** The key anything kept about a project is filed under. */
 export function projectKey(project: Pick<Project, "forge" | "host" | "id">): string {
   return `${project.forge}:${project.host}:${project.id}`;
 }
@@ -143,17 +143,17 @@ export interface PullRequestComment {
 /**
  * Where a check stands: pending until it finishes, then passed or failed.
  * GitHub's neutral and skipped results count as passed, and a GitLab job
- * allowed to fail follows GitLab's own pipeline status (ADR-0015).
+ * allowed to fail follows GitLab's own pipeline status.
  */
 export type CheckStatus = "pending" | "passed" | "failed";
 
-/** One result the forge reports for a commit, known by its name (see the glossary's Check). */
+/** One result the forge reports for a commit, known by its name. */
 export interface Check {
   name: string;
   status: CheckStatus;
   /**
-   * False for a check a criterion or generic criterion names that has not
-   * reported at this sha. Such a check is pending, never failed.
+   * False for a named check that has not reported at this sha. Such a
+   * check is pending, never failed.
    */
   reported: boolean;
   /** Where the forge shows the check's result, or null when it gives no link. */
@@ -171,7 +171,7 @@ export interface RequiredCheck {
   reported: boolean;
 }
 
-/** The checks at one sha, and what the forge requires before merging (ADR-0015). */
+/** The checks at one sha, and what the forge requires before merging. */
 export interface CheckReport {
   sha: string;
   /** One entry per check name, sorted by name, including named checks that have not reported. */
@@ -188,7 +188,7 @@ export interface CommitChecks {
 
 /**
  * One thing the forge reports as changed. Its kind, id and update time
- * identify it; the core deduplicates on those three (ADR-0015).
+ * identify it; the core deduplicates on those three.
  */
 export type Change =
   | { kind: "issue"; id: number; updatedAt: string; issue: Issue }
@@ -198,14 +198,13 @@ export type Change =
 
 /**
  * Where an adapter's change detection got to, opaque to everything above the
- * adapter. Cursors are operational state, not records: losing one costs only
- * a re-scan (ADR-0015).
+ * adapter. Cursors are operational state: losing one costs only a re-scan.
  */
 export type ChangeCursor = string;
 
 /**
  * The forge instance a repo lives on: its version, and why entail cannot serve
- * it if it cannot. Enrollment refuses an instance with a reason (ADR-0015).
+ * it if it cannot.
  */
 export interface ForgeInstance {
   /** The version the instance reports, or null when the forge has none to read, as on github.com. */
@@ -217,13 +216,12 @@ export interface ForgeInstance {
 /** A way GitHub merges a PR. GitLab has no such setting: the project's own merge method applies. */
 export type MergeMethod = "squash" | "merge" | "rebase";
 
-/** Every merge method, in the order enrollment offers them. */
+/** Every merge method. */
 export const MERGE_METHODS: readonly MergeMethod[] = ["squash", "merge", "rebase"];
 
 /**
- * What the logged-in account may do in a repo, read at enrollment (ADR-0018).
- * Enrollment refuses an account that cannot add labels and comment, and warns,
- * but still enrolls, when it may lack permission to merge.
+ * What the logged-in account may do in a repo. entail needs to add labels
+ * and comment; whether it may merge is known only when it tries.
  */
 export interface RepoAccess {
   /** Why the account cannot add labels to issues and comment on them, or null when it can. */
@@ -267,7 +265,7 @@ export type CloseReason = "completed" | "not-planned";
 
 /**
  * What a merge came to. Anything other than merged is a refusal, with the
- * forge's reason (ADR-0014, ADR-0015).
+ * forge's reason.
  */
 export type MergeOutcome = { merged: true; mergeCommitSha: string | null } | { merged: false; refusal: string };
 
@@ -285,7 +283,7 @@ export interface ForgeWording {
   pullRequest: string;
 }
 
-/** Every label entail writes starts with this, and it writes no other label (ADR-0013). */
+/** Every label entail writes starts with this, and it writes no other label. */
 export const ENTAIL_LABEL_PREFIX = "entail:";
 
 /** The colour a missing `entail:` label is created with, as six hex digits. */
@@ -301,7 +299,7 @@ export function assertEntailLabel(label: string): void {
   }
 }
 
-/** One forge's social layer for one enrolled repo (ADR-0015). */
+/** One forge's social layer for one repo. */
 export interface Forge {
   readonly setting: ForgeSetting;
 
@@ -316,8 +314,7 @@ export interface Forge {
 
   /**
    * The account a username names on this host, or null when no such user
-   * exists. Usernames are resolved once, when the owner lists an executor, and
-   * the numeric id is kept from then on (ADR-0015).
+   * exists. A username is resolved once and the numeric id kept from then on.
    */
   actorByUsername(username: string): Promise<Actor | null>;
 
@@ -326,12 +323,11 @@ export interface Forge {
 
   /**
    * Whether anyone may read the repo without signing in: a public GitHub repo
-   * or a public GitLab project. entail refuses to push its records repo to
-   * one (ADR-0009).
+   * or a public GitLab project.
    */
   isPublic(): Promise<boolean>;
 
-  /** The instance the repo lives on, read so enrollment can refuse one entail cannot serve. */
+  /** The instance the repo lives on, read so entail can refuse one it cannot serve. */
   instance(): Promise<ForgeInstance>;
 
   /** What the logged-in account may do in the repo. */
@@ -345,7 +341,7 @@ export interface Forge {
    */
   mergeMethods(): Promise<MergeMethod[] | null>;
 
-  /** The numbers of the repo's open issues, which enrollment leaves alone (ADR-0018). */
+  /** The numbers of the repo's open issues. */
   openIssueNumbers(): Promise<number[]>;
 
   /**
@@ -360,22 +356,17 @@ export interface Forge {
 
   /**
    * Whether the issue came into this repo from another one: transferred on
-   * GitHub, moved on GitLab. Such an issue is not a new issue here, so it
-   * enters only by being pulled in (ADR-0020).
+   * GitHub, moved on GitLab. Such an issue is not a new issue here.
    */
   transferredIn(issueNumber: number): Promise<boolean>;
 
   /**
    * One issue of this repo, read live, or null when the repo has no issue by
    * that number: none was ever opened, it was deleted, or the number is a PR's.
-   * Closing an issue at intake reads the issue it duplicates through this, to
-   * check that the evidence exists (spec §6).
    */
   issue(issueNumber: number): Promise<Issue | null>;
 
-  // The four writes (ADR-0015). They go out only through entail's forge
-  // writer, which records each as an intent first and enforces the comment
-  // rules; nothing else calls them.
+  // The four writes. Every comment passes the comment rules before it is posted.
 
   /** Posts a comment on an issue or PR, exactly as given. */
   postComment(target: ForgeTarget, number: number, body: string): Promise<PostedComment>;
@@ -395,13 +386,13 @@ export interface Forge {
    * refusal.
    *
    * @throws {MergePendingError} when the forge is still running the merge
-   *   after the wait. That is no outcome yet: the writer leaves the intent
-   *   unconfirmed, and asking again or settling on start reads the PR's state.
+   *   after the wait. That is no outcome yet; {@link pullRequestState} says
+   *   later whether it went through.
    * @throws {RateLimitedError} or {@link ForgeLoggedOutError} when the merge was not asked for at all.
    */
   merge(prNumber: number, sha: string, method?: MergeMethod): Promise<MergeOutcome>;
 
-  // Reads that settle unconfirmed writes on start (ADR-0017).
+  // Reads that settle a write whose outcome was not seen.
 
   /** Every comment by people on an issue or PR, oldest first. */
   comments(target: ForgeTarget, number: number): Promise<ForgeComment[]>;
@@ -420,21 +411,20 @@ export interface Forge {
    * linked-issue data says close the issue (closing issue references on
    * GitHub, the merge requests that close it on GitLab) and whose base is the
    * default branch. PR text is never parsed, so a PR that only mentions the
-   * issue is not one of them (ADR-0013). Closed and merged PRs are included.
+   * issue is not one of them. Closed and merged PRs are included.
    */
   linkedPullRequests(issueNumber: number): Promise<PullRequest[]>;
 
   /**
    * The numbers of the issues in this repo that the forge's own linked-issue
    * data says the PR closes, or none when the PR's base is not the default
-   * branch (ADR-0013).
+   * branch.
    */
   linkedIssues(pullRequestNumber: number): Promise<number[]>;
 
   /**
    * The checks at `sha` on a PR, and what the forge requires before merging
-   * into the default branch (ADR-0015). Each name in `named` (the checks the
-   * frozen criteria and generic criteria name) that has not reported is a
+   * into the default branch. Each name in `named` that has not reported is a
    * pending check. On GitLab the checks are the jobs of the pipeline attached
    * to the PR's current head, used only when its sha is `sha`.
    */
@@ -446,7 +436,7 @@ export interface Forge {
 
 /**
  * Whether every check in the report has finished. With no named checks and no
- * checks at all, every check has finished (ADR-0015).
+ * checks at all, every check has finished.
  */
 export function allChecksFinished(report: CheckReport): boolean {
   return report.checks.every((check) => check.status !== "pending");
@@ -487,8 +477,8 @@ function worse(a: CheckStatus, b: CheckStatus): CheckStatus {
 }
 
 /**
- * The forge refused a read for its rate limit. The pass honours it until
- * {@link RateLimitedError.resetAt} instead of backing off (spec section 1).
+ * The forge refused a read for its rate limit. Reads wait until
+ * {@link RateLimitedError.resetAt} instead of backing off.
  */
 export class RateLimitedError extends Error {
   readonly host: string;
@@ -515,7 +505,7 @@ export class MergePendingError extends Error {
   }
 }
 
-/** The host's CLI is not logged in, or its login was refused. This halts the host's repos. */
+/** The host's CLI is not logged in, or its login was refused. */
 export class ForgeLoggedOutError extends Error {
   readonly host: string;
 

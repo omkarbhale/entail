@@ -1,50 +1,32 @@
 import { checkAgainst, type Schema } from "./schema.ts";
 
-/**
- * The model every run uses unless the global "Model" setting names another:
- * Opus 5.5 (spec section 15, ADR-0018).
- */
+/** The model every run uses unless the caller names another: Opus 5.5. */
 export const DEFAULT_MODEL = "claude-opus-5-5";
 
-/** The kinds of model run entail makes. */
-export const RUN_KINDS = [
-  "verdict",
-  "challenge",
-  "criteria",
-  "re-check",
-  "grade",
-  "landing-challenge",
-  "generic-criteria-proposal",
-] as const;
-
-export type RunKind = (typeof RUN_KINDS)[number];
-
-/** One model run, as the step that needs it asks for it. */
+/** One model run, as the judgment that needs it asks for it. */
 export interface ModelRunRequest<T = unknown> {
-  kind: RunKind;
-  /**
-   * The ticket's record id, or null for a run that belongs to no ticket (the
-   * generic criteria proposal at enrollment).
-   */
+  /** What the run is for, named by the judgment that asks for it, such as the call on an issue or on a PR. */
+  kind: string;
+  /** The ticket the run is about, or null for a run that belongs to no ticket. */
   ticket: string | null;
   prompt: string;
   promptVersion: string;
   /** The output's schema, emitted as JSON Schema for the run. */
   schema: Schema<T>;
-  /** A read-only checkout made by the git mirror, which the run reads: of the default branch, or of a PR's head for a landing check's runs. */
+  /** A read-only checkout made by the git mirror, which the run reads: of the default branch, or of a PR's head. */
   checkout: string;
   /** The commit the checkout is at, as recorded on the call. */
   sha: string;
-  /** From the global "Model" setting, {@link DEFAULT_MODEL} by default. */
+  /** The model to run, {@link DEFAULT_MODEL} by default. */
   model: string;
 }
 
-/** What entail records about a run besides its output (ADR-0009). */
+/** What entail records about a run besides its output. */
 export interface RunFacts {
   sessionId: string | null;
   model: string;
   durationMs: number;
-  /** The run's estimated cost in US dollars. There is no budget (ADR-0017). */
+  /** The run's estimated cost in US dollars. */
   estimatedCostUsd: number | null;
   /** Token usage as reported for the run. */
   usage: Record<string, unknown> | null;
@@ -55,11 +37,10 @@ export const MACHINE_FAILURE_KINDS = ["no-structured-output", "error", "timeout"
 export type MachineFailureKind = (typeof MACHINE_FAILURE_KINDS)[number];
 
 /**
- * A run that produced no usable output. A machine failure is retried, logged
- * to the operational log and never reaches the board (ADR-0002, ADR-0017).
- * `logged-out` is `claude` refusing the run for want of a login: that is the
- * all-of-entail halt, checked again on every pass, not a failure retried on
- * its own (ADR-0019).
+ * A run that produced no usable output. A machine failure is never a call:
+ * it is retried or logged, and no judgment is made from it. `logged-out` is
+ * `claude` refusing the run for want of a login, which no retry fixes until
+ * the owner logs in again.
  */
 export interface MachineFailure {
   kind: MachineFailureKind;
@@ -78,7 +59,7 @@ export interface RunOptions {
 }
 
 /**
- * The one path to a model (ADR-0017). Every step that needs a model run calls
+ * The one path to a model. Every judgment that needs a model run calls
  * `run`, and nothing above this interface knows how the run is made.
  */
 export interface ModelRunner {

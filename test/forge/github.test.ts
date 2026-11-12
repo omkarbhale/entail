@@ -3,7 +3,6 @@ import { test, type TestContext } from "node:test";
 import { createForge } from "../../src/forge/create-forge.ts";
 import { ForgeLoggedOutError, ForgeRequestError, MergePendingError, RateLimitedError } from "../../src/forge/forge.ts";
 import { GitHubForge } from "../../src/forge/github.ts";
-import { GitLabForge } from "../../src/forge/gitlab.ts";
 import { type Exchange, RecordedTransport } from "./recorded-transport.ts";
 
 const SETTING = { forge: "github", host: "github.com", path: "acme/tally" } as const;
@@ -147,10 +146,10 @@ test("the adapter serves only github.com repos with an owner/name path", () => {
   assert.throws(() => new GitHubForge({ ...SETTING, forge: "gitlab" }, transport), /gitlab/);
 });
 
-test("createForge picks the adapter from the stated forge", () => {
+test("createForge serves GitHub, and says where the GitLab adapter went", () => {
   const transport = new RecordedTransport({ host: "github.com", exchanges: [] });
   assert.ok(createForge(SETTING, transport) instanceof GitHubForge);
-  assert.ok(createForge({ forge: "gitlab", host: "gitlab.com", path: "acme/tally" }, transport) instanceof GitLabForge);
+  assert.throws(() => createForge({ forge: "gitlab", host: "gitlab.com", path: "acme/tally" }, transport), /GitLab.*git history/);
 });
 
 test("github.com has no version to read and is always served", async (t) => {

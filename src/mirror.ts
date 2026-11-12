@@ -4,13 +4,12 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Git, GitError } from "./git.ts";
 import type { OperationalLog } from "./operational-log.ts";
 
-/** The forges an enrolled repo can live on (ADR-0015). */
+/** The forges a repo can live on. */
 export type ForgeName = "github" | "gitlab";
 
 /**
- * Which enrolled repo a mirror belongs to: forge, host and the forge's
- * numeric project id, so that a renamed or transferred repo keeps its mirror
- * (ADR-0015).
+ * Which repo a mirror belongs to: forge, host and the forge's numeric
+ * project id, so that a renamed or transferred repo keeps its mirror.
  */
 export interface MirrorKey {
   forge: ForgeName;
@@ -34,18 +33,18 @@ export interface DefaultBranchHead {
   commit: string;
 }
 
-/** The forge's own CLI, through which git authenticates (ADR-0015). */
+/** The forge's own CLI, through which git authenticates. */
 const CLI: Record<ForgeName, string> = { github: "gh", gitlab: "glab" };
 
 /**
  * The remote of a repo on its forge: HTTPS at the host, authenticated through
- * the owner's `gh` or `glab`, so that entail never holds a token (ADR-0015).
+ * the owner's `gh` or `glab`, so that entail never holds a token.
  */
 export function forgeRemote(forge: ForgeName, host: string, path: string): MirrorRemote {
   return { url: `https://${host}/${path}.git`, credentialHelper: `!${CLI[forge]} auth git-credential` };
 }
 
-/** The ref a forge keeps a PR's head at (ADR-0015). */
+/** The ref a forge keeps a PR's head at. */
 export function pullRequestHeadRef(forge: ForgeName, number: number): string {
   if (!Number.isSafeInteger(number) || number <= 0) throw new RangeError(`not a PR number: ${number}`);
   return forge === "github" ? `refs/pull/${number}/head` : `refs/merge-requests/${number}/head`;
@@ -97,9 +96,9 @@ export interface Checkout {
 }
 
 /**
- * The local, fetch-only git mirror of one enrolled repo, kept in the data
- * directory (ADR-0015). entail reads repository content from it: VISION.md,
- * commit trailers, and each PR's diff and changed paths. It never pushes.
+ * The local, fetch-only git mirror of one repo, kept in the data directory.
+ * entail reads repository content from it: VISION.md and each PR's diff and
+ * changed paths. It never pushes.
  *
  * Fetches are only of the default branch, and of a PR's head when one is
  * needed, so the mirror holds no other branch.

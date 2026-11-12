@@ -24,7 +24,7 @@ export interface ForgeResponse {
 }
 
 /**
- * The seam under the adapters: how an API request reaches the host (ADR-0015).
+ * The seam under the adapters: how an API request reaches the host.
  * It returns every HTTP response, 304 and error statuses included, and throws
  * only when no HTTP response came back. Tests replace it with recorded responses.
  */
@@ -73,7 +73,7 @@ const MAX_OUTPUT_BYTES = 256 * 1024 * 1024;
 /**
  * Runs every request as `gh api --hostname <host>` or `glab api --hostname
  * <host>`, so entail never holds or stores a token: the CLI uses the owner's
- * own login, keyring and host configuration (ADR-0015).
+ * own login, keyring and host configuration.
  *
  * The CLI is asked to include the response's status line and headers, and the
  * transport reads the HTTP status from them rather than the exit code: `gh api`
