@@ -8,8 +8,11 @@ export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 export type Effort = (typeof EFFORTS)[number];
 
-/** The effort a run uses unless the caller names another: low, since live runs are few and deliberate. */
-export const DEFAULT_EFFORT: Effort = "low";
+/** The effort a real judgment uses unless the settings or caller name another: high, since a wrong call costs the owner's attention and a judgment costs cents either way. */
+export const DEFAULT_EFFORT: Effort = "high";
+
+/** The effort `entail replay` uses unless --effort names another: low, so the case book stays cheap to replay. */
+export const REPLAY_EFFORT: Effort = "low";
 
 /** One model run, as the judgment that needs it asks for it. */
 export interface ModelRunRequest<T = unknown> {
