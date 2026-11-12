@@ -154,6 +154,10 @@ export interface CallView {
   id: number;
   repo: string;
   issue: { number: number; title: string; url: string; author: string };
+  /** The issue as the judgment read it: title, body and comments, as markdown. */
+  issueText: string;
+  /** The commit VISION.md was read at, or null when the repo had none. */
+  visionCommit: string | null;
   call: "go" | "no" | "ask";
   reason: string;
   criteria: Criterion[];
@@ -182,6 +186,8 @@ export function callView(repo: string, entry: CallEntry, status: CallStatus, ent
     id: entry.id,
     repo,
     issue: entry.issue,
+    issueText: entry.issueText,
+    visionCommit: entry.vision?.commit ?? null,
     call: entry.call.call,
     reason: entry.call.reason,
     criteria: criteriaOf(entry.call),

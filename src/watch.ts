@@ -200,16 +200,27 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
     judged++;
   }
 
+  // One post that fails, such as on an issue deleted since, does not hold up the others; it is tried again next pass.
   let posted = 0;
+  let acted = true;
   for (const pending of pendingWork([...readLog(options.dataDirectory, repo), ...planned])) {
     options.signal?.throwIfAborted();
-    if (await act(options, repo, forge, pending, record)) posted++;
+    try {
+      if (await act(options, repo, forge, pending, record)) posted++;
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      acted = false;
+      const message = error instanceof Error ? error.message : String(error);
+      const issue = pending.kind === "call" ? pending.entry.issue.number : pending.call.issue.number;
+      options.log?.warn("act-failed", { repo, issue, error: message });
+      options.print(`${repo}#${issue}: entail could not act on the issue: ${message}; it tries again next pass`);
+    }
   }
 
   if (ok && !options.dryRun) options.cursors.set(key, batch.cursor);
   // A judgment that did not run is tried again: the changes are read again from the old cursor.
   if (!ok) options.seen.delete(repo);
-  return { ok, judged, posted };
+  return { ok: ok && acted, judged, posted };
 }
 
 /** The issues a batch of changes asks to weigh: each changed issue, and each issue with a new `/entail` mention. */

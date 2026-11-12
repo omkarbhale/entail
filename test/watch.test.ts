@@ -27,7 +27,7 @@ test("an issue filed after enrollment gets its call posted within one pass, and 
   const { body } = h.forge.posted[0]!;
   assert.deepEqual(commentRuleViolations(body, OWNER, calls(h.dataDirectory)[0]!.id), []);
   assert.match(body, /^Speaking from Omkar's entail:\n\n\*\*Go\.\*\* Counting words/u);
-  assert.match(body, /> tally counts words offline\./u);
+  assert.doesNotMatch(body, /> tally counts words offline\./u, "a go carries the call, the reason and the criteria");
   assert.match(body, /- Footnote words count toward the total/u);
   assert.match(body, /waits for Omkar to confirm it on entail's board; nothing starts until then/u);
   assert.deepEqual(h.forge.closed, []);
@@ -62,7 +62,7 @@ test("an edit is judged again, a comment is not, and a no in confirm mode waits 
   const [, edited] = calls(h.dataDirectory);
   assert.equal(edited!.trigger, "edit");
   assert.equal(h.forge.posted.length, 2);
-  assert.match(h.forge.posted[1]!.body, /\*\*No\.\*\* Uploading counts/u);
+  assert.match(h.forge.posted[1]!.body, /\*\*No\.\*\* Uploading counts goes against tally working offline\.\n\nIt rests on the vision:\n\n> tally counts words offline\./u);
   assert.match(h.forge.posted[1]!.body, /The issue closes once Omkar confirms this call on entail's board\./u);
   assert.deepEqual(h.forge.closed, []);
 
@@ -133,6 +133,7 @@ test("a restart after posting but before recording it finds the comment and neve
   };
   const failed = await h.pass();
   assert.deepEqual(failed.failed, [REPO]);
+  assert.match(h.printed.join("\n"), /acme\/tally#14: entail could not act on the issue: the connection dropped; it tries again next pass/u);
   assert.equal(h.forge.posted.length, 1);
   assert.equal(readLog(h.dataDirectory, REPO).filter((entry) => entry.type === "acted").length, 0);
 
@@ -144,6 +145,22 @@ test("a restart after posting but before recording it finds the comment and neve
   const acted = readLog(h.dataDirectory, REPO).filter((entry) => entry.type === "acted");
   assert.equal(acted.length, 1);
   assert.deepEqual(markedTickets(h.forge.posted[0]!.body), [calls(h.dataDirectory)[0]!.id]);
+});
+
+test("a post that fails does not hold up the posts after it", async (t) => {
+  const h = harness(t);
+  h.forge.file(12, "Count words in footnotes");
+  h.forge.file(13, "Count words in captions");
+  h.script(12, verdict());
+  h.script(13, verdict());
+  const post = h.forge.postComment.bind(h.forge);
+  h.forge.postComment = async (target, number, body) => {
+    if (number === 12) throw new Error("Not Found");
+    return post(target, number, body);
+  };
+  const report = await h.pass();
+  assert.deepEqual(report, { repos: 1, judged: 2, posted: 1, failed: [REPO] });
+  assert.deepEqual(h.forge.posted.map((post) => post.issue), [13]);
 });
 
 test("a judgment that gives no call is tried again on the next pass", async (t) => {

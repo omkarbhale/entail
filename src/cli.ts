@@ -302,7 +302,7 @@ async function runCommand(args: string[]): Promise<number> {
     cursors,
     seen,
     book: () => caseBook(dataDirectory),
-    log,
+    log: dryRun ? null : log,
     dryRun,
     print: (text) => console.log(text),
     signal: stop.signal,

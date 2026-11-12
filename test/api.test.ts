@@ -96,6 +96,8 @@ test("the board reads what waits, confirms a call, and the confirmation lands in
   assert.equal(item.id, entry.id);
   assert.equal(item.issue.url, "https://github.com/acme/tally/issues/12");
   assert.equal(item.reason, "More useful.");
+  assert.equal(item.issueText, "# Count words in footnotes\n\nFootnotes are skipped.\n");
+  assert.equal(item.visionCommit, "c".repeat(40));
   assert.equal(item.restsOn.visionLines[0].url, `https://github.com/acme/tally/blob/${"c".repeat(40)}/VISION.md#L3`);
 
   assert.equal((await api.call("GET", `/api/calls/${entry.id}`)).body.status, "waiting");

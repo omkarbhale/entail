@@ -1,4 +1,4 @@
-import type { Criterion, IssueCall, RestsOn } from "./judgment.ts";
+import type { Criterion, IssueCall } from "./judgment.ts";
 import { criteriaOf, type Pending } from "./records.ts";
 
 /**
@@ -59,7 +59,12 @@ export function postFor(pending: Pending, owner: string): Post | null {
   }
 }
 
-/** entail's own call as posted: the call, the reason, what it rests on, and for go the criteria. */
+/**
+ * entail's own call as posted: the call, the reason, and for go the criteria.
+ * A no also quotes the vision lines it rests on, so a ticket that goes
+ * against the vision is closed quoting the line; the board and the log carry
+ * what every call rests on.
+ */
 export function callText(call: IssueCall, confirm: boolean, owner: string): string {
   if (call.call === "ask") {
     return `A question about this issue is waiting for ${owner} on entail's board. Nothing happens here until it is answered.`;
@@ -67,21 +72,15 @@ export function callText(call: IssueCall, confirm: boolean, owner: string): stri
   const head = `**${call.call === "go" ? "Go" : "No"}.** ${escape(call.reason)}`;
   if (call.call === "no") {
     const tail = confirm ? `The issue closes once ${owner} confirms this call on entail's board.` : "Closing the issue as not planned.";
-    return join(head, restsOnText(call.restsOn), tail);
+    return join(head, visionLinesText(call.restsOn.visionLines), tail);
   }
   const tail = confirm ? `This call waits for ${owner} to confirm it on entail's board; nothing starts until then.` : "";
-  return join(head, restsOnText(call.restsOn), criteriaText(criteriaOf(call)), tail);
+  return join(head, criteriaText(criteriaOf(call)), tail);
 }
 
-function restsOnText(restsOn: RestsOn): string {
-  const parts: string[] = [];
-  if (restsOn.visionLines.length > 0) {
-    parts.push(`It rests on the vision:\n\n${restsOn.visionLines.map((line) => `> ${line.replace(/^>\s*/u, "").trim()}`).join("\n>\n")}`);
-  }
-  if (restsOn.cases.length > 0) {
-    parts.push(`${restsOn.visionLines.length > 0 ? "And on" : "It rests on"} the owner's past ${restsOn.cases.length === 1 ? "call" : "calls"} in ${restsOn.cases.map((slug) => `\`${slug}\``).join(", ")}.`);
-  }
-  return parts.join("\n\n");
+function visionLinesText(lines: readonly string[]): string {
+  if (lines.length === 0) return "";
+  return `It rests on the vision:\n\n${lines.map((line) => `> ${line.replace(/^>\s*/u, "").trim()}`).join("\n>\n")}`;
 }
 
 function criteriaText(criteria: readonly Criterion[]): string {
