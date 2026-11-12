@@ -124,6 +124,20 @@ test("a head with no checks reported yet is not judged until the window has pass
   assert.equal(landings(h).length, 1);
 });
 
+test("a repo that defines CI keeps waiting on a head with no checks, however old", async (t) => {
+  const h = harness(t, { confirm: false, definesCI: true });
+  await goIssue(h);
+  h.forge.openPull(4, "Read standard input", { head: HEAD1, closes: [1] });
+  const pushed = Date.parse(h.forge.pulls.get(4)!.updatedAt);
+  h.scriptLanding(4, met());
+  await h.pass({ now: () => new Date(pushed + 60 * 60_000) });
+  assert.equal(landings(h).length, 0);
+  assert.deepEqual(h.forge.merges, []);
+  h.forge.report(HEAD1, ["test", "passed"]);
+  await h.pass({ now: () => new Date(pushed + 61 * 60_000) });
+  assert.equal(landings(h).length, 1);
+});
+
 test("a head whose judgment keeps giving no call is tried three times, then stalls until a new push", async (t) => {
   const h = harness(t, { confirm: false });
   await goIssue(h);

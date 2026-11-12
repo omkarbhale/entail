@@ -114,6 +114,10 @@ export interface PullRequestReading {
   /** The default branch's head the diff is taken against. */
   base: string;
   diff: string;
+  /** ISO time the head commit was made. */
+  committedAt: string;
+  /** Whether the head holds workflow files under `.github/workflows`. */
+  definesCI: boolean;
   /** VISION.md on the default branch. */
   vision: { text: string; commit: string } | null;
   pins: string[];
@@ -450,7 +454,7 @@ async function act(options: PassOptions, repo: string, forge: WatchForge, pendin
 
 // PRs.
 
-/** How long after a PR last changed a head with no checks at all is taken as checks not yet reported. */
+/** How long after a head was committed, a head with no checks at all is taken as checks not yet reported. */
 const CHECKS_WINDOW_MS = 10 * 60 * 1000;
 
 /**
@@ -503,8 +507,7 @@ async function passPullRequests(
         continue;
       }
       const report = await forge.checks(number, pr.headSha, []);
-      const unreported = report.checks.length === 0 && report.required.length === 0 && (options.now?.() ?? new Date()).getTime() - Date.parse(pr.updatedAt) < CHECKS_WINDOW_MS;
-      if (unreported || !allChecksFinished(report) || !requiredChecksReported(report)) {
+      if (!allChecksFinished(report) || !requiredChecksReported(report)) {
         if (changed.has(number)) options.print(`${name}: waiting for CI to finish at ${pr.headSha.slice(0, 7)} before judging`);
         continue;
       }
@@ -514,6 +517,11 @@ async function passPullRequests(
         continue;
       }
       const entry = await judgePullRequest(context, pr, go, { checks: report.checks, required: report.required }, entries);
+      if ("waiting" in entry) {
+        options.log?.info("checks-awaited", { repo, pr: number, head: pr.headSha, why: entry.waiting });
+        if (changed.has(number)) options.print(`${name}: ${entry.waiting}; not judged yet`);
+        continue;
+      }
       if ("failed" in entry) {
         record({ type: "landing-failed", pr: number, head: pr.headSha, reason: entry.failed });
         continue;
@@ -535,14 +543,14 @@ function pullRequestRef(pr: PullRequest): LandingEntry["pr"] {
   return { number: pr.number, title: pr.title, url: pr.url, author: pr.author.username };
 }
 
-/** Makes the landing call on a PR's head; `failed` with the reason when the run gave none. */
+/** Makes the landing call on a PR's head; `failed` with the reason when the run gave none, or `waiting` when CI has not reported at the head. */
 async function judgePullRequest(
   context: JudgeContext,
   pr: PullRequest,
   go: CallEntry,
   checks: Pick<LandingEntry["facts"], "checks" | "required">,
   entries: readonly Entry[],
-): Promise<NewEntry | { failed: string }> {
+): Promise<NewEntry | { failed: string } | { waiting: string }> {
   const { options, state, forge } = context;
   const { repo } = state;
   const name = `${repo}#${pr.number}`;
@@ -550,6 +558,11 @@ async function judgePullRequest(
   const facts = { ...checks, files };
   const reading = await options.prReader(repo, forge, pr.number, pr.headSha);
   try {
+    if (checks.checks.length === 0 && checks.required.length === 0) {
+      const age = (options.now?.() ?? new Date()).getTime() - Date.parse(reading.committedAt);
+      if (age < CHECKS_WINDOW_MS) return { waiting: `no checks have reported at ${pr.headSha.slice(0, 7)} yet, which was committed ${Math.max(0, Math.round(age / 60_000))} minutes ago` };
+      if (reading.definesCI) return { waiting: `the repository defines CI but no check has reported at ${pr.headSha.slice(0, 7)}` };
+    }
     const criteria = go.call.call === "no" ? [] : go.call.criteria;
     const sendBacks = sendBacksPosted(entries, pr.number);
     const sentBack = new Set(entries.flatMap((entry) => (entry.type === "pr-acted" && entry.pr === pr.number && entry.sentBack ? [entry.for] : [])));
@@ -793,11 +806,15 @@ export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prRe
     if (fetched.commit !== head) throw new Error(`the pull request's head moved to ${fetched.commit} while it was read`);
     const diff = await mirror.pullRequestDiff(base.commit, head);
     const checkout = await mirror.checkout(head);
+    const committedAt = (await mirror.git.run(["show", "-s", "--format=%cI", head, "--"])).stdout.toString("utf8").trim();
+    const definesCI = (await mirror.git.run(["cat-file", "-e", `${head}:.github/workflows`], { okExitCodes: [1, 128] })).exitCode === 0;
     return {
       checkout: checkout.directory,
       head,
       base: base.commit,
       diff,
+      committedAt,
+      definesCI,
       vision: await visionAt(mirror, base.commit),
       pins: await readPins(dataDirectory, { host: HOST, path: repo }),
       // The default branch's own checkout is the issue reader's to remove.
