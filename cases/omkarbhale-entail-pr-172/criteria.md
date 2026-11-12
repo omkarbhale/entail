@@ -1,0 +1,3 @@
+- While an issue's ticket is on the board waiting for the owner, the issue carries an `entail:raised` label on the forge, and that label is removed when the board item is answered, withdrawn or cancelled (replaced by `entail:cleared` if the ticket is then cleared), so an issue never carries `entail:raised` alongside another entail state label.
+- The `entail:raised` label only marks state: it carries no question text and adding or removing it by hand answers nothing, so the question and its answer stay on the board.
+- The repo's tests cover the `entail:raised` label being put on an issue when its ticket is raised and taken off when the board item is answered, withdrawn or cancelled.

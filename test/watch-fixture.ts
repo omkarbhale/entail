@@ -4,9 +4,26 @@ import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { ChangeDeduplicator } from "../src/changes.ts";
 import { CursorStore } from "../src/cursors.ts";
-import type { Actor, Change, ForgeComment, Issue, IssueComment, PostedComment, Project } from "../src/forge/forge.ts";
+import {
+  checksByName,
+  type Actor,
+  type Change,
+  type ChangedFile,
+  type Check,
+  type CheckReport,
+  type ForgeComment,
+  type Issue,
+  type IssueComment,
+  type MergeMethod,
+  type MergeOutcome,
+  type PostedComment,
+  type Project,
+  type PullRequest,
+  type PullRequestState,
+} from "../src/forge/forge.ts";
 import type { Verdict } from "../src/judgment.ts";
 import { JUDGMENT_KIND } from "../src/judgment.ts";
+import { LANDING_KIND, type LandingAnswer } from "../src/landing.ts";
 import { appendEntry, type GlobalSettings } from "../src/records.ts";
 import { ScriptedRunner } from "../src/scripted-runner.ts";
 import { runPass, type PassOptions, type PassReport, type WatchForge } from "../src/watch.ts";
@@ -15,6 +32,8 @@ export const REPO = "acme/tally";
 export const OWNER = "Omkar";
 export const VISION = "# Vision\n\ntally counts words offline.\nNew features are opt-in.\n";
 export const SHA = "a".repeat(40);
+/** The default branch's head a PR is diffed against. */
+export const BASE = "b".repeat(40);
 export const ENROLLED_AT = "2026-11-12T09:00:00.000Z";
 
 const person = (id: number, username: string): Actor => ({ forge: "github", host: "github.com", id, username });
@@ -36,6 +55,19 @@ export class FakeForge implements WatchForge {
   readonly #changes: Change[] = [];
   #clock = Date.parse("2026-11-12T10:00:00Z");
   #nextId = 7000;
+  readonly pulls = new Map<number, PullRequest>();
+  /** The issues each PR closes by the forge's link data. */
+  readonly links = new Map<number, number[]>();
+  /** The checks reported at each sha; a sha with none reported has finished with no checks. */
+  readonly checksAt = new Map<string, Check[]>();
+  readonly required: string[] = [];
+  readonly filesOf = new Map<number, ChangedFile[]>();
+  readonly merges: { pr: number; sha: string; method: MergeMethod | undefined }[] = [];
+  readonly closedPulls: number[] = [];
+  /** The merge methods the repo allows. */
+  methods: MergeMethod[] = ["squash", "merge", "rebase"];
+  /** Set to make the forge refuse the next merge with this reason. */
+  refuseMerge: string | null = null;
   /** Set to make every read fail, as a forge outage would. */
   down = false;
 
@@ -82,6 +114,98 @@ export class FakeForge implements WatchForge {
       this.#changes.push({ kind: "issue", id: issue.id, updatedAt: at, issue: { ...issue } });
     }
     return comment;
+  }
+
+  /** Opens a PR from `head` that closes `closes` by the forge's link data. */
+  openPull(number: number, title: string, options: { head: string; closes?: number[]; body?: string; draft?: boolean; files?: ChangedFile[]; base?: string } ): PullRequest {
+    const at = this.tick();
+    const pull: PullRequest = {
+      id: 8000 + number,
+      number,
+      title,
+      body: options.body ?? "",
+      state: "open",
+      draft: options.draft ?? false,
+      mergeable: null,
+      conflicts: null,
+      headSha: options.head,
+      baseBranch: options.base ?? "main",
+      author: REPORTER,
+      createdAt: at,
+      updatedAt: at,
+      url: `https://github.com/${REPO}/pull/${number}`,
+    };
+    this.pulls.set(number, pull);
+    this.links.set(number, options.closes ?? []);
+    this.filesOf.set(number, options.files ?? [{ path: "src/count.ts", status: "modified", previousPath: null, additions: 10, deletions: 2 }]);
+    this.#changes.push({ kind: "pull-request", id: pull.id, updatedAt: at, pullRequest: { ...pull } });
+    return pull;
+  }
+
+  /** Changes a PR: a push moves its head; a state closes or merges it outside entail. */
+  editPull(number: number, change: Partial<Pick<PullRequest, "headSha" | "state" | "draft" | "title">>): void {
+    const pull = this.pulls.get(number)!;
+    Object.assign(pull, change, { updatedAt: this.tick() });
+    this.#changes.push({ kind: "pull-request", id: pull.id, updatedAt: pull.updatedAt, pullRequest: { ...pull } });
+  }
+
+  /** Reports checks at a sha. */
+  report(sha: string, ...checks: [name: string, status: Check["status"]][]): void {
+    this.checksAt.set(sha, checks.map(([name, status]) => ({ name, status, reported: true, url: null })));
+  }
+
+  async pullRequest(number: number): Promise<PullRequest> {
+    this.#check();
+    const pull = this.pulls.get(number);
+    if (pull === undefined) throw new Error(`no PR #${number}`);
+    return { ...pull };
+  }
+
+  async linkedIssues(number: number): Promise<number[]> {
+    this.#check();
+    return [...(this.links.get(number) ?? [])];
+  }
+
+  async checks(_number: number, sha: string, named: readonly string[]): Promise<CheckReport> {
+    this.#check();
+    const reported = this.checksAt.get(sha) ?? [];
+    return { sha, checks: checksByName(reported, named), required: this.required.map((name) => ({ name, reported: reported.some((check) => check.name === name) })) };
+  }
+
+  async pullRequestFiles(number: number): Promise<ChangedFile[]> {
+    this.#check();
+    return [...(this.filesOf.get(number) ?? [])];
+  }
+
+  async mergeMethods(): Promise<MergeMethod[]> {
+    this.#check();
+    return [...this.methods];
+  }
+
+  async merge(number: number, sha: string, method?: MergeMethod): Promise<MergeOutcome> {
+    this.#check();
+    const pull = this.pulls.get(number)!;
+    if (this.refuseMerge !== null) {
+      const refusal = this.refuseMerge;
+      this.refuseMerge = null;
+      return { merged: false, refusal };
+    }
+    if (pull.headSha !== sha) return { merged: false, refusal: "Head branch was modified" };
+    this.merges.push({ pr: number, sha, method });
+    this.editPull(number, { state: "merged" });
+    return { merged: true, mergeCommitSha: "f".repeat(40) };
+  }
+
+  async pullRequestState(number: number): Promise<PullRequestState> {
+    this.#check();
+    const pull = this.pulls.get(number)!;
+    return { state: pull.state, headSha: pull.headSha, mergeCommitSha: pull.state === "merged" ? "f".repeat(40) : null };
+  }
+
+  async closePullRequest(number: number): Promise<void> {
+    this.#check();
+    this.closedPulls.push(number);
+    this.editPull(number, { state: "closed" });
   }
 
   async project(): Promise<Project> {
@@ -143,6 +267,22 @@ export function verdict(overrides: Partial<Verdict> = {}): Verdict {
   };
 }
 
+/** A landing answer that merges: the problem solved, every criterion met, nothing beyond. */
+export function landingAnswer(overrides: Partial<LandingAnswer> = {}): LandingAnswer {
+  return {
+    call: "merge",
+    reason: "It reads standard input as the issue asks, and meets its criterion.",
+    solves: { solved: true, evidence: "src/count.ts reads stdin when no file is given." },
+    criteria: [],
+    beyond: [],
+    needs_to_change: [],
+    product_call: false,
+    question: null,
+    rests_on: { vision_lines: [], cases: [] },
+    ...overrides,
+  };
+}
+
 export interface Harness {
   dataDirectory: string;
   forge: FakeForge;
@@ -150,11 +290,15 @@ export interface Harness {
   printed: string[];
   /** Scripts the next judgment on an issue. */
   script(issue: number, ...verdicts: (Verdict | "fail")[]): void;
+  /** Scripts the next landing judgment on a PR. */
+  scriptLanding(pr: number, ...answers: (LandingAnswer | "fail")[]): void;
+  /** The PR heads the landing judgment read, in order. */
+  prReads: { pr: number; head: string }[];
   pass(overrides?: Partial<PassOptions>): Promise<PassReport>;
   options(overrides?: Partial<PassOptions>): PassOptions;
 }
 
-export function harness(t: TestContext, options: { confirm?: boolean; settings?: Partial<GlobalSettings> } = {}): Harness {
+export function harness(t: TestContext, options: { confirm?: boolean; settings?: Partial<GlobalSettings>; pins?: string[] } = {}): Harness {
   const dataDirectory = mkdtempSync(join(tmpdir(), "entail-watch-"));
   t.after(() => rmSync(dataDirectory, { recursive: true, force: true }));
   appendEntry(dataDirectory, REPO, { type: "enrolled", by: OWNER, since: ENROLLED_AT, confirm: options.confirm ?? true }, new Date(ENROLLED_AT));
@@ -164,16 +308,22 @@ export function harness(t: TestContext, options: { confirm?: boolean; settings?:
   const cursors = new CursorStore(dataDirectory);
   const seen = new Map<string, ChangeDeduplicator>();
   const settings: GlobalSettings = { owner: OWNER, model: "claude-opus-5-5", effort: "low", ...options.settings };
+  const prReads: { pr: number; head: string }[] = [];
   const build = (overrides: Partial<PassOptions> = {}): PassOptions => ({
     dataDirectory,
     owner: OWNER,
     settings,
     forgeFor: () => forge,
     reader: async () => ({ checkout: "/checkout", sha: SHA, vision: { text: VISION, commit: SHA }, pins: [] }),
+    prReader: async (_repo, _forge, pr, head) => {
+      prReads.push({ pr, head });
+      return { checkout: `/checkouts/${head}`, head, base: BASE, diff: `diff --git a/src/count.ts b/src/count.ts\n+// head ${head}\n`, vision: { text: VISION, commit: BASE }, pins: options.pins ?? [], release: async () => {} };
+    },
     runner,
     cursors,
     seen,
     book: async () => [],
+    landingBook: async () => [],
     log: null,
     dryRun: false,
     print: (text) => printed.push(text),
@@ -184,6 +334,14 @@ export function harness(t: TestContext, options: { confirm?: boolean; settings?:
     forge,
     runner,
     printed,
+    prReads,
+    scriptLanding(pr, ...answers) {
+      runner.script(
+        LANDING_KIND,
+        `${REPO}#${pr}`,
+        ...answers.map((a) => (a === "fail" ? { failure: { kind: "error" as const, message: "the run broke" } } : { output: a, facts: { estimatedCostUsd: 0.07 } })),
+      );
+    },
     script(issue, ...verdicts) {
       runner.script(
         JUDGMENT_KIND,

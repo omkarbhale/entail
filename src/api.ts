@@ -3,12 +3,11 @@ import type { Case } from "./case-book.ts";
 import { EFFORTS, type Effort } from "./model-runner.ts";
 import {
   answerCall,
-  callView,
   changeRepoSettings,
   checkSettingsChange,
   confirmCall,
   enroll,
-  findCall,
+  itemView,
   logItems,
   overrideCall,
   OwnerError,
@@ -17,7 +16,7 @@ import {
   unenroll,
   waitingItems,
 } from "./owner.ts";
-import { callStatuses, readSettings, writeSettings, type GlobalSettings } from "./records.ts";
+import { readSettings, writeSettings, type GlobalSettings } from "./records.ts";
 
 /**
  * The owner's side as a small JSON API on the loopback interface, for the
@@ -29,14 +28,23 @@ import { callStatuses, readSettings, writeSettings, type GlobalSettings } from "
  *   GET    /api/log[?repo=owner/name]         every call, owner's action and post, oldest first
  *   GET    /api/calls/:id                     one call
  *   POST   /api/calls/:id/confirm             {}
- *   POST   /api/calls/:id/override            {"call": "go"|"no", "reason": "..."}
- *   POST   /api/calls/:id/answer              {"call": "go"|"no", "answer": "..."}
+ *   POST   /api/calls/:id/override            {"call": "go"|"no", "reason": "..."}            on an issue's call
+ *                                             {"call": "merge"|"send-back", "reason": "..."}  on a PR's call
+ *   POST   /api/calls/:id/answer              {"call": "go"|"no", "answer": "..."}            on an issue's call
+ *                                             {"call": "merge"|"send-back", "answer": "..."}  on a PR's call
  *   GET    /api/repos[?all=1]                 enrolled repos (all=1: every repo with a log)
  *   POST   /api/repos                         {"repo": "owner/name", "confirm"?: bool, "since"?: ISO time}
  *   PATCH  /api/repos/:owner/:name            {"confirm"?: bool, "model"?: string|null, "effort"?: string|null}
  *   DELETE /api/repos/:owner/:name            unenrolls
  *   GET    /api/settings                      the owner's name and the default model and effort
  *   PATCH  /api/settings                      {"owner"?: string, "model"?: string, "effort"?: string}
+ *
+ * A call is on an issue or on a PR: each item carries `kind` ("issue" or
+ * "pr") and, on a PR's call, `pr` with the criteria checklist, the facts read
+ * from GitHub, what the PR does beyond its criteria sorted needed, harmless or
+ * unwanted, and what entail did on the PR (see `CallView` and
+ * `PullRequestView` in owner.ts). In the log, a call item names its kind in
+ * `callKind`, and entail's acts on PRs are `pr-acted` items.
  *
  * It answers only requests addressed to the loopback host by name and, for
  * writes, only JSON from no other origin, so a web page open in the owner's
@@ -97,10 +105,7 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
   if (call !== null) {
     const id = Number(call[1]);
     const action = call[2];
-    if (action === undefined && method === "GET") {
-      const { repo, entries, call: entry } = findCall(dataDirectory, id);
-      return send(response, 200, callView(repo, entry, callStatuses(entries).get(id)!, entries, await options.book()));
-    }
+    if (action === undefined && method === "GET") return send(response, 200, itemView(dataDirectory, id, await options.book()));
     if (action !== undefined && method === "POST") {
       const body = await readJson(request);
       const by = await options.owner();

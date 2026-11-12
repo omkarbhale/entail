@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { createApi } from "../src/api.ts";
-import { OWNER_CASE_BOOK, readCaseBook } from "../src/case-book.ts";
-import { appendEntry, readLog, readSettings, type CallEntry } from "../src/records.ts";
+import { OWNER_CASE_BOOK, readCaseBook, readLandingCaseBook } from "../src/case-book.ts";
+import { appendEntry, readLog, readSettings, type CallEntry, type LandingEntry } from "../src/records.ts";
 
 async function serve(t: TestContext) {
   const dataDirectory = mkdtempSync(join(tmpdir(), "entail-api-"));
@@ -159,4 +159,93 @@ test("no web page can act as the owner: writes take JSON from no other origin, a
   assert.equal(status, 403);
   assert.equal((await api.call("GET", "/api/nothing")).status, 404);
   assert.equal((await api.call("PUT", "/api/settings", {})).status, 405);
+});
+
+function aLanding(dataDirectory: string, issueCall: number, call: "merge" | "ask"): LandingEntry {
+  appendEntry(dataDirectory, "acme/tally", { type: "followed", pr: { number: 14, title: "Count footnotes", url: "https://github.com/acme/tally/pull/14", author: "reporter" }, issue: 12 });
+  return appendEntry(dataDirectory, "acme/tally", {
+    type: "landing",
+    pr: { number: 14, title: "Count footnotes", url: "https://github.com/acme/tally/pull/14", author: "reporter" },
+    issue: { number: 12, title: "Count words in footnotes", url: "https://github.com/acme/tally/issues/12" },
+    issueCall,
+    issueText: "# Count words in footnotes\n\nFootnotes are skipped.\n",
+    prText: "# Count footnotes\n\nCloses #12.\n",
+    head: "d".repeat(40),
+    base: "c".repeat(40),
+    vision: { text: "# Vision\n\ntally counts words offline.\n", commit: "c".repeat(40) },
+    criteria: [{ source: "reading", criterion: "Footnotes count toward the total.", basis: "One total." }],
+    facts: { checks: [{ name: "test", status: "passed", reported: true, url: null }], required: [], files: [{ path: "src/count.ts", status: "modified", previousPath: null, additions: 4, deletions: 1 }] },
+    touched: { vision: false, pins: [] },
+    call: {
+      call,
+      reason: "It counts footnotes.",
+      restsOn: { visionLines: [], cases: [] },
+      solves: { solved: true, evidence: "src/count.ts" },
+      criteria: [{ criterion: "Footnotes count toward the total.", met: true, evidence: "src/count.ts" }],
+      beyond: [{ change: "A loading line.", sort: "needed", why: "Counting takes time." }],
+      needsToChange: [],
+      productCall: false,
+      question: call === "ask" ? { question: "Merge it?", why: "Unsure." } : null,
+      guard: null,
+    },
+    sendBacks: 0,
+    cancel: false,
+    confirm: true,
+    model: "claude-opus-5-5",
+    effort: "low",
+    promptVersion: "pr-call-1",
+    costUsd: 0.06,
+  }) as LandingEntry;
+}
+
+test("the board reads a PR's call with its checklist, facts and sort, and confirms, overrides or answers it as merge or send-back", async (t) => {
+  const api = await serve(t);
+  const issueCall = aCall(api.dataDirectory, true);
+  appendEntry(api.dataDirectory, "acme/tally", { type: "enrolled", by: "Omkar", since: "2026-11-12T09:00:00.000Z", confirm: true });
+  const landing = aLanding(api.dataDirectory, issueCall.id, "merge");
+
+  const waiting = await api.call("GET", "/api/waiting");
+  const item = waiting.body.items.find((i: { kind: string }) => i.kind === "pr");
+  assert.equal(item.id, landing.id);
+  assert.equal(item.call, "merge");
+  assert.equal(item.pr.number, 14);
+  assert.deepEqual(item.pr.checklist, [{ criterion: "Footnotes count toward the total.", met: true, evidence: "src/count.ts" }]);
+  assert.deepEqual(item.pr.beyond, [{ change: "A loading line.", sort: "needed", why: "Counting takes time." }]);
+  assert.equal(item.pr.facts.ciGreen, true);
+  assert.equal(item.criteria[0].criterion, "Footnotes count toward the total.");
+  const issueItem = waiting.body.items.find((i: { kind: string }) => i.kind === "issue");
+  assert.equal(issueItem.pr, null);
+
+  assert.equal((await api.call("GET", `/api/calls/${landing.id}`)).body.pr.head, "d".repeat(40));
+  assert.equal((await api.call("POST", `/api/calls/${landing.id}/override`, { call: "go", reason: "x" })).status, 400);
+  const overridden = await api.call("POST", `/api/calls/${landing.id}/override`, { call: "send-back", reason: "Footnotes in tables are still skipped." });
+  assert.equal(overridden.status, 200);
+  assert.equal(overridden.body.to, "send-back");
+  const [past] = await readLandingCaseBook(join(api.dataDirectory, OWNER_CASE_BOOK));
+  assert.equal(past!.call, "send-back");
+  assert.equal(past!.pr, 14);
+
+  const log = await api.call("GET", "/api/log");
+  assert.ok(log.body.items.some((i: { kind: string; callKind?: string }) => i.kind === "call" && i.callKind === "pr"));
+  assert.ok(log.body.items.some((i: { kind: string; pr: { number: number } | null }) => i.kind === "owner" && i.pr?.number === 14));
+  assert.ok(log.body.items.some((i: { kind: string }) => i.kind === "pr"));
+});
+
+test("a PR's question is answered merge or send-back, and a merge call is confirmed", async (t) => {
+  const api = await serve(t);
+  const issueCall = aCall(api.dataDirectory, false);
+  const asked = aLanding(api.dataDirectory, issueCall.id, "ask");
+  assert.equal((await api.call("POST", `/api/calls/${asked.id}/confirm`, {})).status, 409);
+  const answered = await api.call("POST", `/api/calls/${asked.id}/answer`, { call: "merge", answer: "Yes, merge it." });
+  assert.equal(answered.status, 200);
+  const merge = aLanding(api.dataDirectory, issueCall.id, "merge");
+  assert.equal((await api.call("POST", `/api/calls/${asked.id}/answer`, { call: "merge", answer: "again" })).status, 409, "a newer call on the PR replaced it");
+  assert.equal((await api.call("POST", `/api/calls/${merge.id}/confirm`, {})).status, 200);
+  assert.deepEqual(
+    readLog(api.dataDirectory, "acme/tally").flatMap((e) => (e.type === "answered" || e.type === "confirmed" ? [[e.type, e.call]] : [])),
+    [
+      ["answered", asked.id],
+      ["confirmed", merge.id],
+    ],
+  );
 });

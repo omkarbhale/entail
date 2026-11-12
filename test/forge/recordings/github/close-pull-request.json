@@ -1,0 +1,53 @@
+{
+  "host": "github.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "PATCH",
+        "path": "repos/acme/tally/pulls/4",
+        "body": {
+          "state": "closed"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": {
+          "url": "https://api.github.com/repos/acme/tally/pulls/4",
+          "html_url": "https://github.com/acme/tally/pull/4",
+          "id": 8004,
+          "number": 4,
+          "state": "closed",
+          "title": "Read standard input",
+          "user": {
+            "login": "reporter",
+            "id": 1002,
+            "type": "User",
+            "site_admin": false
+          },
+          "body": "Closes #1",
+          "created_at": "2026-11-01T10:30:00Z",
+          "updated_at": "2026-11-09T10:00:00Z",
+          "closed_at": "2026-11-09T10:00:00Z",
+          "merged_at": null,
+          "draft": false,
+          "head": {
+            "ref": "stdin",
+            "sha": "4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e"
+          },
+          "base": {
+            "ref": "main",
+            "sha": "1c1c1c1c2d2d2d2d3e3e3e3e4f4f4f4f50505050"
+          }
+        }
+      }
+    }
+  ]
+}

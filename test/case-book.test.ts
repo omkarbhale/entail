@@ -3,7 +3,26 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { caseSlug, DEFAULT_CASE_BOOK, issueTitle, parseCall, precedentsFor, readCaseBook, readCaseBooks, renderCall, renderIssue, writeCase, type Case } from "../src/case-book.ts";
+import {
+  caseSlug,
+  DEFAULT_CASE_BOOK,
+  issueTitle,
+  landingCaseSlug,
+  parseCall,
+  parseCriteria,
+  precedentsFor,
+  readCaseBook,
+  readCaseBooks,
+  readLandingCaseBook,
+  readLandingCaseBooks,
+  renderCall,
+  renderCriteria,
+  renderIssue,
+  writeCase,
+  writeLandingCase,
+  type Case,
+  type LandingCase,
+} from "../src/case-book.ts";
 
 function temporary(t: TestContext): string {
   const dir = mkdtempSync(join(tmpdir(), "entail-cases-"));
@@ -117,4 +136,65 @@ test("a case written by the owner reads back, replaces an earlier one of the sam
   assert.equal(book.length, shipped.length);
   assert.equal(book.find((past) => past.slug === base.slug)!.call, "go");
   await assert.rejects(writeCase(owners, { ...base, reason: "" }), /call.md has no reason/u);
+});
+
+test("a landing case is written and read back whole, beside issue cases, and a later book's case wins", async (t) => {
+  const first = temporary(t);
+  const second = temporary(t);
+  const past: LandingCase = {
+    kind: "landing",
+    slug: landingCaseSlug("Acme/Tally", 14),
+    repo: "acme/tally",
+    issue: 12,
+    pr: 14,
+    head: "d".repeat(40),
+    base: "c".repeat(40),
+    issueText: "# Count words in footnotes\n\nFootnotes are skipped.\n",
+    vision: "# Vision\n\ntally counts words offline.\n",
+    visionCommit: "c".repeat(40),
+    criteria: [
+      { criterion: "Footnotes count toward the total.", basis: "reading: one total" },
+      { criterion: "No new flag.", basis: "" },
+    ],
+    prText: "# Count footnotes\n\nCloses #12.\n",
+    facts: { checks: [{ name: "test", status: "passed", reported: true, url: null }], required: [], files: [{ path: "src/count.ts", status: "modified", previousPath: null, additions: 4, deletions: 1 }] },
+    call: "merge",
+    reason: "It counts footnotes as the issue asks.",
+    reasonFrom: "the owner's confirmation",
+    date: "2026-11-12",
+    notes: "## Notes\n\nNone.",
+  };
+  assert.equal(past.slug, "acme-tally-pr-14");
+  await writeLandingCase(first, past);
+  await writeCase(first, {
+    slug: caseSlug("acme/tally", 12),
+    repo: "acme/tally",
+    issue: 12,
+    issueText: past.issueText,
+    vision: past.vision,
+    visionCommit: past.visionCommit,
+    call: "go",
+    reason: "Useful.",
+    reasonFrom: "the owner",
+    date: "2026-11-12",
+    notes: "",
+  });
+  assert.deepEqual(await readLandingCaseBook(first), [past]);
+  assert.deepEqual((await readCaseBook(first)).map((c) => c.slug), ["acme-tally-12"], "the issue reader leaves landing cases out");
+
+  await writeLandingCase(second, { ...past, call: "send-back", reason: "Tables are still skipped." });
+  const merged = await readLandingCaseBooks([first, second, join(second, "missing")]);
+  assert.deepEqual(merged.map((c) => [c.slug, c.call]), [["acme-tally-pr-14", "send-back"]]);
+  assert.deepEqual(parseCriteria(renderCriteria(past.criteria)), past.criteria);
+  assert.deepEqual(parseCriteria(renderCriteria([])), []);
+});
+
+test("a landing case with a call other than merge or send-back is refused, naming the case", async (t) => {
+  const dir = temporary(t);
+  const caseDir = join(dir, "acme-tally-pr-1");
+  mkdirSync(caseDir);
+  for (const name of ["issue.md", "vision.md", "criteria.md", "pr.md"]) writeFileSync(join(caseDir, name), "x\n");
+  writeFileSync(join(caseDir, "facts.json"), '{"checks":[],"required":[],"files":[]}');
+  writeFileSync(join(caseDir, "call.md"), "---\nkind: landing\nrepo: acme/tally\nissue: 1\npr: 2\nhead: h\nbase: b\ncall: go\ndate: 2026-11-12\nvision-commit: c\nreason-from: x\n---\n\nReason.\n");
+  await assert.rejects(readLandingCaseBook(dir), /case acme-tally-pr-1: call\.md's call is go, not merge or send-back/u);
 });

@@ -40,6 +40,8 @@ export type Scenario =
   | "label"
   | "close"
   | "reopen"
+  | "close-pull-request"
+  | "pull-request-files"
   | "merge"
   | "merge-refused"
   | "settle-reads"
@@ -88,6 +90,7 @@ export interface ForgeContractSubject {
  *   removed from issue #2, and `entail:investigate`, which issue #2 does not
  *   carry, is removed too.
  * - Close: issue #7 is closed as not planned, and issue #2 as completed.
+ * - Close a PR: PR #4 is closed without merging.
  * - Merge: PR #4 is merged at its head (HEAD below) by squashing, making MERGE_COMMIT.
  * - Merge refused: PR #5's head moved away from the pinned sha, and PR #6 is a draft.
  * - Settle reads: issue #2 carries the `/entail` comment then entail's comment
@@ -106,6 +109,9 @@ export interface ForgeContractSubject {
  * - PR #6 only mentions issue #1 in its text; the forge does not link it.
  * - PR #7 (id 8007) was merged.
  * - A PR in another repo also closes issue #1.
+ * - PR #4's files, over two pages: it adds `src/stdin.ts`, modifies
+ *   `README.md`, renames `docs/old-usage.md` to `docs/usage.md` and removes
+ *   `src/legacy.ts`.
  * - Checks at HEAD4: `test` passed, `docs` skipped, `coverage` neutral or
  *   allowed to fail, `lint` failed, `build` running and `deploy` passed. The
  *   named checks are `test` and `e2e`, and `e2e` has not reported.
@@ -341,6 +347,21 @@ export function forgeContract(subject: ForgeContractSubject): void {
     test("an issue is reopened", async (t) => {
       const forge = forgeFor(t, "reopen");
       await forge.reopenIssue(7);
+    });
+
+    test("a PR is closed without merging", async (t) => {
+      const forge = forgeFor(t, "close-pull-request");
+      await forge.closePullRequest(4);
+    });
+
+    test("a PR's changed files come from the forge, every page, sorted by path, with a rename's old path", async (t) => {
+      const forge = forgeFor(t, "pull-request-files");
+      assert.deepEqual(await forge.pullRequestFiles(4), [
+        { path: "README.md", status: "modified", previousPath: null, additions: 3, deletions: 1 },
+        { path: "docs/usage.md", status: "renamed", previousPath: "docs/old-usage.md", additions: 0, deletions: 0 },
+        { path: "src/legacy.ts", status: "removed", previousPath: null, additions: 0, deletions: 12 },
+        { path: "src/stdin.ts", status: "added", previousPath: null, additions: 40, deletions: 0 },
+      ]);
     });
 
     test("a PR is merged pinned to its sha, without bypassing rules or auto-merge", async (t) => {

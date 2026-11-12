@@ -1,0 +1,93 @@
+{
+  "host": "github.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/pulls/4/files?per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "Link": "<https://api.github.com/repositories/5001/pulls/4/files?per_page=100&page=2>; rel=\"next\", <https://api.github.com/repositories/5001/pulls/4/files?per_page=100&page=2>; rel=\"last\""
+        },
+        "body": [
+          {
+            "sha": "e60302a205ddb77faf924b8168266ff6e331e661",
+            "filename": "src/stdin.ts",
+            "status": "added",
+            "additions": 40,
+            "deletions": 0,
+            "changes": 40,
+            "blob_url": "https://github.com/acme/tally/blob/4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e/src/stdin.ts",
+            "raw_url": "https://github.com/acme/tally/raw/4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e/src/stdin.ts",
+            "contents_url": "https://api.github.com/repos/acme/tally/contents/src/stdin.ts?ref=4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e",
+            "patch": "@@ -1 +1 @@\n-a\n+b"
+          },
+          {
+            "sha": "e60302a205ddb77faf924b8168266ff6e331e661",
+            "filename": "README.md",
+            "status": "modified",
+            "additions": 3,
+            "deletions": 1,
+            "changes": 4,
+            "blob_url": "https://github.com/acme/tally/blob/4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e/README.md",
+            "raw_url": "https://github.com/acme/tally/raw/4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e/README.md",
+            "contents_url": "https://api.github.com/repos/acme/tally/contents/README.md?ref=4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e",
+            "patch": "@@ -1 +1 @@\n-a\n+b"
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repositories/5001/pulls/4/files?per_page=100&page=2"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core"
+        },
+        "body": [
+          {
+            "sha": "e60302a205ddb77faf924b8168266ff6e331e661",
+            "filename": "docs/usage.md",
+            "status": "renamed",
+            "additions": 0,
+            "deletions": 0,
+            "changes": 0,
+            "blob_url": "https://github.com/acme/tally/blob/4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e/docs/usage.md",
+            "raw_url": "https://github.com/acme/tally/raw/4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e/docs/usage.md",
+            "contents_url": "https://api.github.com/repos/acme/tally/contents/docs/usage.md?ref=4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e",
+            "patch": "@@ -1 +1 @@\n-a\n+b",
+            "previous_filename": "docs/old-usage.md"
+          },
+          {
+            "sha": "e60302a205ddb77faf924b8168266ff6e331e661",
+            "filename": "src/legacy.ts",
+            "status": "removed",
+            "additions": 0,
+            "deletions": 12,
+            "changes": 12,
+            "blob_url": "https://github.com/acme/tally/blob/4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e/src/legacy.ts",
+            "raw_url": "https://github.com/acme/tally/raw/4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e/src/legacy.ts",
+            "contents_url": "https://api.github.com/repos/acme/tally/contents/src/legacy.ts?ref=4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e",
+            "patch": "@@ -1 +1 @@\n-a\n+b"
+          }
+        ]
+      }
+    }
+  ]
+}

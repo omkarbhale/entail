@@ -1,0 +1,278 @@
+{
+  "checks": [
+    {
+      "name": "test (macos-latest)",
+      "status": "passed",
+      "reported": true,
+      "url": "https://github.com/omkarbhale/entail/actions/runs/42827899368/job/129869917397"
+    },
+    {
+      "name": "test (ubuntu-latest)",
+      "status": "passed",
+      "reported": true,
+      "url": "https://github.com/omkarbhale/entail/actions/runs/42827899368/job/129869917838"
+    }
+  ],
+  "required": [],
+  "files": [
+    {
+      "path": "README.md",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 1,
+      "deletions": 1
+    },
+    {
+      "path": "docs/adr/0017-one-local-process-re-derives-owed-work-from-its-records-on-every-pass.md",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 3,
+      "deletions": 1
+    },
+    {
+      "path": "docs/adr/0021-the-board-is-a-single-page-app-built-with-react.md",
+      "status": "added",
+      "previousPath": null,
+      "additions": 30,
+      "deletions": 0
+    },
+    {
+      "path": "docs/spec/mvp-1.md",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 3,
+      "deletions": 2
+    },
+    {
+      "path": "package-lock.json",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 876,
+      "deletions": 1
+    },
+    {
+      "path": "package.json",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 8,
+      "deletions": 3
+    },
+    {
+      "path": "src/answer.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 3,
+      "deletions": 20
+    },
+    {
+      "path": "src/app-view.ts",
+      "status": "added",
+      "previousPath": null,
+      "additions": 245,
+      "deletions": 0
+    },
+    {
+      "path": "src/board-item.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 2,
+      "deletions": 1
+    },
+    {
+      "path": "src/board-page.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 227,
+      "deletions": 567
+    },
+    {
+      "path": "src/calls-page.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 6,
+      "deletions": 6
+    },
+    {
+      "path": "src/page.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 43,
+      "deletions": 15
+    },
+    {
+      "path": "src/repo-settings-page.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 7,
+      "deletions": 7
+    },
+    {
+      "path": "src/repo-switches-page.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 3,
+      "deletions": 3
+    },
+    {
+      "path": "src/repos-page.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 3,
+      "deletions": 3
+    },
+    {
+      "path": "src/server.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 80,
+      "deletions": 30
+    },
+    {
+      "path": "src/settings-page.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 4,
+      "deletions": 4
+    },
+    {
+      "path": "src/ticket-page.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 2,
+      "deletions": 2
+    },
+    {
+      "path": "src/ui/app.css",
+      "status": "added",
+      "previousPath": null,
+      "additions": 62,
+      "deletions": 0
+    },
+    {
+      "path": "src/ui/app.ts",
+      "status": "added",
+      "previousPath": null,
+      "additions": 206,
+      "deletions": 0
+    },
+    {
+      "path": "src/ui/board.ts",
+      "status": "added",
+      "previousPath": null,
+      "additions": 621,
+      "deletions": 0
+    },
+    {
+      "path": "src/ui/env.d.ts",
+      "status": "added",
+      "previousPath": null,
+      "additions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "src/ui/header.ts",
+      "status": "added",
+      "previousPath": null,
+      "additions": 52,
+      "deletions": 0
+    },
+    {
+      "path": "src/ui/main.ts",
+      "status": "added",
+      "previousPath": null,
+      "additions": 15,
+      "deletions": 0
+    },
+    {
+      "path": "src/ui/parts.ts",
+      "status": "added",
+      "previousPath": null,
+      "additions": 11,
+      "deletions": 0
+    },
+    {
+      "path": "test/acceptance/README.md",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 1,
+      "deletions": 1
+    },
+    {
+      "path": "test/acceptance/board-driver.test.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 93,
+      "deletions": 79
+    },
+    {
+      "path": "test/acceptance/board-driver.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 95,
+      "deletions": 160
+    },
+    {
+      "path": "test/calls-page.test.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 3,
+      "deletions": 1
+    },
+    {
+      "path": "test/server.test.ts",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 6,
+      "deletions": 3
+    },
+    {
+      "path": "test/ui/board-answer.test.ts",
+      "status": "renamed",
+      "previousPath": "test/board-answer.test.ts",
+      "additions": 122,
+      "deletions": 74
+    },
+    {
+      "path": "test/ui/board-page.test.ts",
+      "status": "renamed",
+      "previousPath": "test/board-page.test.ts",
+      "additions": 133,
+      "deletions": 176
+    },
+    {
+      "path": "test/ui/render.ts",
+      "status": "added",
+      "previousPath": null,
+      "additions": 70,
+      "deletions": 0
+    },
+    {
+      "path": "tsconfig.build.json",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 2,
+      "deletions": 1
+    },
+    {
+      "path": "tsconfig.json",
+      "status": "modified",
+      "previousPath": null,
+      "additions": 2,
+      "deletions": 1
+    },
+    {
+      "path": "tsconfig.ui.json",
+      "status": "added",
+      "previousPath": null,
+      "additions": 8,
+      "deletions": 0
+    },
+    {
+      "path": "vite.config.ts",
+      "status": "added",
+      "previousPath": null,
+      "additions": 17,
+      "deletions": 0
+    }
+  ]
+}

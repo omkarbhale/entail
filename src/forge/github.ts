@@ -12,6 +12,7 @@ import {
   type CheckReport,
   type CheckStatus,
   checksByName,
+  type ChangedFile,
   type CommitChecks,
   type Forge,
   type ForgeComment,
@@ -309,6 +310,25 @@ export class GitHubForge implements Forge {
 
   async pullRequest(number: number): Promise<PullRequest> {
     return this.#pullRequest(await this.#getJson(`repos/${this.setting.path}/pulls/${pathNumber(number)}`));
+  }
+
+  /** The PR's files from the pulls API, every page of them (GitHub lists at most 3000). */
+  async pullRequestFiles(number: number): Promise<ChangedFile[]> {
+    const path = `repos/${this.setting.path}/pulls/${pathNumber(number)}/files?per_page=${PAGE_SIZE}`;
+    const items = await this.#readPages(path, (body) => body);
+    const files = items.map((raw): ChangedFile => {
+      const where = "pull request file";
+      const status = field(raw, "status", "string", where);
+      if (!CHANGED_FILE_STATUSES.has(status)) throw this.#malformed(200, where, `unknown status ${status}`);
+      return {
+        path: field(raw, "filename", "string", where),
+        status: status as ChangedFile["status"],
+        previousPath: isObject(raw) && typeof raw.previous_filename === "string" ? raw.previous_filename : null,
+        additions: field(raw, "additions", "number", where),
+        deletions: field(raw, "deletions", "number", where),
+      };
+    });
+    return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   }
 
   /** The PR's conversation comments: GitHub keeps them as comments on the PR's issue. Review comments are not among them. */
@@ -625,6 +645,11 @@ export class GitHubForge implements Forge {
     await this.#sendJson("PATCH", path, { state: "open" });
   }
 
+  async closePullRequest(prNumber: number): Promise<void> {
+    const path = `repos/${this.setting.path}/pulls/${pathNumber(prNumber)}`;
+    await this.#sendJson("PATCH", path, { state: "closed" });
+  }
+
   /**
    * Merges through `merge-async`, pinned to `sha`, as a direct merge that
    * bypasses no rules. GitHub may run the merge in the background, so a
@@ -872,6 +897,7 @@ function parseCursor(cursor: ChangeCursor): GitHubCursor {
 
 /** The `mergeable_state`s under which GitHub would merge a PR now; `unstable` means only checks it does not require failed. */
 const MERGEABLE_STATES = new Set(["clean", "unstable", "has_hooks"]);
+const CHANGED_FILE_STATUSES = new Set(["added", "removed", "modified", "renamed", "copied", "changed", "unchanged"]);
 
 /** A check run's status: neutral and skipped count as passed. */
 function checkRunStatus(status: string, conclusion: unknown): CheckStatus {
