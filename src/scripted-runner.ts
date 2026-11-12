@@ -5,7 +5,6 @@ import {
   type ModelRunRequest,
   type ModelRunResult,
   type RunFacts,
-  type RunKind,
   type RunOptions,
 } from "./model-runner.ts";
 
@@ -19,8 +18,8 @@ export type ScriptedOutcome = ({ output: unknown; facts?: Partial<RunFacts> } | 
 };
 
 /**
- * The model runner unit tests use in place of `claude` (spec, Testing
- * Decisions). Each kind and ticket gets a list of recorded outcomes, returned
+ * The model runner unit tests use in place of `claude`. Each kind and
+ * ticket gets a list of recorded outcomes, returned
  * one per run in order. A run with nothing left to return rejects, so a test
  * never gets a result it did not script.
  *
@@ -34,14 +33,14 @@ export class ScriptedRunner implements ModelRunner {
   readonly #outcomes = new Map<string, ScriptedOutcome[]>();
 
   /** Adds outcomes for runs of this kind for this ticket (null for none). */
-  script(kind: RunKind, ticket: string | null, ...outcomes: ScriptedOutcome[]): this {
+  script(kind: string, ticket: string | null, ...outcomes: ScriptedOutcome[]): this {
     const key = keyOf(kind, ticket);
     this.#outcomes.set(key, [...(this.#outcomes.get(key) ?? []), ...outcomes]);
     return this;
   }
 
   /** Outcomes scripted but not yet returned, by kind and ticket. */
-  remaining(kind: RunKind, ticket: string | null): number {
+  remaining(kind: string, ticket: string | null): number {
     return this.#outcomes.get(keyOf(kind, ticket))?.length ?? 0;
   }
 
@@ -50,7 +49,7 @@ export class ScriptedRunner implements ModelRunner {
     this.requests.push(request as ModelRunRequest);
     const outcome = this.#outcomes.get(keyOf(request.kind, request.ticket))?.shift();
     if (outcome === undefined) {
-      throw new Error(`no scripted outcome for a ${request.kind} run on ticket ${request.ticket ?? "(none)"}`);
+      throw new Error(`no scripted outcome for kind ${request.kind} on ticket ${request.ticket ?? "(none)"}`);
     }
     if (outcome.until) await held(outcome.until, options.signal);
     const facts = (overrides: Partial<RunFacts> | null | undefined): RunFacts => ({
@@ -87,6 +86,6 @@ async function held(until: Promise<unknown>, signal: AbortSignal | undefined): P
   }
 }
 
-function keyOf(kind: RunKind, ticket: string | null): string {
+function keyOf(kind: string, ticket: string | null): string {
   return JSON.stringify([kind, ticket]);
 }

@@ -50,11 +50,11 @@ export interface AcquireOptions {
 
 /**
  * Takes the single-copy lock in the data directory, so one copy of entail
- * runs per machine (ADR-0017).
+ * runs per machine.
  *
  * - A lock held by a live process throws {@link LockHeldError}.
  * - A lock left by a process that no longer exists is taken over, and the
- *   takeover is returned so it can be logged as an unexpected stop (ADR-0019).
+ *   takeover is returned so it can be logged as an unexpected stop.
  */
 export function acquireLock(dataDirectory: string, options: AcquireOptions = {}): HeldLock {
   const pid = options.pid ?? process.pid;

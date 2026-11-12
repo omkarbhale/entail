@@ -22,8 +22,7 @@ export interface OperationalLogOptions {
 
 /**
  * The operational log: what the running process did that is not a call, such
- * as polls, backoffs, retries, machine failures, usage-limit pauses and failed
- * notices (ADR-0017). It is kept apart from the records.
+ * as polls, backoffs, retries, machine failures and usage-limit pauses.
  *
  * Each entry is one JSON line, written to `operational-log.jsonl` in the data
  * directory and to stdout. The file is rotated at 10 MB with five files kept:

@@ -5,10 +5,9 @@ import type { ChangeCursor } from "./forge/forge.ts";
 export const CURSORS_FILE = "cursors.json";
 
 /**
- * Where each enrolled repo's change detection got to on its forge, kept as
- * operational state in the data directory and never in the records: losing a
- * cursor costs only a re-scan (ADR-0015). A missing or unreadable file reads
- * as no cursors.
+ * Where each repo's change detection got to on its forge, kept as
+ * operational state in the data directory: losing a cursor costs only a
+ * re-scan. A missing or unreadable file reads as no cursors.
  *
  * Cursors are kept under a project's key (see `projectKey`), so a renamed or
  * transferred repo keeps its cursor.

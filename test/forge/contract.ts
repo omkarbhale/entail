@@ -59,7 +59,7 @@ export interface ForgeContractSubject {
   /**
    * What the forge requires before merging into `main`, as it reports it at
    * PR #4's head in the checks scenarios: the forges state this differently,
-   * GitHub as required checks and GitLab as its pipeline (ADR-0015).
+   * GitHub as required checks and GitLab as its pipeline.
    */
   required(reported: boolean): RequiredCheck[];
 }
@@ -107,7 +107,7 @@ export interface ForgeContractSubject {
  * - A PR in another repo also closes issue #1.
  * - Checks at HEAD4: `test` passed, `docs` skipped, `coverage` neutral or
  *   allowed to fail, `lint` failed, `build` running and `deploy` passed. The
- *   criteria name `test` and `e2e`, and `e2e` has not reported.
+ *   named checks are `test` and `e2e`, and `e2e` has not reported.
  * - At HEAD4B nothing has reported for the PR.
  * - On `main`, commit C2 (newest) passed `test`; C1 failed `test` and passed `lint`.
  *

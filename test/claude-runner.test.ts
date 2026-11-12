@@ -83,10 +83,10 @@ process.stdin.on("end", () => {
 
 function request(at: { path: string; sha: string }, overrides: Partial<ModelRunRequest<{ greeting: string }>> = {}): ModelRunRequest<{ greeting: string }> {
   return {
-    kind: "verdict",
+    kind: "issue-call",
     ticket: "ticket-1",
     prompt: "Judge the ticket.",
-    promptVersion: "verdict-v1",
+    promptVersion: "issue-call-v1",
     schema: greetingSchema,
     checkout: at.path,
     sha: at.sha,

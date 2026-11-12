@@ -5,7 +5,7 @@ export const VISION_PATH = "VISION.md";
 
 /**
  * One vision line: one line of VISION.md that states something, as opposed to
- * a heading, a blank line or a thematic break (ADR-0003).
+ * a heading, a blank line or a thematic break.
  */
 export interface VisionLine {
   /** The line exactly as written, without its line ending. */
@@ -38,7 +38,7 @@ export type VisionAtCommit =
 
 /**
  * A vision change: the vision lines one version of VISION.md removed and the
- * ones it added (ADR-0003). A reworded line is one removed and one added.
+ * ones it added. A reworded line is one removed and one added.
  */
 export interface VisionChange {
   removed: VisionLine[];

@@ -12,7 +12,7 @@ import {
 } from "./model-runner.ts";
 import { emitJsonSchema } from "./schema.ts";
 
-/** A run is ended after 10 minutes (spec section 1, ADR-0017). */
+/** A run is ended after 10 minutes. */
 export const RUN_TIMEOUT_MS = 10 * 60 * 1000;
 /** How long an ended run gets after SIGINT before SIGTERM, and after SIGTERM before SIGKILL. */
 export const RUN_GRACE_MS = 10 * 1000;
@@ -30,8 +30,8 @@ export interface ClaudeRunnerOptions {
 /**
  * The arguments of one run: structured JSON output against the request's
  * schema, the request's model, read-only tools, and isolation from the
- * owner's settings, MCP servers, permission prompts and saved sessions
- * (spec section 6). The prompt goes on stdin.
+ * owner's settings, MCP servers, permission prompts and saved sessions. The
+ * prompt goes on stdin.
  */
 export function claudeArguments(request: ModelRunRequest): string[] {
   return [
@@ -55,7 +55,7 @@ export function claudeArguments(request: ModelRunRequest): string[] {
 
 /**
  * The real model runner: one `claude -p` subprocess per run, on the owner's
- * subscription, in the request's read-only checkout (spec section 6). It
+ * subscription, in the request's read-only checkout. It
  * classifies every way a run can fail as a machine failure, so nothing above
  * it knows about `claude`.
  */
@@ -240,7 +240,7 @@ const USAGE_LIMIT = /usage limit|hit your limit|limit reached|rate limit/i;
 /** How `claude` words a run refused for want of a login. */
 const LOGGED_OUT = /not logged in|please run \/login|invalid api key|oauth token has expired|authentication_error|authentication failed/i;
 
-/** A run `claude` refused because it is not logged in: the all-of-entail halt (ADR-0019). */
+/** A run `claude` refused because it is not logged in. */
 export function loggedOut(text: string): MachineFailure {
   return { kind: "logged-out", message: `claude is not logged in: ${tail(text)}` };
 }
