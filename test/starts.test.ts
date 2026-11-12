@@ -180,6 +180,20 @@ test("a failing start command is recorded and never holds up the call, and a lat
   assert.equal(working.handoffs.length, 1, "the next go on the issue starts it");
 });
 
+test("a start that timed out without an exit status does not count as started, so a later go starts again", async (t) => {
+  const h = harness(t, { confirm: false, settings: { start: "hangs" } });
+  h.forge.file(12, "Count words in footnotes");
+  h.script(12, verdict());
+  await h.pass({ startWork: async () => ({ exit: null, error: "stopped by SIGTERM" }) });
+  assert.equal(started(h.dataDirectory)[0]!.exit, null);
+
+  const working = recorder();
+  h.forge.edit(12, { title: "Count words in footnotes and endnotes" });
+  h.script(12, verdict());
+  await h.pass({ startWork: working.startWork });
+  assert.equal(working.handoffs.length, 1);
+});
+
 test("a start recorded with its go but not run, as after a crash, runs at the next pass", async (t) => {
   const h = harness(t, { confirm: false, settings: { start: "my-executor" } });
   const start = recorder();
@@ -234,6 +248,14 @@ test("the start command runs under /bin/sh with the handoff as one line of JSON 
   assert.equal(slow.exit, null);
   assert.match(slow.error!, /stopped by SIGTERM/u);
   assert.ok(Date.now() - before < 2000, "a command still running at the timeout is stopped");
+});
+
+test("a start command that traps SIGTERM is killed after the grace period and the result is given", async () => {
+  const before = Date.now();
+  const result = await runStart("trap '' TERM; sleep 30", HANDOFF, 200, 300);
+  assert.equal(result.exit, null);
+  assert.match(result.error!, /stopped by SIGKILL/u);
+  assert.ok(Date.now() - before < 3000);
 });
 
 test("a start command that hands off to a process left running returns at once", async (t) => {

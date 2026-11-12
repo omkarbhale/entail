@@ -19,6 +19,8 @@ import { criteriaOf, type Pending } from "./records.ts";
 
 /** How long a start command may run before entail stops it: it hands the work off and returns. */
 export const START_TIMEOUT_MS = 60_000;
+/** How long a command gets to stop after SIGTERM before its process group is killed. */
+export const START_KILL_GRACE_MS = 5_000;
 
 /** What the start command reads on standard input. */
 export interface Handoff {
@@ -84,16 +86,21 @@ export interface StartResult {
  * left running in the background returns at once. One still running at the
  * timeout is stopped, with everything it started that is still in its process group.
  */
-export function runStart(command: string, handoff: Handoff, timeoutMs = START_TIMEOUT_MS): Promise<StartResult> {
+export function runStart(command: string, handoff: Handoff, timeoutMs = START_TIMEOUT_MS, killGraceMs = START_KILL_GRACE_MS): Promise<StartResult> {
   return new Promise((resolve) => {
     let stderr = "";
     const child = spawn("/bin/sh", ["-c", command], { stdio: ["pipe", "ignore", "pipe"], detached: true });
-    const timer = setTimeout(() => {
+    let killer: NodeJS.Timeout | undefined;
+    const signalGroup = (signal: NodeJS.Signals) => {
       try {
-        process.kill(-child.pid!, "SIGTERM");
+        process.kill(-child.pid!, signal);
       } catch {
         // Already gone.
       }
+    };
+    const timer = setTimeout(() => {
+      signalGroup("SIGTERM");
+      killer = setTimeout(() => signalGroup("SIGKILL"), killGraceMs);
     }, timeoutMs);
     child.stdin.on("error", () => {
       // A command that does not read its input closes the pipe early; its exit status is what counts.
@@ -104,10 +111,12 @@ export function runStart(command: string, handoff: Handoff, timeoutMs = START_TI
     });
     child.on("error", (error) => {
       clearTimeout(timer);
+      clearTimeout(killer);
       resolve({ exit: null, error: error.message });
     });
     child.on("exit", (code, signal) => {
       clearTimeout(timer);
+      clearTimeout(killer);
       let finished = false;
       const done = () => {
         if (finished) return;

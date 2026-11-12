@@ -616,7 +616,7 @@ export function pendingStarts(entries: readonly Entry[]): (ActedEntry & { start:
 /** Whether work on an issue was started already: its start command exited 0, or a start is still to run. */
 export function workStarted(entries: readonly Entry[], issue: number): boolean {
   const started = new Map(entries.flatMap((entry) => (entry.type === "started" ? [[entry.for, entry] as const] : [])));
-  return entries.some((entry) => entry.type === "acted" && entry.issue === issue && entry.start !== undefined && (started.get(entry.id)?.exit ?? 0) === 0);
+  return entries.some((entry) => entry.type === "acted" && entry.issue === issue && entry.start !== undefined && (started.has(entry.id) ? started.get(entry.id)!.exit === 0 : true));
 }
 
 /** The owner's actions still held, not undone and not yet acted on, with when their windows close. */
