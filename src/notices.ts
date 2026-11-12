@@ -71,8 +71,8 @@ export interface NotifierOptions {
 
 /**
  * Sends a notice when something new starts waiting: an item waiting now that
- * was not waiting when the owner was last told. An item is known by its repo
- * and issue, so an issue judged again after an edit is not announced twice.
+ * was not waiting when the owner was last told. An item is known by its repo,
+ * its kind (issue or PR) and its issue, so an issue judged again after an edit is not announced twice, and a PR call and a question on the same issue are each announced. An item is remembered only once the notice reached the owner, so a failed command is tried again at the next check.
  */
 export class Notifier {
   readonly #options: NotifierOptions;
@@ -81,16 +81,19 @@ export class Notifier {
     this.#options = options;
   }
 
-  async check(items: readonly (Pick<CallView, "call" | "repo"> & { issue: { number: number } })[]): Promise<{ sent: boolean; line: string | null }> {
-    const keys = items.map((item) => `${item.repo}#${item.issue.number}`);
+  async check(items: readonly (Pick<CallView, "call" | "repo" | "kind"> & { issue: { number: number } })[]): Promise<{ sent: boolean; line: string | null }> {
+    const keys = items.map((item) => `${item.repo}#${item.kind}#${item.issue.number}`);
     const told = this.#told();
     const fresh = keys.filter((key) => !told.has(key));
-    this.#remember(keys);
     const command = this.#options.command();
-    if (fresh.length === 0 || command === null) return { sent: false, line: null };
+    if (fresh.length === 0 || command === null) {
+      this.#remember(keys);
+      return { sent: false, line: null };
+    }
     const line = noticeLine(items);
     const result = await (this.#options.send ?? sendNotice)(command, line, this.#options.link);
     this.#options.onResult?.({ ...result, line });
+    this.#remember(result.ok ? keys : keys.filter((key) => told.has(key)));
     return { sent: result.ok, line };
   }
 

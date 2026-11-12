@@ -107,21 +107,13 @@ describe("Repos", () => {
     expect(api.sent(/DELETE/u)).toHaveLength(1);
   });
 
-  it("saves the notice command, the one setting for how the owner hears something is waiting", async () => {
+  it("shows the notice command read only, with how to change it", async () => {
     const api = fakeApi();
-    api.route((method, path, body) => {
-      if (method === "PATCH" && path === "/api/settings") {
-        api.state.settings = { ...api.state.settings, ...body };
-        return { status: 200, body: api.state.settings };
-      }
-      return undefined;
-    });
+    api.state.settings = { ...api.state.settings, notice: "examples/notice-to-file.sh" };
     renderBoard("#/repos");
-    const field = await screen.findByRole("textbox", { name: /Notices\./u });
-    await userEvent.type(field, "examples/notice-to-firstmate.sh");
-    const form = field.closest("form")!;
-    await userEvent.click(within(form).getByRole("button", { name: "Save" }));
-    expect(await within(form).findByText("Saved")).toBeTruthy();
-    expect(api.sent(/PATCH \/api\/settings/u)[0]!.body).toEqual({ notice: "examples/notice-to-firstmate.sh" });
+    expect((await screen.findAllByText("examples/notice-to-file.sh", { selector: "code" })).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/entail settings --notice '<command>'/u)).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: /Notices\./u })).toBeNull();
+    expect(api.sent(/PATCH \/api\/settings/u)).toHaveLength(0);
   });
 });

@@ -97,9 +97,9 @@ test("a notice is one line of counts and the link, never the question, and each 
       return { ok: true };
     },
   });
-  const ask = { call: "ask" as const, repo: "acme/tally", issue: { number: 11 } };
-  const no = { call: "no" as const, repo: "acme/tally", issue: { number: 14 } };
-  const other = { call: "go" as const, repo: "acme/other", issue: { number: 2 } };
+  const ask = { call: "ask" as const, kind: "issue" as const, repo: "acme/tally", issue: { number: 11 } };
+  const no = { call: "no" as const, kind: "issue" as const, repo: "acme/tally", issue: { number: 14 } };
+  const other = { call: "go" as const, kind: "issue" as const, repo: "acme/other", issue: { number: 2 } };
   assert.deepEqual(await notifier.check([ask]), { sent: false, line: null }, "no command, no notice");
   command = "true";
   assert.deepEqual(await notifier.check([ask]), { sent: false, line: null }, "an item already waiting is not announced again");
@@ -111,6 +111,30 @@ test("a notice is one line of counts and the link, never the question, and each 
   await notifier.check([no, ask]);
   assert.equal(sent.length, 2, "an issue that waits again later is announced again");
   assert.equal(noticeLine([{ call: "ask", repo: "a/b" }]), "entail: 1 question waiting on you");
+});
+
+test("an item is remembered as told only once its notice went out, and a PR call is told apart from a question on the same issue", async (t) => {
+  const directory = scratch(t);
+  let works = false;
+  const sent: string[] = [];
+  const notifier = new Notifier({
+    dataDirectory: directory,
+    command: () => "true",
+    link: "http://127.0.0.1:4380/#/waiting",
+    send: async (_command, line) => {
+      sent.push(line);
+      return works ? { ok: true } : { ok: false, error: "inbox unavailable" };
+    },
+  });
+  const ask = { call: "ask" as const, kind: "issue" as const, repo: "acme/tally", issue: { number: 11 } };
+  const merge = { call: "merge" as const, kind: "pr" as const, repo: "acme/tally", issue: { number: 11 } };
+  assert.deepEqual(await notifier.check([ask]), { sent: false, line: "entail: 1 question waiting on you" });
+  assert.deepEqual(await notifier.check([ask]), { sent: false, line: "entail: 1 question waiting on you" }, "a failed notice is tried again");
+  works = true;
+  assert.equal((await notifier.check([ask])).sent, true);
+  assert.equal(sent.length, 3);
+  assert.equal((await notifier.check([ask])).line, null, "told once it went out");
+  assert.deepEqual(await notifier.check([ask, merge]), { sent: true, line: "entail: 1 question and 1 call to confirm waiting on you" }, "a PR call on the same issue is announced too");
 });
 
 test("the notice command runs with the line and the link as its last two arguments, and the shipped example writes them to a file", async (t) => {

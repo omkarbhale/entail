@@ -319,39 +319,23 @@ function checkText(outcome: { ok: true; result: CheckResponse } | { ok: false; e
   return `Checked just now: ${parts.join(", ")}.`;
 }
 
-/** The one notice setting: a command entail runs with one line and a link, never the question. */
+/** The notice command as set, read only; it is changed from the command line. */
 function Notices({ settings }: { settings: SettingsView }) {
-  const [command, setCommand] = useState(settings.notice ?? "");
   const [name, setName] = useState(settings.owner ?? "");
-  useEffect(() => setCommand(settings.notice ?? ""), [settings.notice]);
   useEffect(() => setName(settings.owner ?? ""), [settings.owner]);
-  const notice = useSave((value: string | null) => api.changeSettings({ notice: value }));
   const owner = useSave((value: string) => api.changeSettings({ owner: value }));
-  const saveNotice = (event: FormEvent) => {
-    event.preventDefault();
-    notice.mutation.mutate(command.trim() === "" ? null : command.trim());
-  };
   const saveName = (event: FormEvent) => {
     event.preventDefault();
     if (name.trim() !== "") owner.mutation.mutate(name.trim());
   };
   return (
     <div className="notice-line">
-      <form onSubmit={saveNotice} className="setting">
-        <label htmlFor="notice-command">
-          <b>Notices.</b> When something starts waiting, entail runs this command with one line and a link (<code>$1</code>, <code>$2</code>), never the question itself:
-        </label>
-        <div className="ov-row">
-          <input id="notice-command" className="field mono" placeholder="none: open the board yourself" value={command} onChange={(event) => setCommand(event.target.value)} autoComplete="off" spellCheck={false} />
-          <button className="btn sm" type="submit" disabled={notice.mutation.isPending || command.trim() === (settings.notice ?? "")}>
-            Save
-          </button>
-          <Saved pending={notice.mutation.isPending} saved={notice.saved} />
-        </div>
+      <div className="setting">
+        <b>Notices.</b> When something starts waiting, entail runs a command with one line and a link (<code>$1</code>, <code>$2</code>), never the question itself. Now: <code id="notice-command">{settings.notice ?? "none"}</code>
         <p className="hint">
-          e.g. <code>examples/notice-to-firstmate.sh</code> or <code>examples/notice-to-file.sh</code> in entail’s checkout. The line reads like “entail: 1 question and 3 calls to confirm waiting on you”; the tab title carries the count too.
+          Change it from the command line: <code>entail settings --notice '&lt;command&gt;'</code> (or <code>--notice none</code>), e.g. <code>examples/notice-to-firstmate.sh</code> or <code>examples/notice-to-file.sh</code> in entail’s checkout. The line reads like “entail: 1 question and 3 calls to confirm waiting on you”; the tab title carries the count too.
         </p>
-      </form>
+      </div>
       <form onSubmit={saveName} className="setting">
         <label htmlFor="owner-name">
           <b>Your name.</b> entail’s comments open with “Speaking from {settings.owner ?? "your GitHub name"}’s entail”, and your answers are recorded under it.

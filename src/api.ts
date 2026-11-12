@@ -53,8 +53,8 @@ import { loggedRepos, readLog, readSettings, repoState, writeSettings, type Glob
  *   DELETE /api/repos/:owner/:name            unenrolls
  *   POST   /api/repos/:owner/:name/check      checks the repo now, and answers with what the check did
  *   POST   /api/repos/:owner/:name/backlog    judges the issues open on GitHub that have no call yet
- *   GET    /api/settings                      the owner's name, the default model and effort, the notice command
- *   PATCH  /api/settings                      {"owner"?: string, "model"?: string, "effort"?: string, "notice"?: string|null}
+ *   GET    /api/settings                      the owner's name, the default model and effort, the notice command (read only here)
+ *   PATCH  /api/settings                      {"owner"?: string, "model"?: string, "effort"?: string}
  *
  * A call is on an issue or on a PR: each item carries `kind` ("issue" or
  * "pr") and, on a PR's call, `pr` with the criteria checklist, the facts read
@@ -237,7 +237,11 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
 
   if (path === "/api/settings") {
     if (method === "GET") return send(response, 200, settingsView(settings()));
-    if (method === "PATCH") return send(response, 200, changed(settingsView(changeSettings(dataDirectory, options.defaultModel, await readJson(request)))));
+    if (method === "PATCH") {
+      const change = await readJson(request);
+      if ("notice" in change) throw new OwnerError(400, "the notice command is set from the command line, not here: entail settings --notice '<command>' (or --notice none)");
+      return send(response, 200, changed(settingsView(changeSettings(dataDirectory, options.defaultModel, change))));
+    }
     return send(response, 405, { error: `${method} is not allowed on ${path}` });
   }
   return send(response, 404, { error: `nothing at ${path}` });
