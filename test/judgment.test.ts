@@ -39,7 +39,7 @@ function inputs(overrides: Partial<JudgmentInputs> = {}): JudgmentInputs {
     issueText: "# Send usage stats home\n\nCount commands and upload them nightly.\n",
     vision: { text: VISION, commit: "b".repeat(40) },
     pins: ["How totals are rounded"],
-    precedents: [precedent("acme-tally-3", "no"), precedent("acme-tally-4", "go")],
+    precedents: [precedent("acme--tally-3", "no"), precedent("acme--tally-4", "go")],
     checkout: "/checkout",
     sha: "b".repeat(40),
     ...overrides,
@@ -67,10 +67,10 @@ test("the prompt asks the owner's question and holds the vision in full, the pin
   assert.ok(prompt.includes(`VISION.md at ${"b".repeat(40)}`));
   assert.ok(prompt.includes(VISION.trim()), "the whole vision");
   assert.ok(prompt.includes("- How totals are rounded"), "the pins");
-  assert.ok(prompt.includes("Case acme-tally-3: the owner's call was no"));
-  assert.ok(prompt.includes("The reason for acme-tally-3."));
+  assert.ok(prompt.includes("Case acme--tally-3: the owner's call was no"));
+  assert.ok(prompt.includes("The reason for acme--tally-3."));
   assert.ok(prompt.includes("> quoted"), "the owner's words on a past case");
-  assert.ok(prompt.includes("# The acme-tally-4 issue"), "a precedent's issue");
+  assert.ok(prompt.includes("# The acme--tally-4 issue"), "a precedent's issue");
   assert.ok(prompt.includes("## The issue: acme/tally#12"));
   assert.ok(prompt.includes("Count commands and upload them nightly."), "the issue");
   assert.ok(prompt.includes(`read-only checkout of acme/tally at ${"b".repeat(40)}`));
@@ -176,14 +176,14 @@ test("judge reports a machine failure, an off-schema answer and an ask without a
 });
 
 test("a call prints with its reason, what it rests on, and its criteria or question", () => {
-  const go = routeVerdict(verdict({ criteria: [flag], rests_on: { vision_lines: ["New features are opt-in."], cases: ["acme-tally-4"] } }));
+  const go = routeVerdict(verdict({ criteria: [flag], rests_on: { vision_lines: ["New features are opt-in."], cases: ["acme--tally-4"] } }));
   assert.ok(go.ok);
   assert.equal(
     formatCall(go.call),
     [
       "go: It makes the product better.",
       "  rests on the vision: > New features are opt-in.",
-      "  rests on case acme-tally-4",
+      "  rests on case acme--tally-4",
       "",
       "Criteria:",
       "  - [vision] The stats are behind a flag, off by default.",

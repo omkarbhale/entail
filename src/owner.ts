@@ -337,8 +337,7 @@ export async function confirmCall(dataDirectory: string, id: number, by: string,
   const status = statusOf(entries, call);
   if (call.call.call === "ask") throw new OwnerError(409, `call ${id} is a question: answer it`);
   if (status.status !== "waiting") throw new OwnerError(409, `call ${id} is not waiting to be confirmed (${status.status})`);
-  const action = appendEntry(dataDirectory, repo, { type: "confirmed", by, call: id }, now);
-  await recordCase(dataDirectory, repo, call, action);
+  const action = await act(dataDirectory, repo, call, { type: "confirmed", by, call: id }, now);
   return action;
 }
 
@@ -357,8 +356,7 @@ export async function overrideCall(dataDirectory: string, id: number, by: string
   if (status.status === "overridden" || status.status === "answered") throw new OwnerError(409, `call ${id} is already the owner's (${status.status})`);
   const effective = call.owner?.call ?? call.call.call;
   if (owner === effective) throw new OwnerError(409, `call ${id} is already ${owner}; confirm it instead`);
-  const action = appendEntry(dataDirectory, repo, { type: "overridden", by, call: id, to: owner, reason: words }, now);
-  await recordCase(dataDirectory, repo, call, action);
+  const action = await act(dataDirectory, repo, call, { type: "overridden", by, call: id, to: owner, reason: words }, now);
   return action;
 }
 
@@ -370,8 +368,7 @@ export async function answerCall(dataDirectory: string, id: number, by: string, 
   const status = statusOf(entries, call);
   if (call.call.call !== "ask") throw new OwnerError(409, `call ${id} is a ${call.call.call}, not a question: confirm or override it`);
   if (status.status !== "waiting") throw new OwnerError(409, `call ${id} is not waiting for an answer (${status.status})`);
-  const action = appendEntry(dataDirectory, repo, { type: "answered", by, call: id, to: owner, answer: words }, now);
-  await recordCase(dataDirectory, repo, call, action);
+  const action = await act(dataDirectory, repo, call, { type: "answered", by, call: id, to: owner, answer: words }, now);
   return action;
 }
 
@@ -416,8 +413,13 @@ export function caseFor(repo: string, call: CallEntry, action: OwnerAction): Cas
   };
 }
 
-async function recordCase(dataDirectory: string, repo: string, call: CallEntry, action: OwnerAction): Promise<void> {
-  await writeCase(join(dataDirectory, OWNER_CASE_BOOK), caseFor(repo, call, action));
+/** Writes the owner's case first, then logs the action, so a case that cannot be written leaves the call still waiting. */
+type NewOwnerAction = Omit<ConfirmedEntry, "id" | "at"> | Omit<OverriddenEntry, "id" | "at"> | Omit<AnsweredEntry, "id" | "at">;
+
+async function act<E extends NewOwnerAction>(dataDirectory: string, repo: string, call: CallEntry, entry: E, now: Date): Promise<E & { id: number; at: string }> {
+  const draft = { id: 0, at: now.toISOString(), ...entry } as unknown as OwnerAction;
+  await writeCase(join(dataDirectory, OWNER_CASE_BOOK), caseFor(repo, call, draft));
+  return appendEntry(dataDirectory, repo, entry, now);
 }
 
 function oneLine(text: string): string {

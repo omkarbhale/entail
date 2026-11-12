@@ -212,7 +212,7 @@ test("a confirmed no closes the issue, and the owner's call lands in the case bo
   assert.deepEqual(h.forge.closed, [14]);
 
   const [past] = await readCaseBook(join(h.dataDirectory, OWNER_CASE_BOOK));
-  assert.equal(past!.slug, "acme-tally-14");
+  assert.equal(past!.slug, "acme--tally-14");
   assert.equal(past!.call, "no");
   assert.equal(past!.reason, "Another product.");
   assert.equal(past!.reasonFrom, "entail's reason, confirmed by Omkar on the board");

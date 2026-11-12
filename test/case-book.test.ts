@@ -103,8 +103,8 @@ test("precedents are the same repo's cases first, then the ones sharing the most
 test("a case written by the owner reads back, replaces an earlier one of the same issue, and wins over the shipped book", async (t) => {
   const owners = temporary(t);
   const shipped = await readCaseBook(DEFAULT_CASE_BOOK);
-  const base = shipped.find((past) => past.slug === "omkarbhale-entail-174")!;
-  assert.equal(caseSlug("OmkarBhale/entail", 174), "omkarbhale-entail-174");
+  const base = shipped.find((past) => past.slug === "omkarbhale--entail-174")!;
+  assert.equal(caseSlug("OmkarBhale/entail", 174), "omkarbhale--entail-174");
 
   await writeCase(owners, { ...base, call: "go", reason: "First thought.", notes: "" });
   await writeCase(owners, { ...base, call: "go", reason: "On reflection, yes.", notes: "## The owner's words\n\n> yes" });
