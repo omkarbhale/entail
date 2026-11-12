@@ -127,9 +127,9 @@ test("what waits on the owner: questions first, then calls to confirm, oldest fi
 test("an item links the vision lines and the past cases its call rests on", (t) => {
   const directory = dataDirectory(t);
   enroll(directory, "acme/tally", "Omkar");
-  const rested = call(directory, "acme/tally", 5, { ...GO, restsOn: { visionLines: ["New features are opt-in."], cases: ["acme--tally-3", "gone-case"] } });
+  const rested = call(directory, "acme/tally", 5, { ...GO, restsOn: { visionLines: ["New features are opt-in."], cases: ["acme-tally-3", "gone-case"] } });
   const past: Case = {
-    slug: "acme--tally-3",
+    slug: "acme-tally-3",
     repo: "acme/tally",
     issue: 3,
     issueText: "# Three\n",
@@ -146,7 +146,7 @@ test("an item links the vision lines and the past cases its call rests on", (t) 
   assert.deepEqual(item!.restsOn, {
     visionLines: [{ text: "New features are opt-in.", url: `https://github.com/acme/tally/blob/${"c".repeat(40)}/VISION.md#L4` }],
     cases: [
-      { slug: "acme--tally-3", title: "acme/tally#3", url: "https://github.com/acme/tally/issues/3" },
+      { slug: "acme-tally-3", title: "acme/tally#3", url: "https://github.com/acme/tally/issues/3" },
       { slug: "gone-case", title: "gone-case", url: null },
     ],
   });

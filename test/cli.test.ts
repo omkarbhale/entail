@@ -97,5 +97,5 @@ test("from the command line the owner sets their name, reads what waits, confirm
   assert.match(log, /#12 {2}NO by entail: Count words in footnotes\n {6}Footnotes are not prose\.\n {6}confirmed by Omkar/u);
   assert.match(log, /#12 {2}CONFIRMED by Omkar/u);
   assert.match(log, /acme\/tally  Omkar set confirm mode off\n/u, "the model was already the default, so only confirm mode changed");
-  assert.ok(existsSync(join(dataDirectory, "cases", "acme--tally-12", "call.md")));
+  assert.ok(existsSync(join(dataDirectory, "cases", "acme-tally-12", "call.md")));
 });

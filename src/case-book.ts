@@ -107,9 +107,9 @@ export async function readCaseBooks(directories: readonly string[]): Promise<Cas
   return [...bySlug.values()].sort((a, b) => a.slug.localeCompare(b.slug));
 }
 
-/** The slug of the case for an issue: `owner--name-number`; GitHub owners hold no `--`, so no two issues share a slug. */
+/** The slug of the case for an issue: `owner-name-number`. */
 export function caseSlug(repo: string, issue: number): string {
-  return `${repo.replace("/", "--")}-${issue}`.toLowerCase();
+  return `${repo.replace("/", "-")}-${issue}`.toLowerCase();
 }
 
 /**
