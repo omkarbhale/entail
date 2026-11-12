@@ -238,7 +238,7 @@ test("check now runs a pass for the repo, and the backlog asks entail to judge t
 
 test("the settings for every repo are read and changed, the notice and start commands only read", async (t) => {
   const api = await serve(t);
-  assert.deepEqual((await api.call("GET", "/api/settings")).body, { owner: null, model: "claude-opus-5-5", effort: "low", notice: null, start: null });
+  assert.deepEqual((await api.call("GET", "/api/settings")).body, { owner: null, model: "claude-opus-5-5", effort: "high", notice: null, start: null });
   const changed = await api.call("PATCH", "/api/settings", { owner: "Omkar", effort: "medium" });
   assert.deepEqual(changed.body, { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null });
   assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null });

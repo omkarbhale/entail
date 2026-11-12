@@ -33,7 +33,7 @@ import { formatLandingCall, judgeLanding } from "./landing.ts";
 import { acquireLock, holderIsRunning, readLock } from "./lock.ts";
 import { Loop } from "./loop.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
-import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS, type Effort, type RunFacts } from "./model-runner.ts";
+import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS, REPLAY_EFFORT, type Effort, type RunFacts } from "./model-runner.ts";
 import { Notifier } from "./notices.ts";
 import { OperationalLog } from "./operational-log.ts";
 import {
@@ -124,7 +124,8 @@ replay     run every case in the case book through its judgment (issue cases thr
            agreement with the owner's calls, disagreements first.
 
 --model    the model to run (default: the setting, ${DEFAULT_MODEL} unless changed)
---effort   ${EFFORTS.join(", ")} (default: the setting, ${DEFAULT_EFFORT} unless changed)
+--effort   ${EFFORTS.join(", ")} (default: the setting, ${DEFAULT_EFFORT} unless changed; for
+           replay, ${REPLAY_EFFORT})
 --cases    the case book directory (default: the one entail ships with and yours)
 
 Your confirmations, overrides and answers are written as cases to cases/ in entail's
@@ -748,7 +749,7 @@ async function replayCommand(args: string[]): Promise<number> {
   const concurrency = values.concurrency === undefined ? 2 : Number(values.concurrency);
   if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw new UsageError("--concurrency must be a whole number of at least 1");
   const dataDirectory = ensureDataDirectory();
-  const options = withSettings(settingsIn(dataDirectory));
+  const options = withSettings({ ...settingsIn(dataDirectory), effort: REPLAY_EFFORT });
   const book = values.cases === undefined ? await caseBook(dataDirectory) : await readCaseBook(values.cases);
   const landings = values.cases === undefined ? await landingBook(dataDirectory) : await readLandingCaseBook(values.cases);
   if (book.length === 0 && landings.length === 0) throw new Error("the case book has no cases");
