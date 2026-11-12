@@ -5,8 +5,7 @@ import type { CallView } from "./api-types.ts";
 
 /**
  * How the owner learns that something is waiting: one line and a link, sent
- * by a command the owner sets (`entail settings --notice '<command>'`, or on
- * the board). The line never carries the question or any text of the issue,
+ * by a command the owner sets (`entail settings --notice '<command>'`). The line never carries the question or any text of the issue,
  * and nothing is taken back from it: the answer is given on the board.
  *
  * The command is a shell command line; entail runs it with `/bin/sh -c`
