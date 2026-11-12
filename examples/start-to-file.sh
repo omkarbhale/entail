@@ -5,7 +5,7 @@
 #   entail settings --start '/path/to/entail/examples/start-to-file.sh'
 #
 # entail runs the command when a go acts (at once, or once you confirm it),
-# once per issue, with the handoff as one line of JSON on standard input: the
+# and not again for an issue unless the start failed, with the handoff as one line of JSON on standard input: the
 # repo, the issue's number, URL and title, the call's reason, the criteria the
 # PR must meet with where each comes from, and the VISION.md commit the go was
 # made against. Exit 0 once the work is handed off; entail records the exit status
