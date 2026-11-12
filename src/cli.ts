@@ -1,35 +1,90 @@
 #!/usr/bin/env node
+import { once } from "node:events";
+import { join } from "node:path";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
-import { DEFAULT_CASE_BOOK, precedentsFor, readCaseBook, renderIssue, type Case } from "./case-book.ts";
+import { changeSettings, createApi } from "./api.ts";
+import { DEFAULT_CASE_BOOK, OWNER_CASE_BOOK, precedentsFor, readCaseBook, readCaseBooks, renderIssue, type Case } from "./case-book.ts";
+import { ChangeDeduplicator } from "./changes.ts";
 import { ClaudeRunner } from "./claude-runner.ts";
+import { CursorStore } from "./cursors.ts";
 import { ensureDataDirectory } from "./data-directory.ts";
 import { createForge } from "./forge/create-forge.ts";
 import type { Forge, ForgeSetting } from "./forge/forge.ts";
 import { formatCall, judge, type JudgeOptions } from "./judgment.ts";
+import { acquireLock } from "./lock.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
-import { DEFAULT_MODEL, EFFORTS, type Effort, type RunFacts } from "./model-runner.ts";
-import { pinsFile, readPins } from "./pins.ts";
+import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS, type Effort, type RunFacts } from "./model-runner.ts";
+import { OperationalLog } from "./operational-log.ts";
+import {
+  answerCall,
+  changeRepoSettings,
+  checkSettingsChange,
+  confirmCall,
+  enroll,
+  formatLog,
+  formatWaiting,
+  latestCallOn,
+  logItems,
+  overrideCall,
+  OwnerError,
+  repoName,
+  repoViews,
+  unenroll,
+  waitingItems,
+} from "./owner.ts";
+import { pinsFile } from "./pins.ts";
+import { readSettings, type GlobalSettings } from "./records.ts";
 import { formatReplay, replay } from "./replay.ts";
-import { readVision } from "./vision.ts";
+import { mirrorReader, runPass, type PassOptions } from "./watch.ts";
 
-/** The effort a run uses unless `--effort` names another. */
-export const DEFAULT_EFFORT: Effort = "low";
+/** The port the board's API is served on unless --port names another. */
+export const DEFAULT_PORT = 4380;
+
+/** How long `entail run` waits between passes unless --interval says otherwise. */
+export const DEFAULT_INTERVAL_SECONDS = 60;
 
 const USAGE = `usage:
+  entail enroll <owner/repo> [--no-confirm] [--since <time>]
+  entail unenroll <owner/repo>
+  entail repos [--all] [--json]
+  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--owner <name>]
+  entail run [--once] [--dry-run] [--interval <seconds>] [--port <n>]
+  entail waiting [<owner/repo>] [--json]
+  entail confirm <owner/repo>#<n>
+  entail override <owner/repo>#<n> go|no <reason>
+  entail answer <owner/repo>#<n> go|no <answer>
+  entail calls [<owner/repo>] [--json]
   entail judge <owner/repo>#<n> [--model <model>] [--effort <level>] [--json]
   entail replay [--model <model>] [--effort <level>] [--cases <dir>] [--concurrency <n>] [--json]
 
-judge    makes the owner's call on one GitHub issue: go, no or ask, with the reason,
-         and the criteria for go or the question for ask. It posts nothing.
-replay   runs every case in the case book through the judgment and prints
-         agreement with the owner's calls, disagreements first.
+enroll     watch a repo: entail makes the call on each issue filed or edited from now
+           (or --since) on, and on each /entail mention. A repo starts in confirm mode,
+           where a go or no is posted but nothing is closed or started until you confirm.
+unenroll   stop watching a repo; its log is kept.
+repos      the enrolled repos with confirm mode, model, effort and what waits on you.
+settings   with a repo, its confirm mode, model and effort ("default" uses the one for
+           every repo); without, your name on comments and the default model and effort.
+run        poll every enrolled repo, make each call once per edit, post it, and serve the
+           board's API on 127.0.0.1 (port ${DEFAULT_PORT} by default). --once makes one pass;
+           --dry-run makes one pass that posts, closes and records nothing and prints
+           what it would post.
+waiting    the questions and calls to confirm waiting on you, across repos.
+confirm    confirm the latest call on an issue: entail then acts on it.
+override   replace the latest go or no on an issue with your call and reason.
+answer     answer the question on an issue with your call and words.
+calls      the log: every call with its reason, and every confirmation, override,
+           answer and post, for one repo or all.
+judge      make the call on one issue and print it. It posts nothing.
+replay     run every case in the case book through the judgment and print agreement
+           with the owner's calls, disagreements first.
 
---model    the model to run (default ${DEFAULT_MODEL})
---effort   ${EFFORTS.join(", ")} (default ${DEFAULT_EFFORT})
---cases    the case book directory (default: the one entail ships with)
+--model    the model to run (default: the setting, ${DEFAULT_MODEL} unless changed)
+--effort   ${EFFORTS.join(", ")} (default: the setting, ${DEFAULT_EFFORT} unless changed)
+--cases    the case book directory (default: the one entail ships with and yours)
 
-A repo's pins are read from pins/<host>/<owner>/<name>.md in entail's data
-directory, one topic per line.`;
+Your confirmations, overrides and answers are written as cases to cases/ in entail's
+data directory, next to the case book entail ships with. A repo's pins are read from
+pins/<host>/<owner>/<name>.md there, one topic per line.`;
 
 class UsageError extends Error {}
 
@@ -37,6 +92,24 @@ export async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
   try {
     switch (command) {
+      case "enroll":
+        return await enrollCommand(rest);
+      case "unenroll":
+        return await unenrollCommand(rest);
+      case "repos":
+        return reposCommand(rest);
+      case "settings":
+        return await settingsCommand(rest);
+      case "run":
+        return await runCommand(rest);
+      case "waiting":
+        return await waitingCommand(rest);
+      case "confirm":
+      case "override":
+      case "answer":
+        return await ownerCommand(command, rest);
+      case "calls":
+        return await callsCommand(rest);
       case "judge":
         return await judgeCommand(rest);
       case "replay":
@@ -51,7 +124,7 @@ export async function main(argv: string[]): Promise<number> {
         throw new UsageError(`unknown command: ${command}`);
     }
   } catch (error) {
-    if (error instanceof UsageError) {
+    if (error instanceof UsageError || (error instanceof OwnerError && error.status === 400)) {
       console.error(`entail: ${error.message}\n\n${USAGE}`);
       return 2;
     }
@@ -66,10 +139,28 @@ const RUN_OPTIONS = {
   json: { type: "boolean" },
 } as const;
 
-function runOptions(values: { model?: string | undefined; effort?: string | undefined }): JudgeOptions {
-  const effort = values.effort ?? DEFAULT_EFFORT;
-  if (!(EFFORTS as readonly string[]).includes(effort)) throw new UsageError(`--effort must be one of ${EFFORTS.join(", ")}`);
-  return { model: values.model ?? DEFAULT_MODEL, effort: effort as Effort };
+/** Checks --model and --effort; what they leave out comes from the settings, read only once the flags are known to be good. */
+function runOptions(values: { model?: string | undefined; effort?: string | undefined }): (settings: GlobalSettings) => JudgeOptions {
+  if (values.effort !== undefined && !(EFFORTS as readonly string[]).includes(values.effort)) throw new UsageError(`--effort must be one of ${EFFORTS.join(", ")}`);
+  return (settings) => ({ model: values.model ?? settings.model, effort: (values.effort as Effort | undefined) ?? settings.effort });
+}
+
+function settingsIn(dataDirectory: string): GlobalSettings {
+  return readSettings(dataDirectory, { model: DEFAULT_MODEL });
+}
+
+/** The case book: the one entail ships with, then the owner's own, whose cases win. */
+function caseBook(dataDirectory: string): Promise<Case[]> {
+  return readCaseBooks([DEFAULT_CASE_BOOK, join(dataDirectory, OWNER_CASE_BOOK)]);
+}
+
+/** The owner's display name: the setting, else the GitHub account `gh` is logged in as. */
+async function ownerName(dataDirectory: string): Promise<string> {
+  const set = settingsIn(dataDirectory).owner;
+  if (set !== null) return set;
+  const actor = await createForge({ forge: "github", host: GITHUB, path: "github/docs" }).currentActor();
+  if (actor === null) throw new Error("gh is not logged in, and no name is set: run gh auth login, or entail settings --owner <your name>");
+  return actor.username;
 }
 
 function parse<const O extends ParseArgsOptionsConfig>(args: string[], options: O) {
@@ -101,28 +192,230 @@ async function openRepo(setting: ForgeSetting, dataDirectory: string): Promise<{
   return { forge, mirror };
 }
 
+function oneRepo(positionals: string[], command: string): string {
+  if (positionals.length !== 1) throw new UsageError(`${command} takes one repo, as owner/repo`);
+  return repoName(positionals[0]!);
+}
+
+async function enrollCommand(args: string[]): Promise<number> {
+  const { values, positionals } = parse(args, { "no-confirm": { type: "boolean" }, since: { type: "string" } });
+  const repo = oneRepo(positionals, "enroll");
+  const since = values.since === undefined ? undefined : new Date(values.since);
+  if (since !== undefined && Number.isNaN(since.getTime())) throw new UsageError(`--since is a date or time, such as 2026-11-12 or 2026-11-12T09:00:00Z, not ${values.since}`);
+  const dataDirectory = ensureDataDirectory();
+  // Reading the repo checks it exists and gh can see it.
+  await createForge({ forge: "github", host: GITHUB, path: repo }).project();
+  const state = enroll(dataDirectory, repo, await ownerName(dataDirectory), { confirm: values["no-confirm"] !== true, ...(since ? { since } : {}) });
+  console.log(`${repo} is enrolled: entail judges issues filed from ${state.since} on, and each /entail mention. Confirm mode is ${state.confirm ? "on" : "off"}.`);
+  return 0;
+}
+
+async function unenrollCommand(args: string[]): Promise<number> {
+  const { positionals } = parse(args, {});
+  const repo = oneRepo(positionals, "unenroll");
+  const dataDirectory = ensureDataDirectory();
+  unenroll(dataDirectory, repo, await ownerName(dataDirectory));
+  console.log(`${repo} is no longer watched; its log is kept.`);
+  return 0;
+}
+
+function reposCommand(args: string[]): number {
+  const { values, positionals } = parse(args, { all: { type: "boolean" }, json: { type: "boolean" } });
+  if (positionals.length > 0) throw new UsageError("repos takes no arguments");
+  const dataDirectory = ensureDataDirectory();
+  const repos = repoViews(dataDirectory, settingsIn(dataDirectory), { all: values.all === true });
+  if (values.json) console.log(JSON.stringify(repos, null, 2));
+  else if (repos.length === 0) console.log("No repo is enrolled. Enroll one with: entail enroll owner/repo");
+  else {
+    for (const repo of repos) {
+      const own = (value: string | null) => (value === null ? " (default)" : "");
+      console.log(
+        `${repo.repo}${repo.enrolled ? "" : " (not enrolled)"}: confirm mode ${repo.confirm ? "on" : "off"}, ${repo.uses.model}${own(repo.model)} at ${repo.uses.effort} effort${own(repo.effort)}; ${repo.calls} calls, ${repo.waiting} waiting on you` +
+          (repo.checked > 0 ? `; you confirmed ${repo.agreed} of the ${repo.checked} calls you checked` : ""),
+      );
+    }
+  }
+  return 0;
+}
+
+async function settingsCommand(args: string[]): Promise<number> {
+  const { values, positionals } = parse(args, { confirm: { type: "string" }, model: { type: "string" }, effort: { type: "string" }, owner: { type: "string" } });
+  if (positionals.length > 1) throw new UsageError("settings takes at most one repo");
+  const dataDirectory = ensureDataDirectory();
+  if (positionals.length === 1) {
+    if (values.owner !== undefined) throw new UsageError("--owner is a setting for every repo; leave the repo out");
+    const change: Record<string, unknown> = {};
+    if (values.confirm !== undefined) {
+      if (values.confirm !== "on" && values.confirm !== "off") throw new UsageError("--confirm is on or off");
+      change.confirm = values.confirm === "on";
+    }
+    if (values.model !== undefined) change.model = values.model === "default" ? null : values.model;
+    if (values.effort !== undefined) change.effort = values.effort === "default" ? null : values.effort;
+    const repo = repoName(positionals[0]!);
+    const state =
+      Object.keys(change).length === 0
+        ? repoViews(dataDirectory, settingsIn(dataDirectory), { all: true }).find((view) => view.repo === repo)
+        : changeRepoSettings(dataDirectory, repo, await ownerName(dataDirectory), checkSettingsChange(change));
+    if (state === undefined) throw new Error(`${repo} has never been enrolled`);
+    const settings = settingsIn(dataDirectory);
+    console.log(`${repo}: confirm mode ${state.confirm ? "on" : "off"}, model ${state.model ?? `${settings.model} (default)`}, effort ${state.effort ?? `${settings.effort} (default)`}`);
+    return 0;
+  }
+  if (values.confirm !== undefined) throw new UsageError("--confirm is a setting of one repo: name it");
+  const change: Record<string, unknown> = {};
+  for (const key of ["owner", "model", "effort"] as const) if (values[key] !== undefined) change[key] = values[key];
+  const settings = Object.keys(change).length === 0 ? settingsIn(dataDirectory) : changeSettings(dataDirectory, DEFAULT_MODEL, change);
+  console.log(`your name on comments: ${settings.owner ?? "(not set: the GitHub account gh is logged in as)"}\ndefault model: ${settings.model}\ndefault effort: ${settings.effort}`);
+  return 0;
+}
+
+async function runCommand(args: string[]): Promise<number> {
+  const { values, positionals } = parse(args, { once: { type: "boolean" }, "dry-run": { type: "boolean" }, interval: { type: "string" }, port: { type: "string" } });
+  if (positionals.length > 0) throw new UsageError("run takes no arguments");
+  const interval = values.interval === undefined ? DEFAULT_INTERVAL_SECONDS : Number(values.interval);
+  if (!Number.isFinite(interval) || interval < 5) throw new UsageError("--interval is a number of seconds, at least 5");
+  const port = values.port === undefined ? DEFAULT_PORT : Number(values.port);
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new UsageError("--port is a port number");
+  const dryRun = values["dry-run"] === true;
+  const single = dryRun || values.once === true;
+  const dataDirectory = ensureDataDirectory();
+  const lock = dryRun ? null : acquireLock(dataDirectory);
+  const log = new OperationalLog(dataDirectory, { echo: null });
+  if (lock?.takeover) log.warn("unexpected-stop", { previous: lock.takeover.previous });
+  const forges = new Map<string, Forge>();
+  const seen = new Map<string, ChangeDeduplicator>();
+  const cursors = new CursorStore(dataDirectory);
+  const reader = mirrorReader(dataDirectory);
+  const runner = new ClaudeRunner();
+  const stop = new AbortController();
+  const passOptions = async (): Promise<PassOptions> => ({
+    dataDirectory,
+    owner: await ownerName(dataDirectory),
+    settings: settingsIn(dataDirectory),
+    forgeFor: (repo) => {
+      let forge = forges.get(repo);
+      if (forge === undefined) forges.set(repo, (forge = createForge({ forge: "github", host: GITHUB, path: repo })));
+      return forge;
+    },
+    reader,
+    runner,
+    cursors,
+    seen,
+    book: () => caseBook(dataDirectory),
+    log,
+    dryRun,
+    print: (text) => console.log(text),
+    signal: stop.signal,
+  });
+
+  try {
+    if (single) {
+      if (dryRun) console.log("dry run: nothing is posted, closed or recorded\n");
+      const report = await runPass(await passOptions());
+      console.log(`\n${report.repos} repos, ${report.judged} calls made, ${report.posted} ${dryRun ? "posts it would make" : "posts"}${report.failed.length > 0 ? `; not finished: ${report.failed.join(", ")}` : ""}`);
+      return report.failed.length > 0 ? 1 : 0;
+    }
+
+    let wake: (() => void) | null = null;
+    const server = createApi({
+      dataDirectory,
+      owner: () => ownerName(dataDirectory),
+      defaultModel: DEFAULT_MODEL,
+      book: () => caseBook(dataDirectory),
+      wake: () => wake?.(),
+    });
+    server.listen(port, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    console.log(`entail is watching; the board's API is on http://127.0.0.1:${typeof address === "object" && address !== null ? address.port : port}/api/waiting`);
+    for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => stop.abort(new Error(`stopped by ${signal}`)));
+    try {
+      while (!stop.signal.aborted) {
+        try {
+          const report = await runPass(await passOptions());
+          log.info("pass", { ...report });
+        } catch (error) {
+          if (stop.signal.aborted) break;
+          log.error("pass-error", { error: error instanceof Error ? error.message : String(error) });
+          console.error(`entail: the pass failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, interval * 1000);
+          const done = () => {
+            clearTimeout(timer);
+            wake = null;
+            resolve();
+          };
+          wake = done;
+          stop.signal.addEventListener("abort", done, { once: true });
+        });
+      }
+    } finally {
+      server.close();
+    }
+    return 0;
+  } finally {
+    lock?.release();
+  }
+}
+
+async function waitingCommand(args: string[]): Promise<number> {
+  const { values, positionals } = parse(args, { json: { type: "boolean" } });
+  if (positionals.length > 1) throw new UsageError("waiting takes at most one repo");
+  const dataDirectory = ensureDataDirectory();
+  const items = waitingItems(dataDirectory, await caseBook(dataDirectory), positionals[0] === undefined ? undefined : repoName(positionals[0]));
+  console.log(values.json ? JSON.stringify(items, null, 2) : formatWaiting(items));
+  return 0;
+}
+
+async function ownerCommand(command: "confirm" | "override" | "answer", args: string[]): Promise<number> {
+  const { positionals } = parse(args, {});
+  const expected = command === "confirm" ? 1 : 3;
+  if (positionals.length !== expected) {
+    throw new UsageError(command === "confirm" ? "confirm takes one issue, as owner/repo#n" : `${command} takes an issue, go or no, and your ${command === "override" ? "reason" : "answer"} in quotes`);
+  }
+  const reference = parseIssueReference(positionals[0]!);
+  const dataDirectory = ensureDataDirectory();
+  const id = latestCallOn(dataDirectory, reference.path, reference.number);
+  const by = await ownerName(dataDirectory);
+  const name = `${repoName(reference.path)}#${reference.number}`;
+  if (command === "confirm") await confirmCall(dataDirectory, id, by);
+  else if (command === "override") await overrideCall(dataDirectory, id, by, positionals[1], positionals[2]);
+  else await answerCall(dataDirectory, id, by, positionals[1], positionals[2]);
+  console.log(`${name}: your ${command === "confirm" ? "confirmation" : command === "override" ? "override" : "answer"} is recorded under ${by} and written to the case book; entail acts on the issue on its next pass.`);
+  return 0;
+}
+
+async function callsCommand(args: string[]): Promise<number> {
+  const { values, positionals } = parse(args, { json: { type: "boolean" } });
+  if (positionals.length > 1) throw new UsageError("calls takes at most one repo");
+  const repo = positionals[0] === undefined ? undefined : repoName(positionals[0]);
+  const dataDirectory = ensureDataDirectory();
+  const items = logItems(dataDirectory, await caseBook(dataDirectory), repo);
+  console.log(values.json ? JSON.stringify(items, null, 2) : formatLog(items, { repoColumn: repo === undefined }));
+  return 0;
+}
+
 async function judgeCommand(args: string[]): Promise<number> {
   const { values, positionals } = parse(args, RUN_OPTIONS);
   if (positionals.length !== 1) throw new UsageError("judge takes one issue reference");
   const reference = parseIssueReference(positionals[0]!);
-  const options = runOptions(values);
+  const withSettings = runOptions(values);
   const setting: ForgeSetting = { forge: "github", host: GITHUB, path: reference.path };
   const dataDirectory = ensureDataDirectory();
+  const options = withSettings(settingsIn(dataDirectory));
 
-  const { forge, mirror } = await openRepo(setting, dataDirectory);
+  const forge = createForge(setting);
   const issue = await forge.issue(reference.number);
   if (issue === null) throw new Error(`${reference.path}#${reference.number} is not an issue`);
   const comments = await forge.comments("issue", reference.number);
-  const head = await mirror.updateDefaultBranch();
-  const checkout = await mirror.checkout(head.commit);
-  const vision = await readVision(mirror.git, head.commit);
-  const visionText = vision.status === "missing" ? null : (await mirror.git.run(["cat-file", "blob", vision.blob])).stdout.toString("utf8");
+  const reading = await mirrorReader(dataDirectory)(reference.path, forge);
   const issueText = renderIssue({
     title: issue.title,
     body: issue.body,
     comments: comments.map((comment) => ({ author: comment.author.username, createdAt: comment.createdAt, body: comment.body })),
   });
-  const book = await readCaseBook(DEFAULT_CASE_BOOK);
+  const book = await caseBook(dataDirectory);
 
   const judgment = await judge(
     new ClaudeRunner(),
@@ -130,11 +423,11 @@ async function judgeCommand(args: string[]): Promise<number> {
       repo: reference.path,
       issueNumber: reference.number,
       issueText,
-      vision: visionText === null ? null : { text: visionText, commit: head.commit },
-      pins: await readPins(dataDirectory, setting),
+      vision: reading.vision,
+      pins: reading.pins,
       precedents: precedentsFor(book, reference.path, issueText),
-      checkout: checkout.directory,
-      sha: checkout.commit,
+      checkout: reading.checkout,
+      sha: reading.sha,
     },
     options,
   );
@@ -153,12 +446,13 @@ async function judgeCommand(args: string[]): Promise<number> {
 async function replayCommand(args: string[]): Promise<number> {
   const { values, positionals } = parse(args, { ...RUN_OPTIONS, cases: { type: "string" }, concurrency: { type: "string" } });
   if (positionals.length > 0) throw new UsageError("replay takes no arguments");
-  const options = runOptions(values);
+  const withSettings = runOptions(values);
   const concurrency = values.concurrency === undefined ? 2 : Number(values.concurrency);
   if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw new UsageError("--concurrency must be a whole number of at least 1");
-  const book = await readCaseBook(values.cases ?? DEFAULT_CASE_BOOK);
-  if (book.length === 0) throw new Error("the case book has no cases");
   const dataDirectory = ensureDataDirectory();
+  const options = withSettings(settingsIn(dataDirectory));
+  const book = values.cases === undefined ? await caseBook(dataDirectory) : await readCaseBook(values.cases);
+  if (book.length === 0) throw new Error("the case book has no cases");
 
   // One mirror per repo, brought up to date once; each case is read at its own commit.
   const mirrors = new Map<string, Promise<Mirror>>();

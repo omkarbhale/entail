@@ -366,7 +366,7 @@ export interface Forge {
    */
   issue(issueNumber: number): Promise<Issue | null>;
 
-  // The four writes. Every comment passes the comment rules before it is posted.
+  // The writes. Every comment passes the comment rules before it is posted.
 
   /** Posts a comment on an issue or PR, exactly as given. */
   postComment(target: ForgeTarget, number: number, body: string): Promise<PostedComment>;
@@ -379,6 +379,9 @@ export interface Forge {
 
   /** Closes an issue; on GitHub, with the reason given. An issue already closed stays closed. */
   closeIssue(issueNumber: number, reason: CloseReason): Promise<void>;
+
+  /** Reopens an issue, as when the owner overrides a no to go. An open issue stays open. */
+  reopenIssue(issueNumber: number): Promise<void>;
 
   /**
    * Merges a PR only at `sha`, never bypassing rules and never through the

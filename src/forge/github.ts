@@ -620,6 +620,11 @@ export class GitHubForge implements Forge {
     await this.#sendJson("PATCH", path, { state: "closed", state_reason: reason === "not-planned" ? "not_planned" : "completed" });
   }
 
+  async reopenIssue(issueNumber: number): Promise<void> {
+    const path = `repos/${this.setting.path}/issues/${issueNumber}`;
+    await this.#sendJson("PATCH", path, { state: "open" });
+  }
+
   /**
    * Merges through `merge-async`, pinned to `sha`, as a direct merge that
    * bypasses no rules. GitHub may run the merge in the background, so a
