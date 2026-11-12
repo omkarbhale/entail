@@ -135,6 +135,12 @@ test("a run passes exactly the structured output, model, tool and isolation flag
   ]);
 });
 
+test("a run asked for an effort passes it to claude", () => {
+  const at = { path: "/checkout", sha: "a".repeat(40) };
+  const argv = claudeArguments(request(at, { effort: "low" }));
+  assert.deepEqual(argv.slice(argv.indexOf("--model"), argv.indexOf("--tools")), ["--model", DEFAULT_MODEL, "--effort", "low"]);
+});
+
 test("a run in the checkout returns the structured output with its facts", async (t) => {
   const at = await checkout(t);
   const fake = fakeClaude(t, { print: { stdout: resultJson() } });
