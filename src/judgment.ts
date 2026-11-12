@@ -13,7 +13,7 @@ import { arrayOf, boolean, nullable, object, oneOf, string, type Infer } from ".
 export const JUDGMENT_KIND = "issue-call";
 
 /** Changes whenever the prompt or the answer's shape changes, so a call records what judged it. */
-export const JUDGMENT_PROMPT_VERSION = "issue-call-1";
+export const JUDGMENT_PROMPT_VERSION = "issue-call-2";
 
 /** Where a criterion comes from; a criterion with no such source is not one. */
 export const CRITERION_SOURCES = ["vision", "reading", "edge", "answer"] as const;
@@ -152,12 +152,12 @@ Where the issue can be read more than one way, pick the reading that best serves
 
 A change is **large or hard to undo** when it does any of these:
 
-1. removes or replaces something users rely on;
-2. changes stored data or a public interface (a command, an API, a file format or anything else other people or programs depend on);
+1. removes or replaces something users rely on today;
+2. changes stored data or a public interface that exists today (a command, an API, a file format or anything else other people or programs depend on);
 3. touches the vision (VISION.md) or one of the owner's pinned topics;
 4. cannot be undone by reverting one PR.
 
-The size of the work alone does not make a change large: a big rewrite that keeps what users rely on and can be reverted is not. A large change is always ask, even when you are sure it would be better; the question then asks whether to go ahead, with the stakes.
+Before calling a change large because it removes, replaces or changes something, check in the repo that the thing exists today. Adding something new, such as a new command, is not changing an existing interface. The size of the work alone does not make a change large: a big rewrite that keeps what users rely on and can be reverted is not. A large change is always ask, even when you are sure it would be better; the question then asks whether to go ahead, with the stakes.
 
 The past cases below are calls the owner actually made, with their reasons. Where one is like this issue, follow it and name it; where this issue differs in a way that matters, say how.
 
