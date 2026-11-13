@@ -50,8 +50,9 @@ test("the owner's commands check their arguments before touching anything", asyn
 
 test("from the command line the owner sets their name, reads what waits, confirms it and reads the log", async (t) => {
   const home = mkdtempSync(join(tmpdir(), "entail-cli-"));
-  const previous = { XDG_DATA_HOME: process.env.XDG_DATA_HOME, HOME: process.env.HOME };
+  const previous = { XDG_DATA_HOME: process.env.XDG_DATA_HOME, LOCALAPPDATA: process.env.LOCALAPPDATA, HOME: process.env.HOME };
   process.env.XDG_DATA_HOME = home;
+  process.env.LOCALAPPDATA = home;
   process.env.HOME = home;
   t.after(() => {
     for (const [key, value] of Object.entries(previous)) {
@@ -111,8 +112,9 @@ test("from the command line the owner sets their name, reads what waits, confirm
 /** A scratch home and data directory for one test, with what the CLI prints. */
 function scratchHome(t: TestContext): { dataDirectory: string; out: string[] } {
   const home = mkdtempSync(join(tmpdir(), "entail-cli-"));
-  const previous = { XDG_DATA_HOME: process.env.XDG_DATA_HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, HOME: process.env.HOME };
+  const previous = { XDG_DATA_HOME: process.env.XDG_DATA_HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, LOCALAPPDATA: process.env.LOCALAPPDATA, HOME: process.env.HOME };
   process.env.XDG_DATA_HOME = join(home, "data");
+  process.env.LOCALAPPDATA = join(home, "data");
   process.env.XDG_CONFIG_HOME = join(home, "config");
   process.env.HOME = home;
   t.after(() => {

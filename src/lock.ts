@@ -134,8 +134,16 @@ export function holderIsRunning(holder: LockHolder): boolean {
   return command === "" || /entail/i.test(command);
 }
 
-function psField(field: string, pid: number): string {
+/** A process's start time or command line, from `ps`; on Windows, which has no `ps`, from PowerShell. */
+function psField(field: "lstart" | "args", pid: number): string {
   try {
+    if (process.platform === "win32") {
+      const query =
+        field === "lstart"
+          ? `(Get-Process -Id ${pid}).StartTime.ToUniversalTime().ToString('o')`
+          : `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`;
+      return execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", query], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).trim();
+    }
     return execFileSync("ps", ["-o", `${field}=`, "-p", String(pid)], {
       encoding: "utf8",
       env: { ...process.env, LC_ALL: "C" },

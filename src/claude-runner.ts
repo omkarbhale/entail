@@ -11,6 +11,7 @@ import {
   type RunOptions,
 } from "./model-runner.ts";
 import { emitJsonSchema } from "./schema.ts";
+import { killTree, windowsCommand } from "./windows.ts";
 
 /** A run is ended after 10 minutes. */
 export const RUN_TIMEOUT_MS = 10 * 60 * 1000;
@@ -21,7 +22,7 @@ export const RUN_GRACE_MS = 10 * 1000;
 const STDERR_KEPT = 64 * 1024;
 
 export interface ClaudeRunnerOptions {
-  /** The `claude` executable; `claude` on the PATH by default. */
+  /** The `claude` executable; `claude` on the PATH by default, which on Windows may be npm's `claude.cmd`. */
   command?: string;
   timeoutMs?: number;
   graceMs?: number;
@@ -87,14 +88,25 @@ export class ClaudeRunner implements ModelRunner {
 
   #spawn(request: ModelRunRequest, signal: AbortSignal | undefined): Promise<Exit> {
     return new Promise((resolve) => {
-      const child = spawn(this.#command, claudeArguments(request), { cwd: request.checkout, stdio: ["pipe", "pipe", "pipe"] });
+      const windows = process.platform === "win32" ? windowsCommand(this.#command, claudeArguments(request), process.env) : null;
+      const child = spawn(windows?.file ?? this.#command, windows?.args ?? claudeArguments(request), {
+        cwd: request.checkout,
+        stdio: ["pipe", "pipe", "pipe"],
+        ...(windows === null ? {} : { windowsVerbatimArguments: windows.verbatim, windowsHide: true }),
+      });
       const exit: Exit = { code: null, signal: null, stdout: "", stderr: "", timedOut: false, aborted: false, spawnError: null };
       let exited = false;
       const timers: NodeJS.Timeout[] = [];
 
       // SIGINT first, SIGTERM after a grace period, and SIGKILL only if
       // even that is ignored, so a run never holds a model slot forever.
+      // Windows has no signals to ask with: the run is stopped with every
+      // process it started, which a `claude.cmd` run through cmd.exe needs.
       const end = () => {
+        if (windows !== null) {
+          if (child.pid !== undefined) killTree(child.pid);
+          return;
+        }
         child.kill("SIGINT");
         timers.push(
           setTimeout(() => {

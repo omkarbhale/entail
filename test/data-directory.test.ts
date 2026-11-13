@@ -28,15 +28,25 @@ test("macOS uses ~/Library/Application Support/entail, whatever $XDG_DATA_HOME s
   assert.equal(dir, "/Users/owner/Library/Application Support/entail");
 });
 
-test("native Windows is not supported", () => {
-  assert.throws(() => resolveDataDirectory({ platform: "win32", env: {}, home: "C:\\Users\\owner" }), UnsupportedPlatformError);
+test("Windows uses %LOCALAPPDATA%\\entail, by default ~\\AppData\\Local\\entail", () => {
+  const home = "C:\\Users\\owner";
+  assert.equal(resolveDataDirectory({ platform: "win32", env: { LOCALAPPDATA: "D:\\Local" }, home }), "D:\\Local\\entail");
+  assert.equal(resolveDataDirectory({ platform: "win32", env: {}, home }), "C:\\Users\\owner\\AppData\\Local\\entail");
+  assert.equal(resolveDataDirectory({ platform: "win32", env: { LOCALAPPDATA: "relative" }, home }), "C:\\Users\\owner\\AppData\\Local\\entail");
+  assert.equal(resolveDataDirectory({ platform: "win32", env: { XDG_DATA_HOME: "D:\\xdg" }, home }), "C:\\Users\\owner\\AppData\\Local\\entail");
+});
+
+test("any other platform is not supported", () => {
+  assert.throws(() => resolveDataDirectory({ platform: "freebsd", env: {}, home: "/home/owner" }), UnsupportedPlatformError);
 });
 
 test("the data directory is created on first run", (t) => {
   const home = mkdtempSync(join(tmpdir(), "entail-home-"));
   t.after(() => rmSync(home, { recursive: true, force: true }));
-  const dir = ensureDataDirectory({ platform: "linux", env: {}, home });
-  assert.equal(dir, join(home, ".local", "share", "entail"));
+  const machine = { platform: process.platform, env: {}, home };
+  const dir = ensureDataDirectory(machine);
+  assert.equal(dir, resolveDataDirectory(machine));
+  assert.ok(dir.startsWith(home));
   assert.ok(existsSync(dir));
-  assert.equal(ensureDataDirectory({ platform: "linux", env: {}, home }), dir, "an existing directory is reused");
+  assert.equal(ensureDataDirectory(machine), dir, "an existing directory is reused");
 });

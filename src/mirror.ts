@@ -118,8 +118,13 @@ export class Mirror {
     this.directory = paths.mirror;
     this.checkoutsDirectory = paths.checkouts;
     // Only the forge CLI's helper authenticates, never one from the owner's
-    // own git configuration, and the mirror never fetches tags.
-    const config = ["credential.helper=", "fetch.recurseSubmodules=false"];
+    // own git configuration, and the mirror never fetches tags. A checkout
+    // holds each file's bytes as committed, whatever line endings the
+    // machine's git would write (Git for Windows turns LF into CRLF). On
+    // Windows a symlink is checked out as a file holding its target, since
+    // making links there needs a privilege most users lack.
+    const config = ["credential.helper=", "fetch.recurseSubmodules=false", "core.autocrlf=false", "core.eol=lf"];
+    if (process.platform === "win32") config.push("core.symlinks=false");
     if (options.remote.credentialHelper !== null) config.push(`credential.helper=${options.remote.credentialHelper}`);
     this.git = new Git(paths.mirror, config);
   }

@@ -1,28 +1,34 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { release } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, join, posix, win32 } from "node:path";
 import { resolveDataDirectory, UnsupportedPlatformError } from "./data-directory.ts";
 import { holderIsRunning, readLock, type LockHolder } from "./lock.ts";
 
 /**
  * The per-user service that keeps `entail run` going without a terminal: a
- * systemd user unit on Linux (WSL included) and a launchd agent on macOS. It
- * starts at login and again after a crash, and runs the same `entail run` the
- * owner would run by hand, with the same data directory and port, so the
- * single-copy lock keeps the service and a run by hand from running together.
+ * systemd user unit on Linux (WSL included), a launchd agent on macOS and a
+ * Task Scheduler task on Windows. It starts at login and, except on Windows,
+ * again after a crash, and runs the same `entail run` the owner would run by
+ * hand, with the same data directory and port, so the single-copy lock keeps
+ * the service and a run by hand from running together.
  *
  * Stopping it is safe at any moment: every call and every owner's action is
  * in the log before entail acts on it, each comment carries the marker of the
  * entry it speaks for, and a restart finds what was already posted, completes
  * an owner's action whose undo window closed, and posts nothing twice.
  */
-export type ServiceManager = "systemd" | "launchd";
+export type ServiceManager = "systemd" | "launchd" | "task-scheduler";
 
-/** The systemd unit's name, and the launchd agent's label. */
+/** The systemd unit's name, the launchd agent's label and the scheduled task's name. */
 export const SERVICE_NAME = "entail";
 export const SYSTEMD_UNIT = `${SERVICE_NAME}.service`;
 export const LAUNCHD_LABEL = SERVICE_NAME;
+export const SCHEDULED_TASK = SERVICE_NAME;
+
+/** On Windows, the batch file the task runs, in the data directory; its task's definition is written beside it only while the task is created. */
+export const WINDOWS_SERVICE_FILE = "entail-service.cmd";
+export const WINDOWS_TASK_FILE = "entail-service.xml";
 
 /** How long a crashed service waits before it is started again, in seconds. */
 export const RESTART_DELAY_SECONDS = 10;
@@ -51,6 +57,8 @@ export interface ServiceDefinition {
   manager: ServiceManager;
   path: string;
   content: string;
+  /** On Windows, the task registered with Task Scheduler, which runs the batch file at `path`. */
+  task?: string;
 }
 
 /** A service install or uninstall that could not be completed. */
@@ -64,15 +72,20 @@ export class ServiceError extends Error {
 /** The service definition for this machine. */
 export function serviceDefinition(inputs: ServiceInputs): ServiceDefinition {
   const { platform, env, home, node, cli } = inputs;
-  if (!isAbsolute(node) || !isAbsolute(cli)) throw new ServiceError("the service runs entail by absolute paths");
+  const path = platform === "win32" ? win32 : posix;
+  if (!path.isAbsolute(node) || !path.isAbsolute(cli)) throw new ServiceError("the service runs entail by absolute paths");
   const environment = serviceEnvironment(platform, env);
   if (platform === "darwin") {
-    return { manager: "launchd", path: join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`), content: launchdPlist({ node, cli, environment }) };
+    return { manager: "launchd", path: posix.join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`), content: launchdPlist({ node, cli, environment }) };
   }
   if (platform === "linux") {
     const xdg = env.XDG_CONFIG_HOME;
-    const config = xdg && isAbsolute(xdg) ? xdg : join(home, ".config");
-    return { manager: "systemd", path: join(config, "systemd", "user", SYSTEMD_UNIT), content: systemdUnit({ node, cli, environment }) };
+    const config = xdg && posix.isAbsolute(xdg) ? xdg : posix.join(home, ".config");
+    return { manager: "systemd", path: posix.join(config, "systemd", "user", SYSTEMD_UNIT), content: systemdUnit({ node, cli, environment }) };
+  }
+  if (platform === "win32") {
+    const script = win32.join(resolveDataDirectory({ platform, env, home }), WINDOWS_SERVICE_FILE);
+    return { manager: "task-scheduler", path: script, content: windowsServiceScript({ node, cli, environment }), task: scheduledTaskXml({ script, user: windowsUser(env) }) };
   }
   throw new UnsupportedPlatformError(platform);
 }
@@ -82,17 +95,18 @@ export function serviceDefinition(inputs: ServiceInputs): ServiceDefinition {
  * it, since a service manager starts processes with a bare one: `PATH`, so the
  * service finds the same `git`, `gh` and `claude`; and on Linux an absolute
  * `XDG_DATA_HOME` and `XDG_CONFIG_HOME`, so it uses the same data directory
- * (and lock) as `entail run` by hand, and `gh` the same login. On macOS the
- * data directory depends only on the home directory.
+ * (and lock) as `entail run` by hand, and `gh` the same login; on Windows an
+ * absolute `LOCALAPPDATA`, for the same reason. On macOS the data directory
+ * depends only on the home directory.
  */
 export function serviceEnvironment(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): Record<string, string> {
   const environment: Record<string, string> = {};
   if (env.PATH) environment.PATH = env.PATH;
-  if (platform === "linux") {
-    for (const name of ["XDG_DATA_HOME", "XDG_CONFIG_HOME"] as const) {
-      const value = env[name];
-      if (value && isAbsolute(value)) environment[name] = value;
-    }
+  const named = platform === "linux" ? (["XDG_DATA_HOME", "XDG_CONFIG_HOME"] as const) : platform === "win32" ? (["LOCALAPPDATA"] as const) : [];
+  const path = platform === "win32" ? win32 : posix;
+  for (const name of named) {
+    const value = env[name];
+    if (value && path.isAbsolute(value)) environment[name] = value;
   }
   return environment;
 }
@@ -180,6 +194,76 @@ export function launchdPlist({ node, cli, environment }: DefinitionInputs): stri
   return lines.join("\n");
 }
 
+/**
+ * The batch file the Windows task runs: it sets the environment, then runs
+ * `entail run`. Batch files are read by cmd.exe, so it ends its lines with
+ * CRLF and writes each `%` as `%%`.
+ */
+export function windowsServiceScript({ node, cli, environment }: DefinitionInputs): string {
+  return [
+    "@echo off",
+    "rem Written by `entail service install`; removed by `entail service uninstall`.",
+    ...Object.entries(environment).map(([name, value]) => `set "${batchText(`${name}=${value}`)}"`),
+    `"${batchText(node)}" "${batchText(cli)}" run`,
+    "",
+  ].join("\r\n");
+}
+
+function batchText(value: string): string {
+  if (/[\u0000-\u001f\u007f"]/u.test(value)) throw new ServiceError(`cannot write a control character or a quote into the service definition: ${JSON.stringify(value)}`);
+  return value.replaceAll("%", "%%");
+}
+
+/** The Windows account the task runs as and logs in with: `DOMAIN\user`. */
+function windowsUser(env: NodeJS.ProcessEnv): string {
+  const user = env.USERNAME;
+  if (!user) throw new ServiceError("USERNAME is not set, so the task cannot name the user it runs as");
+  return env.USERDOMAIN ? `${env.USERDOMAIN}\\${user}` : user;
+}
+
+/**
+ * The Task Scheduler task, registered from XML: it runs the batch file when
+ * the user logs in, as that user and without elevation, so a user who is not
+ * an administrator can install it. Unlike a task made with `schtasks /SC
+ * ONLOGON`, it runs on battery and is never stopped for running too long.
+ * Task Scheduler does not start it again after a crash.
+ */
+export function scheduledTaskXml({ script, user }: { script: string; user: string }): string {
+  return [
+    '<?xml version="1.0" encoding="UTF-16"?>',
+    "<!-- Written by `entail service install`; removed by `entail service uninstall`. -->",
+    '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
+    "  <RegistrationInfo>",
+    "    <Description>entail: the owner's calls on issues and PRs, and the board</Description>",
+    "  </RegistrationInfo>",
+    "  <Triggers>",
+    "    <LogonTrigger>",
+    `      <UserId>${xml(user)}</UserId>`,
+    "    </LogonTrigger>",
+    "  </Triggers>",
+    "  <Principals>",
+    '    <Principal id="Author">',
+    `      <UserId>${xml(user)}</UserId>`,
+    "      <LogonType>InteractiveToken</LogonType>",
+    "      <RunLevel>LeastPrivilege</RunLevel>",
+    "    </Principal>",
+    "  </Principals>",
+    "  <Settings>",
+    "    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
+    "    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>",
+    "    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>",
+    "    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
+    "  </Settings>",
+    '  <Actions Context="Author">',
+    "    <Exec>",
+    `      <Command>"${xml(script)}"</Command>`,
+    "    </Exec>",
+    "  </Actions>",
+    "</Task>",
+    "",
+  ].join("\r\n");
+}
+
 function xml(value: string): string {
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value)) throw new ServiceError(`cannot write a control character into the service definition: ${JSON.stringify(value)}`);
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
@@ -193,7 +277,7 @@ export interface CommandResult {
 
 /** What install, uninstall and status reach the machine through. Replaced by a fake in tests. */
 export interface ServiceSystem {
-  /** Runs `systemctl` or `launchctl`. */
+  /** Runs `systemctl`, `launchctl` or `schtasks`. */
   exec(file: string, args: string[]): CommandResult;
   /** The copy of entail holding the lock, when one is running. */
   runningCopy(): LockHolder | null;
@@ -243,7 +327,17 @@ export async function installService(inputs: ServiceInputs, system: ServiceSyste
   mkdirSync(dirname(definition.path), { recursive: true });
   writeFileSync(definition.path, definition.content, { mode: 0o644 });
   try {
-    if (definition.manager === "systemd") {
+    if (definition.manager === "task-scheduler") {
+      // schtasks reads a task's XML as UTF-16, the encoding the XML declares.
+      const task = join(dirname(definition.path), WINDOWS_TASK_FILE);
+      writeFileSync(task, Buffer.from(`\ufeff${definition.task}`, "utf16le"));
+      try {
+        must(system, "schtasks", ["/Create", "/TN", SCHEDULED_TASK, "/XML", task, "/F"], inputs);
+      } finally {
+        rmSync(task, { force: true });
+      }
+      must(system, "schtasks", ["/Run", "/TN", SCHEDULED_TASK], inputs);
+    } else if (definition.manager === "systemd") {
       must(system, "systemctl", ["--user", "daemon-reload"], inputs);
       must(system, "systemctl", ["--user", "enable", "--now", SYSTEMD_UNIT], inputs);
     } else {
@@ -255,6 +349,7 @@ export async function installService(inputs: ServiceInputs, system: ServiceSyste
   } catch (error) {
     rmSync(definition.path, { force: true });
     if (definition.manager === "systemd") system.exec("systemctl", ["--user", "daemon-reload"]);
+    if (definition.manager === "task-scheduler") system.exec("schtasks", ["/Delete", "/TN", SCHEDULED_TASK, "/F"]);
     throw error;
   }
   return { definition, replaced };
@@ -272,6 +367,10 @@ export function uninstallService(inputs: ServiceInputs, system: ServiceSystem): 
     must(system, "systemctl", ["--user", "disable", "--now", SYSTEMD_UNIT], inputs);
     rmSync(definition.path, { force: true });
     system.exec("systemctl", ["--user", "daemon-reload"]);
+  } else if (definition.manager === "task-scheduler") {
+    stopService(definition, inputs, system);
+    must(system, "schtasks", ["/Delete", "/TN", SCHEDULED_TASK, "/F"], inputs);
+    rmSync(definition.path, { force: true });
   } else {
     stopService(definition, inputs, system);
     rmSync(definition.path, { force: true });
@@ -301,6 +400,12 @@ export function serviceStatus(inputs: ServiceInputs, system: ServiceSystem): Ser
     if (definition.manager === "systemd") {
       active = system.exec("systemctl", ["--user", "is-active", "--quiet", SYSTEMD_UNIT]).status === 0;
       enabled = system.exec("systemctl", ["--user", "is-enabled", "--quiet", SYSTEMD_UNIT]).status === 0;
+    } else if (definition.manager === "task-scheduler") {
+      // One CSV row: the task's name, its next run time and its status (Ready, Running or Disabled).
+      const queried = system.exec("schtasks", ["/Query", "/TN", SCHEDULED_TASK, "/FO", "CSV", "/NH"]);
+      const state = queried.status === 0 ? (/"([^"]*)"\s*$/u.exec(queried.output)?.[1] ?? "") : "";
+      enabled = queried.status === 0 && state !== "Disabled";
+      active = state === "Running";
     } else {
       const printed = system.exec("launchctl", ["print", `gui/${inputs.uid}/${LAUNCHD_LABEL}`]);
       enabled = printed.status === 0;
@@ -312,6 +417,7 @@ export function serviceStatus(inputs: ServiceInputs, system: ServiceSystem): Ser
 
 /** Stops an installed service, if any, and says whether one was stopped; a service never loaded has nothing to stop. */
 function stopService(definition: ServiceDefinition, inputs: ServiceInputs, system: ServiceSystem): boolean {
+  if (definition.manager === "task-scheduler") return existsSync(definition.path) && system.exec("schtasks", ["/End", "/TN", SCHEDULED_TASK]).status === 0;
   if (definition.manager === "systemd") return existsSync(definition.path) && system.exec("systemctl", ["--user", "stop", SYSTEMD_UNIT]).status === 0;
   return system.exec("launchctl", ["bootout", `gui/${inputs.uid}/${LAUNCHD_LABEL}`]).status === 0;
 }

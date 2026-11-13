@@ -231,30 +231,42 @@ const HANDOFF: Handoff = {
   vision: SHA,
 };
 
-test("the start command runs under /bin/sh with the handoff as one line of JSON on standard input", async (t) => {
+const WINDOWS = process.platform === "win32";
+
+/** A command line that runs a Node script, the same under /bin/sh and cmd.exe. */
+function nodeCommand(directory: string, name: string, script: string): string {
+  const path = join(directory, name);
+  writeFileSync(path, script);
+  return `"${process.execPath}" "${path}"`;
+}
+
+test("the start command runs under /bin/sh (cmd.exe on Windows) with the handoff as one line of JSON on standard input", async (t) => {
   const dir = scratch(t);
   const out = join(dir, "handoff.json");
-  assert.deepEqual(await runStart(`cat > '${out}'`, HANDOFF), { exit: 0 });
+  const copy = nodeCommand(dir, "copy.cjs", `const fs = require("node:fs");\nfs.writeFileSync(${JSON.stringify(out)}, fs.readFileSync(0));\n`);
+  assert.deepEqual(await runStart(copy, HANDOFF), { exit: 0 });
   const text = readFileSync(out, "utf8");
   assert.equal(text.split("\n").length, 2, "one line, ending in a newline");
   assert.deepEqual(JSON.parse(text), HANDOFF);
 
-  const failed = await runStart("echo no executor here >&2; exit 3", HANDOFF);
+  const failed = await runStart(nodeCommand(dir, "fail.cjs", 'process.stderr.write("no executor here\\n");\nprocess.exit(3);\n'), HANDOFF);
   assert.equal(failed.exit, 3);
   assert.match(failed.error!, /exited 3: no executor here/u);
-  assert.equal((await runStart("true", HANDOFF)).exit, 0, "a command that ignores its input still succeeds");
+  assert.equal((await runStart(nodeCommand(dir, "ignore.cjs", ""), HANDOFF)).exit, 0, "a command that ignores its input still succeeds");
   const before = Date.now();
-  const slow = await runStart("sleep 5", HANDOFF, 200);
+  const slow = await runStart(nodeCommand(dir, "slow.cjs", "setTimeout(() => {}, 5000);\n"), HANDOFF, 200);
   assert.equal(slow.exit, null);
-  assert.match(slow.error!, /stopped by SIGTERM/u);
+  assert.match(slow.error!, WINDOWS ? /stopped by taskkill/u : /stopped by SIGTERM/u);
   assert.ok(Date.now() - before < 2000, "a command still running at the timeout is stopped");
 });
 
-test("a start command that traps SIGTERM is killed after the grace period and the result is given", async () => {
+test("a start command that traps SIGTERM is killed after the grace period, on Windows with its process tree at once, and the result is given", async (t) => {
+  const dir = scratch(t);
   const before = Date.now();
-  const result = await runStart("trap '' TERM; sleep 30", HANDOFF, 200, 300);
+  const stubborn = WINDOWS ? nodeCommand(dir, "stubborn.cjs", "setInterval(() => {}, 1000);\n") : "trap '' TERM; sleep 30";
+  const result = await runStart(stubborn, HANDOFF, 200, 300);
   assert.equal(result.exit, null);
-  assert.match(result.error!, /stopped by SIGKILL/u);
+  assert.match(result.error!, WINDOWS ? /stopped by taskkill/u : /stopped by SIGKILL/u);
   assert.ok(Date.now() - before < 3000);
 });
 
@@ -262,7 +274,19 @@ test("a start command that hands off to a process left running returns at once",
   const dir = scratch(t);
   const marker = join(dir, "pid");
   const before = Date.now();
-  assert.deepEqual(await runStart(`sleep 3 & echo $! > '${marker}'`, HANDOFF, 10_000), { exit: 0 });
+  const handOff = nodeCommand(
+    dir,
+    "hand-off.cjs",
+    [
+      'const { spawn } = require("node:child_process");',
+      // On Windows Node kills a child with its parent unless it is detached.
+      `const worker = spawn(process.execPath, ["-e", "setTimeout(() => {}, 3000)"], { stdio: "ignore", detached: ${WINDOWS} });`,
+      `require("node:fs").writeFileSync(${JSON.stringify(marker)}, String(worker.pid));`,
+      "worker.unref();",
+      "",
+    ].join("\n"),
+  );
+  assert.deepEqual(await runStart(handOff, HANDOFF, 10_000), { exit: 0 });
   assert.ok(Date.now() - before < 1500, "entail does not wait for what the command left running");
   process.kill(Number(readFileSync(marker, "utf8").trim()));
 });
@@ -270,9 +294,14 @@ test("a start command that hands off to a process left running returns at once",
 test("the example start command appends each handoff to a file, one line each", async (t) => {
   const dir = scratch(t);
   const file = join(dir, "starts.jsonl");
-  const command = join(dir, "start.sh");
-  writeFileSync(command, `#!/bin/sh\nENTAIL_START_FILE='${file}' exec '${EXAMPLE}'\n`);
-  chmodSync(command, 0o755);
+  let command: string;
+  if (WINDOWS) {
+    command = `set "ENTAIL_START_FILE=${file}" && "${EXAMPLE.replace(/\.sh$/u, ".cmd")}"`;
+  } else {
+    command = join(dir, "start.sh");
+    writeFileSync(command, `#!/bin/sh\nENTAIL_START_FILE='${file}' exec '${EXAMPLE}'\n`);
+    chmodSync(command, 0o755);
+  }
   assert.equal((await runStart(command, HANDOFF)).exit, 0);
   assert.equal((await runStart(command, { ...HANDOFF, issue: { ...HANDOFF.issue, number: 13 } })).exit, 0);
   const lines = readFileSync(file, "utf8").trim().split("\n");

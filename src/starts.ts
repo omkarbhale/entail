@@ -1,14 +1,15 @@
 import { spawn } from "node:child_process";
 import { criteriaOf, type Pending } from "./records.ts";
+import { cmdArguments, killTree } from "./windows.ts";
 
 /**
  * Starting work on a go: a command the owner sets (`entail settings --start
  * '<command>'`), run when a go call acts — at once when the repo's confirm
  * mode is off, and once the owner confirms the go, answers go or overrides to
  * go (a go made differently included) when it is on. Never for a no or an
- * ask. entail runs it with `/bin/sh -c` and the handoff as JSON on standard
- * input, and records in the repo's log that work was started, by which
- * command and with what exit status. A command that fails is recorded and
+ * ask. entail runs it with `/bin/sh -c` (`cmd.exe /d /s /c` on Windows) and
+ * the handoff as JSON on standard input, and records in the repo's log that
+ * work was started, by which command and with what exit status. A command that fails is recorded and
  * never holds up the call. Work starts once per issue: after a start that
  * exited 0, a later go on the same issue starts nothing.
  *
@@ -19,7 +20,7 @@ import { criteriaOf, type Pending } from "./records.ts";
 
 /** How long a start command may run before entail stops it: it hands the work off and returns. */
 export const START_TIMEOUT_MS = 60_000;
-/** How long a command gets to stop after SIGTERM before its process group is killed. */
+/** How long a command gets to stop after SIGTERM before its process group is killed; on Windows its process tree is killed at once. */
 export const START_KILL_GRACE_MS = 5_000;
 
 /** What the start command reads on standard input. */
@@ -84,14 +85,24 @@ export interface StartResult {
  * Runs the start command with the handoff as JSON on its standard input. The
  * command is done when its shell exits, so one that hands off to a process
  * left running in the background returns at once. One still running at the
- * timeout is stopped, with everything it started that is still in its process group.
+ * timeout is stopped, with everything it started that is still in its process
+ * group, or on Windows in its process tree.
  */
 export function runStart(command: string, handoff: Handoff, timeoutMs = START_TIMEOUT_MS, killGraceMs = START_KILL_GRACE_MS): Promise<StartResult> {
   return new Promise((resolve) => {
     let stderr = "";
-    const child = spawn("/bin/sh", ["-c", command], { stdio: ["pipe", "ignore", "pipe"], detached: true });
+    const windows = process.platform === "win32";
+    const child = windows
+      ? spawn("cmd.exe", cmdArguments(command), { stdio: ["pipe", "ignore", "pipe"], windowsVerbatimArguments: true, windowsHide: true })
+      : spawn("/bin/sh", ["-c", command], { stdio: ["pipe", "ignore", "pipe"], detached: true });
     let killer: NodeJS.Timeout | undefined;
+    let killed = false;
     const signalGroup = (signal: NodeJS.Signals) => {
+      if (windows) {
+        killed = true;
+        if (child.pid !== undefined) killTree(child.pid);
+        return;
+      }
       try {
         process.kill(-child.pid!, signal);
       } catch {
@@ -100,7 +111,7 @@ export function runStart(command: string, handoff: Handoff, timeoutMs = START_TI
     };
     const timer = setTimeout(() => {
       signalGroup("SIGTERM");
-      killer = setTimeout(() => signalGroup("SIGKILL"), killGraceMs);
+      if (!windows) killer = setTimeout(() => signalGroup("SIGKILL"), killGraceMs);
     }, timeoutMs);
     child.stdin.on("error", () => {
       // A command that does not read its input closes the pipe early; its exit status is what counts.
@@ -124,7 +135,7 @@ export function runStart(command: string, handoff: Handoff, timeoutMs = START_TI
         // A process the command left running may hold its error output open; entail stops listening.
         child.stderr.destroy();
         if (code === 0) resolve({ exit: 0 });
-        else resolve({ exit: code, error: signal !== null ? `stopped by ${signal}` : `exited ${code}${stderr.trim() === "" ? "" : `: ${stderr.trim().slice(0, 500)}`}` });
+        else resolve({ exit: killed ? null : code, error: signal !== null ? `stopped by ${signal}` : killed ? "stopped by taskkill" : `exited ${code}${stderr.trim() === "" ? "" : `: ${stderr.trim().slice(0, 500)}`}` });
       };
       // What the shell wrote just before it exited is read before the result is given.
       if (child.stderr.readableEnded) return done();
