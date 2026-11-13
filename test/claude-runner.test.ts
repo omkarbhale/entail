@@ -41,18 +41,26 @@ type Behaviour =
 
 /**
  * Writes a stand-in for `claude` that records how it was invoked (arguments,
- * working directory, stdin and the signals it got) next to itself.
+ * working directory, stdin and the signals it got) next to itself. On Windows
+ * it is a `claude.cmd` running the script with Node, as npm installs `claude`.
  */
-function fakeClaude(t: TestContext, behaviour: Behaviour): { command: string; invocation: () => { argv: string[]; cwd: string; stdin: string }; signals: () => string[] } {
+function fakeClaude(
+  t: TestContext,
+  behaviour: Behaviour,
+): { command: string; pid: () => number; invocation: () => { argv: string[]; cwd: string; stdin: string }; signals: () => string[] } {
   const dir = temporary(t, "entail-fake-claude-");
   const command = join(dir, "claude");
+  const script = process.platform === "win32" ? join(dir, "claude.cjs") : command;
   const invocationFile = join(dir, "invocation.json");
   const signalsFile = join(dir, "signals.txt");
+  const pidFile = join(dir, "pid");
+  if (process.platform === "win32") writeFileSync(`${command}.cmd`, `@"${process.execPath}" "${script}" %*\r\n`);
   writeFileSync(
-    command,
+    script,
     `#!/usr/bin/env node
 const fs = require("node:fs");
 const behaviour = ${JSON.stringify(behaviour)};
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
 if (behaviour.hang) {
   const record = (signal) => fs.appendFileSync(${JSON.stringify(signalsFile)}, signal + "\\n");
   process.on("SIGINT", () => record("SIGINT"));
@@ -73,9 +81,10 @@ process.stdin.on("end", () => {
 });
 `,
   );
-  chmodSync(command, 0o755);
+  chmodSync(script, 0o755);
   return {
     command,
+    pid: () => Number(readFileSync(pidFile, "utf8")),
     invocation: () => JSON.parse(readFileSync(invocationFile, "utf8")) as { argv: string[]; cwd: string; stdin: string },
     signals: () => (existsSync(signalsFile) ? readFileSync(signalsFile, "utf8").split("\n").filter((line) => line !== "") : []),
   };
@@ -277,12 +286,24 @@ test("a claude that cannot be started is an error", async (t) => {
   assert.match(!result.ok ? result.failure.message : "", /could not be started/);
 });
 
+/**
+ * The signals a run that is ended gets: SIGINT, then SIGTERM. Windows has no
+ * signals to ask with, so there the run is stopped with its process tree at
+ * once and gets none; the stand-in, behind cmd.exe, is gone all the same.
+ */
+const ENDING_SIGNALS = process.platform === "win32" ? [] : ["SIGINT", "SIGTERM"];
+
+function assertGone(pid: number): void {
+  assert.throws(() => process.kill(pid, 0), "the run's process is gone");
+}
+
 test("a timed-out run is ended with SIGINT, then SIGTERM after the grace period", async (t) => {
   const at = await checkout(t);
   const fake = fakeClaude(t, { hang: {} });
   const result = await new ClaudeRunner({ command: fake.command, timeoutMs: 1500, graceMs: 300 }).run(request(at));
   assert.equal(!result.ok && result.failure.kind, "timeout");
-  assert.deepEqual(fake.signals(), ["SIGINT", "SIGTERM"]);
+  assert.deepEqual(fake.signals(), ENDING_SIGNALS);
+  assertGone(fake.pid());
 });
 
 test("a run that ignores SIGTERM too is killed, so it never holds a slot forever", async (t) => {
@@ -290,7 +311,8 @@ test("a run that ignores SIGTERM too is killed, so it never holds a slot forever
   const fake = fakeClaude(t, { hang: { stubborn: true } });
   const result = await new ClaudeRunner({ command: fake.command, timeoutMs: 1500, graceMs: 300 }).run(request(at));
   assert.equal(!result.ok && result.failure.kind, "timeout");
-  assert.deepEqual(fake.signals(), ["SIGINT", "SIGTERM"]);
+  assert.deepEqual(fake.signals(), ENDING_SIGNALS);
+  assertGone(fake.pid());
 });
 
 test("an interrupted run is ended the same way and rejects with the signal's reason", async (t) => {
@@ -304,5 +326,6 @@ test("an interrupted run is ended the same way and rejects with the signal's rea
   const reason = new Error("entail is stopping");
   controller.abort(reason);
   await assert.rejects(running, reason);
-  assert.deepEqual(fake.signals(), ["SIGINT", "SIGTERM"]);
+  assert.deepEqual(fake.signals(), ENDING_SIGNALS);
+  assertGone(fake.pid());
 });

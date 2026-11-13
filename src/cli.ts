@@ -102,7 +102,8 @@ run        poll every enrolled repo, make each call once per edit, post it, and 
            --once makes one pass; --dry-run makes one pass that posts, closes, merges
            and records nothing and prints what it would do.
 service    install: run \`entail run\` as a per-user service that starts at login and again
-           after a crash (a systemd user unit on Linux, a launchd agent on macOS);
+           after a crash (a systemd user unit on Linux, a launchd agent on macOS; on
+           Windows a Task Scheduler task, which starts at login but not after a crash);
            uninstall: stop and remove it; status: whether it is installed and running.
 status     whether entail is running, each enrolled repo with its confirm mode and when
            it was last checked, what waits on you, and the board's address.
@@ -460,7 +461,8 @@ async function serviceCommand(args: string[]): Promise<number> {
   const system = machineServiceSystem(inputs);
   if (action === "install") {
     const { definition, replaced } = await installService(inputs, system);
-    console.log(`${replaced ? "Replaced" : "Installed"} the entail service (${definition.manager}, ${definition.path}): it runs entail run now, at every login, and again after a crash.`);
+    const restarts = definition.manager === "task-scheduler" ? "; after a crash, log in again or run entail service install again" : ", and again after a crash";
+    console.log(`${replaced ? "Replaced" : "Installed"} the entail service (${definition.manager}, ${definition.path}): it runs entail run now, at every login${restarts}.`);
     console.log(`The board: http://127.0.0.1:${DEFAULT_PORT}/ (entail open). Where it stands: entail status.`);
     return 0;
   }
@@ -477,7 +479,7 @@ async function serviceCommand(args: string[]): Promise<number> {
 function serviceLine(status: ReturnType<typeof serviceStatus>): string {
   const { definition, installed, active, enabled, running } = status;
   if (!installed) return `The entail service is not installed${running ? `; entail is running by hand (pid ${running.pid})` : ""}. Install it with: entail service install`;
-  const logs = definition.manager === "systemd" ? "journalctl --user -u entail" : "launchctl print gui/$(id -u)/entail";
+  const logs = { systemd: "journalctl --user -u entail", launchd: "launchctl print gui/$(id -u)/entail", "task-scheduler": "schtasks /Query /TN entail /V /FO LIST" }[definition.manager];
   return `The entail service is installed (${definition.manager}, ${definition.path}), ${enabled ? "starts at login" : "does not start at login"}, and is ${active ? `running${running ? ` (pid ${running.pid}, since ${running.startedAt})` : ""}` : `not running: see ${logs}`}.`;
 }
 
@@ -565,20 +567,25 @@ async function openCommand(args: string[]): Promise<number> {
   return 0;
 }
 
-/** Opens a URL with the platform's opener: `open` on macOS, `xdg-open` on Linux, and on WSL `wslview`, `xdg-open` or Windows' `explorer.exe`. */
+/** Opens a URL with the platform's opener: `open` on macOS, `xdg-open` on Linux, on WSL `wslview`, `xdg-open` or Windows' `explorer.exe`, and on Windows the URL handler `rundll32` calls. */
 async function openInBrowser(url: string): Promise<boolean> {
+  if (process.platform === "win32") return openWith("rundll32", ["url.dll,FileProtocolHandler", url]);
   const openers = process.platform === "darwin" ? ["open"] : isWsl(release()) ? ["wslview", "xdg-open", "explorer.exe"] : ["xdg-open"];
   for (const opener of openers) {
-    const child = spawn(opener, [url], { stdio: "ignore", detached: true });
-    const started = await new Promise<boolean>((resolve) => {
-      child.once("spawn", () => resolve(true));
-      child.once("error", () => resolve(false));
-    });
-    if (!started) continue;
-    child.unref();
-    return true;
+    if (await openWith(opener, [url])) return true;
   }
   return false;
+}
+
+/** Starts an opener and leaves it running; false when it could not be started. */
+async function openWith(opener: string, args: string[]): Promise<boolean> {
+  const child = spawn(opener, args, { stdio: "ignore", detached: true });
+  const started = await new Promise<boolean>((resolve) => {
+    child.once("spawn", () => resolve(true));
+    child.once("error", () => resolve(false));
+  });
+  if (started) child.unref();
+  return started;
 }
 
 async function waitingCommand(args: string[]): Promise<number> {

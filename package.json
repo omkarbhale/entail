@@ -16,7 +16,8 @@
   },
   "os": [
     "linux",
-    "darwin"
+    "darwin",
+    "win32"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && vite build --config board/vite.config.ts --logLevel warn",

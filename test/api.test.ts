@@ -120,7 +120,7 @@ test("the board enrolls a repo it can read on GitHub, changes its settings and u
   const [repo] = body.repos;
   assert.deepEqual([repo.repo, repo.confirm, repo.uses, repo.checkedAt], ["acme/tally", false, { model: "claude-opus-5-5", effort: "medium" }, "2026-11-12T11:59:20.000Z"]);
   assert.deepEqual(repo.pins.topics, []);
-  assert.match(repo.pins.file, /pins\/github\.com\/acme\/tally\.md$/u);
+  assert.ok(repo.pins.file.endsWith(join("pins", "github.com", "acme", "tally.md")), repo.pins.file);
 
   assert.equal((await api.call("DELETE", "/api/repos/acme/tally", {})).status, 200);
   assert.deepEqual((await api.call("GET", "/api/repos")).body.repos, []);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, join, posix, win32 } from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { resolveDataDirectory, UnsupportedPlatformError } from "../src/data-directory.ts";
@@ -11,12 +11,15 @@ import {
   installService,
   launchdPlist,
   machineServiceSystem,
+  scheduledTaskXml,
+  TASK_STATE_QUERY,
   serviceDefinition,
   ServiceError,
   serviceEnvironment,
   serviceStatus,
   systemdUnit,
   uninstallService,
+  windowsServiceScript,
   type CommandResult,
   type ServiceInputs,
   type ServiceSystem,
@@ -71,7 +74,7 @@ test("on Linux and WSL the service is a systemd user unit that runs entail run, 
   const home = tempHome(t);
   const definition = serviceDefinition(inputs(home, "linux"));
   assert.equal(definition.manager, "systemd");
-  assert.equal(definition.path, join(home, ".config", "systemd", "user", "entail.service"));
+  assert.equal(definition.path, posix.join(home, ".config", "systemd", "user", "entail.service"));
   const lines = definition.content.split("\n");
   for (const line of [
     "[Service]",
@@ -90,11 +93,11 @@ test("the systemd unit goes under an absolute XDG_CONFIG_HOME, and a relative on
   const home = tempHome(t);
   assert.equal(
     serviceDefinition(inputs(home, "linux", { XDG_CONFIG_HOME: "/cfg" })).path,
-    join("/cfg", "systemd", "user", "entail.service"),
+    "/cfg/systemd/user/entail.service",
   );
   assert.equal(
     serviceDefinition(inputs(home, "linux", { XDG_CONFIG_HOME: "cfg" })).path,
-    join(home, ".config", "systemd", "user", "entail.service"),
+    posix.join(home, ".config", "systemd", "user", "entail.service"),
   );
 });
 
@@ -125,7 +128,7 @@ test("on macOS the service is a launchd agent that runs entail run, starts at lo
   const home = tempHome(t);
   const definition = serviceDefinition(inputs(home, "darwin"));
   assert.equal(definition.manager, "launchd");
-  assert.equal(definition.path, join(home, "Library", "LaunchAgents", "entail.plist"));
+  assert.equal(definition.path, posix.join(home, "Library", "LaunchAgents", "entail.plist"));
   const plist = definition.content.replace(/\s+/g, "");
   for (const fragment of [
     "<key>Label</key><string>entail</string>",
@@ -170,8 +173,62 @@ test("the service definitions are valid to the platform's own checker, when it i
   }
 });
 
-test("native Windows has no service", (t) => {
-  assert.throws(() => serviceDefinition(inputs(tempHome(t), "win32")), UnsupportedPlatformError);
+function windowsInputs(env: NodeJS.ProcessEnv = {}): ServiceInputs {
+  return {
+    platform: "win32",
+    env: { PATH: "C:\\Windows\\system32;C:\\Program Files\\nodejs", LOCALAPPDATA: "C:\\Users\\owner\\AppData\\Local", USERDOMAIN: "DESK", USERNAME: "owner", ...env },
+    home: "C:\\Users\\owner",
+    uid: 0,
+    node: "C:\\Program Files\\nodejs\\node.exe",
+    cli: "C:\\entail\\dist\\cli.js",
+  };
+}
+
+test("on Windows the service is a Task Scheduler task that runs a script running entail run, with no window, at the user's logon", () => {
+  const definition = serviceDefinition(windowsInputs());
+  assert.equal(definition.manager, "task-scheduler");
+  assert.equal(definition.path, "C:\\Users\\owner\\AppData\\Local\\entail\\entail-service.vbs");
+  assert.deepEqual(definition.content.split("\r\n"), [
+    "' Written by `entail service install`; removed by `entail service uninstall`.",
+    'Set shell = CreateObject("WScript.Shell")',
+    'shell.Environment("Process")("PATH") = "C:\\Windows\\system32;C:\\Program Files\\nodejs"',
+    'shell.Environment("Process")("LOCALAPPDATA") = "C:\\Users\\owner\\AppData\\Local"',
+    'WScript.Quit shell.Run("""C:\\Program Files\\nodejs\\node.exe"" ""C:\\entail\\dist\\cli.js"" run", 0, True)',
+    "",
+  ]);
+  const task = (definition.task ?? "").replace(/\s+/g, "");
+  for (const fragment of [
+    "<LogonTrigger><UserId>DESK\\owner</UserId></LogonTrigger>",
+    "<UserId>DESK\\owner</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel>",
+    "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>",
+    "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
+    '<Exec><Command>%SystemRoot%\\System32\\wscript.exe</Command><Arguments>//B//NoLogo"C:\\Users\\owner\\AppData\\Local\\entail\\entail-service.vbs"</Arguments></Exec>',
+  ]) {
+    assert.ok(task.includes(fragment), `the task has ${fragment}`);
+  }
+});
+
+test("on Windows the script goes in the data directory, and keeps an absolute LOCALAPPDATA only", () => {
+  assert.equal(
+    serviceDefinition(windowsInputs({ LOCALAPPDATA: undefined })).path,
+    "C:\\Users\\owner\\AppData\\Local\\entail\\entail-service.vbs",
+  );
+  assert.deepEqual(serviceEnvironment("win32", { PATH: "C:\\bin", LOCALAPPDATA: "D:\\Local", XDG_DATA_HOME: "D:\\xdg" }), { PATH: "C:\\bin", LOCALAPPDATA: "D:\\Local" });
+  assert.deepEqual(serviceEnvironment("win32", { PATH: "C:\\bin", LOCALAPPDATA: "relative" }), { PATH: "C:\\bin" });
+  assert.throws(() => serviceDefinition(windowsInputs({ USERNAME: undefined })), ServiceError);
+  assert.throws(() => serviceDefinition({ ...windowsInputs(), node: "node.exe" }), ServiceError);
+});
+
+test("the script doubles each quote and refuses control characters; the task's XML is escaped", () => {
+  const script = windowsServiceScript({ node: "C:\\a&b\\node.exe", cli: "C:\\100%\\cli.js", environment: { PATH: 'C:\\"x";C:\\b' } });
+  assert.ok(script.includes('shell.Environment("Process")("PATH") = "C:\\""x"";C:\\b"'), script);
+  assert.ok(script.includes('shell.Run("""C:\\a&b\\node.exe"" ""C:\\100%\\cli.js"" run", 0, True)'), script);
+  assert.throws(() => windowsServiceScript({ node: "C:\\n\n", cli: "C:\\c", environment: {} }), ServiceError);
+  assert.ok(scheduledTaskXml({ script: "C:\\a&b\\entail-service.vbs", user: "D<1>\\o'n" }).includes("<UserId>D&lt;1&gt;\\o&apos;n</UserId>"));
+});
+
+test("any other platform has no service", (t) => {
+  assert.throws(() => serviceDefinition(inputs(tempHome(t), "freebsd")), UnsupportedPlatformError);
 });
 
 test("installing on Linux writes the unit, reloads systemd, then enables and starts it", async (t) => {
@@ -391,4 +448,69 @@ test("status on macOS reads the agent's state from launchctl", async (t) => {
   assert.deepEqual([running.installed, running.active, running.enabled], [true, true, true]);
   const unloaded = serviceStatus(inputs(home, "darwin"), fakeSystem({ results: { "launchctl print gui/501/entail": { status: 113, output: "Could not find service" } } }));
   assert.deepEqual([unloaded.installed, unloaded.active, unloaded.enabled], [true, false, false]);
+});
+
+/** Inputs for this Windows machine with its data directory under `home`, for the tests that write the script. */
+function windowsHere(home: string): ServiceInputs {
+  return { ...windowsInputs({ LOCALAPPDATA: join(home, "Local") }), home, node: process.execPath, cli: CLI };
+}
+
+const onWindows = { skip: process.platform !== "win32" && "writes Windows paths, which only a Windows file system takes" };
+
+test("installing on Windows writes the script, creates the task from its XML, then runs it now", onWindows, async (t) => {
+  const home = tempHome(t);
+  const system = fakeSystem();
+  const { definition, replaced } = await installService(windowsHere(home), system);
+  assert.equal(replaced, false);
+  assert.equal(readFileSync(definition.path, "utf16le"), `\ufeff${definition.content}`, "the script is UTF-16, so any path fits in it");
+  const xml = join(home, "Local", "entail", "entail-service.xml");
+  assert.deepEqual(system.calls, [`schtasks /Create /TN entail /XML ${xml} /F`, "schtasks /Run /TN entail"]);
+  assert.ok(!existsSync(xml), "the XML is removed once the task is created");
+
+  const again = fakeSystem();
+  assert.equal((await installService(windowsHere(home), again)).replaced, true);
+  assert.equal(again.calls[0], "schtasks /End /TN entail", "an installed task is stopped before it is replaced");
+});
+
+test("a failed schtasks /Create on Windows removes the script and the task again", onWindows, async (t) => {
+  const home = tempHome(t);
+  const xml = join(home, "Local", "entail", "entail-service.xml");
+  const system = fakeSystem({ results: { [`schtasks /Create /TN entail /XML ${xml} /F`]: { status: 1, output: "ERROR: Access is denied." } } });
+  await assert.rejects(installService(windowsHere(home), system), /schtasks \/Create .* failed: ERROR: Access is denied\./);
+  assert.ok(!existsSync(serviceDefinition(windowsHere(home)).path));
+  assert.ok(!existsSync(xml));
+  assert.equal(system.calls.at(-1), "schtasks /Delete /TN entail /F");
+});
+
+test("uninstalling on Windows ends the task, deletes it and removes the script", onWindows, async (t) => {
+  const home = tempHome(t);
+  await installService(windowsHere(home), fakeSystem());
+  const system = fakeSystem();
+  const { definition, removed } = uninstallService(windowsHere(home), system);
+  assert.equal(removed, true);
+  assert.ok(!existsSync(definition.path));
+  assert.deepEqual(system.calls, ["schtasks /End /TN entail", "schtasks /Delete /TN entail /F"]);
+  assert.equal(uninstallService(windowsHere(home), fakeSystem()).removed, false);
+});
+
+test("uninstalling on Windows also stops the entail the task started, which ending the task leaves running", onWindows, async (t) => {
+  const home = tempHome(t);
+  await installService(windowsHere(home), fakeSystem());
+  const system = fakeSystem({ running: () => ({ pid: 4242, startedAt: "2026-11-13T12:00:00.000Z" }) });
+  uninstallService(windowsHere(home), system);
+  assert.deepEqual(system.calls, ["schtasks /End /TN entail", "taskkill /T /F /PID 4242", "schtasks /Delete /TN entail /F"]);
+});
+
+test("status on Windows reads the task's state by name from PowerShell, the same in every language", onWindows, async (t) => {
+  const home = tempHome(t);
+  await installService(windowsHere(home), fakeSystem());
+  const query = `powershell.exe -NoProfile -NonInteractive -Command ${TASK_STATE_QUERY}`;
+  const state = (output: string, status = 0) => {
+    const read = serviceStatus(windowsHere(home), fakeSystem({ results: { [query]: { status, output } } }));
+    return [read.installed, read.active, read.enabled];
+  };
+  assert.deepEqual(state("Running\r\n"), [true, true, true]);
+  assert.deepEqual(state("Ready\r\n"), [true, false, true]);
+  assert.deepEqual(state("Disabled\r\n"), [true, false, false]);
+  assert.deepEqual(state("Get-ScheduledTask : No MSFT_ScheduledTask objects found", 1), [true, false, false]);
 });

@@ -21,7 +21,8 @@ test("cursors are kept per project in the data directory, readable by a later pr
   assert.equal(store.get("github:github.com:5001"), "c");
   assert.equal(store.get("gitlab:gitlab.com:7"), "b");
   assert.deepEqual(readdirSync(dir), [CURSORS_FILE], "no staging file is left behind");
-  assert.equal(statSync(join(dir, CURSORS_FILE)).mode & 0o777, 0o600);
+  // Windows keeps no Unix permissions: a file there reads as 0o666, or 0o444 when read-only.
+  if (process.platform !== "win32") assert.equal(statSync(join(dir, CURSORS_FILE)).mode & 0o777, 0o600);
 });
 
 test("an unreadable cursors file reads as no cursors and is replaced on the next save", (t) => {

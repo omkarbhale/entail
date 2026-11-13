@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CallView } from "./api-types.ts";
+import { cmdArguments } from "./windows.ts";
 
 /**
  * How the owner learns that something is waiting: one line and a link, sent
@@ -11,7 +12,9 @@ import type { CallView } from "./api-types.ts";
  *
  * The command is a shell command line; entail runs it with `/bin/sh -c`
  * and the line and the link appended as its last two arguments, so a script
- * reads them as `$1` and `$2`. They are also in its environment as
+ * reads them as `$1` and `$2`. On Windows it runs with `cmd.exe /d /s /c`
+ * and the two appended in double quotes, so a batch file reads them as `%~1`
+ * and `%~2`. They are also in its environment as
  * `ENTAIL_NOTICE_LINE` and `ENTAIL_NOTICE_LINK`. entail depends on no
  * particular sink: `examples/` holds one command that appends the line to a file and one that drops it
  * into firstmate's inbox.
@@ -43,10 +46,12 @@ export interface NoticeResult {
 export function sendNotice(command: string, line: string, link: string, timeoutMs = NOTICE_TIMEOUT_MS): Promise<NoticeResult> {
   return new Promise((resolve) => {
     let stderr = "";
-    const child = spawn("/bin/sh", ["-c", `${command} "$@"`, "entail-notice", line, link], {
+    const windows = process.platform === "win32";
+    const child = spawn(windows ? "cmd.exe" : "/bin/sh", windows ? cmdArguments(`${command} ${cmdQuoted(line)} ${cmdQuoted(link)}`) : ["-c", `${command} "$@"`, "entail-notice", line, link], {
       stdio: ["ignore", "ignore", "pipe"],
       env: { ...process.env, ENTAIL_NOTICE_LINE: line, ENTAIL_NOTICE_LINK: link },
       timeout: timeoutMs,
+      ...(windows ? { windowsVerbatimArguments: true, windowsHide: true } : {}),
     });
     child.stderr.on("data", (chunk: Buffer) => {
       if (stderr.length < 2000) stderr += chunk.toString("utf8");
@@ -57,6 +62,11 @@ export function sendNotice(command: string, line: string, link: string, timeoutM
       else resolve({ ok: false, error: signal !== null ? `stopped by ${signal}` : `exited ${code}${stderr.trim() === "" ? "" : `: ${stderr.trim()}`}` });
     });
   });
+}
+
+/** A word in double quotes for cmd.exe. The line and the link carry no quotes or `%`; one that did is dropped rather than let it end the quoting. */
+function cmdQuoted(value: string): string {
+  return `"${value.replace(/["%]/gu, "")}"`;
 }
 
 export interface NotifierOptions {

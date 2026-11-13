@@ -28,7 +28,13 @@ test("output without a status line is no response", () => {
   assert.equal(parseIncludedResponse("error connecting to api.github.com\n"), null);
 });
 
-/** A stand-in for `gh` that records its arguments and input, prints `stdout` and `stderr`, and exits with `code`. */
+/**
+ * A stand-in for `gh` that records its arguments and input, prints `stdout`
+ * and `stderr`, and exits with `code`. Node runs no script without a shell on
+ * Windows, so there the stand-in is Node itself with a script preloaded
+ * through NODE_OPTIONS that does the same and exits before Node reads `api`
+ * as its script.
+ */
 function fakeCli(
   t: TestContext,
   stdout: string,
@@ -40,6 +46,35 @@ function fakeCli(
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, "stdout"), stdout);
   writeFileSync(join(dir, "stderr"), stderr);
+  if (process.platform === "win32") {
+    const preload = join(dir, "gh.cjs");
+    writeFileSync(
+      preload,
+      [
+        'const fs = require("node:fs");',
+        `const dir = ${JSON.stringify(dir)};`,
+        'fs.writeFileSync(`${dir}/args`, ["api", ...process.argv.slice(2)].map((arg) => `${arg}\\0`).join(""));',
+        "fs.writeFileSync(`${dir}/input`, fs.readFileSync(0));",
+        `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${delaySeconds * 1000});`,
+        "fs.writeSync(1, fs.readFileSync(`${dir}/stdout`));",
+        "fs.writeSync(2, fs.readFileSync(`${dir}/stderr`));",
+        `process.exit(${code});`,
+        "",
+      ].join("\n"),
+    );
+    const previous = process.env.NODE_OPTIONS;
+    // NODE_OPTIONS reads a backslash as an escape; Windows takes forward slashes too.
+    process.env.NODE_OPTIONS = `--require "${preload.replaceAll("\\", "/")}"`;
+    t.after(() => {
+      if (previous === undefined) delete process.env.NODE_OPTIONS;
+      else process.env.NODE_OPTIONS = previous;
+    });
+    return {
+      path: process.execPath,
+      args: () => readFileSync(join(dir, "args"), "utf8").split("\0").slice(0, -1),
+      input: () => readFileSync(join(dir, "input"), "utf8"),
+    };
+  }
   const path = join(dir, "gh");
   writeFileSync(
     path,

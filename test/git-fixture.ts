@@ -1,7 +1,7 @@
 // Real local git repositories for tests: a working repo that commits, and a
 // bare repo that stands in for the forge's remote.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { TestContext } from "node:test";
@@ -30,8 +30,9 @@ export function git(cwd: string, ...args: string[]): string {
 export function tempDirectory(t: TestContext, prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), `entail-${prefix}-`));
   t.after(() => {
-    // Read-only checkouts left behind need write permission back to be removed.
-    execFileSync("chmod", ["-R", "u+w", dir]);
+    // Read-only checkouts left behind need write permission back to be removed;
+    // on Windows a directory has none to take away, and rm clears read-only files.
+    if (process.platform !== "win32") execFileSync("chmod", ["-R", "u+w", dir]);
     rmSync(dir, { recursive: true, force: true });
   });
   return dir;
@@ -56,6 +57,20 @@ export class FixtureRepo {
     const full = join(this.work, path);
     mkdirSync(dirname(full), { recursive: true });
     writeFileSync(full, content);
+    return this;
+  }
+
+  /** Adds a symlink at `path` pointing at `target`; on Windows straight to git's index, since making a link there needs a privilege. */
+  link(target: string, path: string): this {
+    if (process.platform !== "win32") {
+      symlinkSync(target, join(this.work, path));
+      return this;
+    }
+    // With core.symlinks off, git keeps a link's mode for the file holding its target, so a later add --all keeps it a link.
+    git(this.work, "config", "core.symlinks", "false");
+    this.write(path, target);
+    const blob = git(this.work, "hash-object", "-w", "--", path);
+    git(this.work, "update-index", "--add", "--cacheinfo", `120000,${blob},${path}`);
     return this;
   }
 

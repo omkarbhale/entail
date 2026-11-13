@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { checkoutCommit, forgeRemote, Mirror, mirrorPaths, pullRequestHeadRef, type ForgeName } from "../src/mirror.ts";
@@ -181,7 +181,8 @@ test("a read-only checkout at a recorded sha holds the repo as it was then", asy
   assert.ok(!existsSync(join(checkout.directory, "README.md")), "README.md came after that sha");
   assert.ok(!existsSync(join(checkout.directory, ".git")), "it is a plain tree, not a repository");
   assert.equal(statSync(join(checkout.directory, "VISION.md")).mode & 0o222, 0, "files are read-only");
-  assert.equal(statSync(join(checkout.directory, "src")).mode & 0o222, 0, "directories are read-only");
+  // On Windows read-only is an attribute of files only; a directory keeps none.
+  if (process.platform !== "win32") assert.equal(statSync(join(checkout.directory, "src")).mode & 0o222, 0, "directories are read-only");
 
   assert.deepEqual(await mirror.checkout(fork), checkout, "the same sha reuses its checkout");
   const later = await mirror.checkout(head.commit);
@@ -218,12 +219,16 @@ test("a checkout leaves out symlinks pointing outside it, logs them, and keeps i
   const repo = new FixtureRepo(t);
   repo.write("VISION.md", VISION).write("docs/guide.md", "guide\n");
   mkdirSync(join(repo.work, "docs"), { recursive: true });
-  symlinkSync("/etc/hostname", join(repo.work, "absolute"));
-  symlinkSync("../../outside", join(repo.work, "docs", "escaping"));
-  symlinkSync("guide.md", join(repo.work, "docs", "inside"));
-  symlinkSync("docs/inside", join(repo.work, "chain"));
-  symlinkSync("docs", join(repo.work, "dirlink"));
-  symlinkSync("dirlink/../../x", join(repo.work, "viaLink"));
+  const links: [string, string][] = [
+    ["/etc/hostname", "absolute"],
+    ["../../outside", "docs/escaping"],
+    ["guide.md", "docs/inside"],
+    ["docs/inside", "chain"],
+    ["docs", "dirlink"],
+    ["dirlink/../../x", "viaLink"],
+  ];
+  // Windows lets few users make a symlink, so there the links are committed through git's index.
+  for (const [target, path] of links) repo.link(target, path);
   const commit = repo.commit("links");
   repo.push("main");
 
@@ -239,6 +244,13 @@ test("a checkout leaves out symlinks pointing outside it, logs them, and keeps i
   await mirror.updateDefaultBranch();
 
   const checkout = await mirror.checkout(commit);
+  if (process.platform === "win32") {
+    // On Windows each link is checked out as a file holding its target, which points nowhere: nothing is left out.
+    assert.deepEqual(checkout.dropped, []);
+    for (const [target, path] of links) assert.equal(readFileSync(join(checkout.directory, path), "utf8"), target);
+    assert.deepEqual(lines, []);
+    return;
+  }
   assert.deepEqual(checkout.dropped, ["absolute", "docs/escaping", "viaLink"]);
   for (const gone of checkout.dropped) assert.throws(() => lstatSync(join(checkout.directory, gone)), { code: "ENOENT" });
   assert.ok(lstatSync(join(checkout.directory, "docs", "inside")).isSymbolicLink());

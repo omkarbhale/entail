@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { posix, win32 } from "node:path";
 
 /** Where entail keeps its data on this machine. */
 export interface DataDirectoryInputs {
@@ -16,19 +16,26 @@ export interface DataDirectoryInputs {
  *
  * - Linux and WSL: `$XDG_DATA_HOME/entail`, by default `~/.local/share/entail`.
  * - macOS: `~/Library/Application Support/entail`.
+ * - Windows: `%LOCALAPPDATA%\entail`, by default `~\AppData\Local\entail`.
  *
- * Native Windows is not supported. A relative `XDG_DATA_HOME` is ignored, as
- * the XDG Base Directory specification requires.
+ * A relative `XDG_DATA_HOME` or `LOCALAPPDATA` is ignored, as the XDG Base
+ * Directory specification requires. Paths are built for the platform named,
+ * whichever machine resolves them.
  */
 export function resolveDataDirectory(inputs: DataDirectoryInputs): string {
   const { platform, env, home } = inputs;
   if (platform === "darwin") {
-    return join(home, "Library", "Application Support", "entail");
+    return posix.join(home, "Library", "Application Support", "entail");
   }
   if (platform === "linux") {
     const xdg = env.XDG_DATA_HOME;
-    const base = xdg && isAbsolute(xdg) ? xdg : join(home, ".local", "share");
-    return join(base, "entail");
+    const base = xdg && posix.isAbsolute(xdg) ? xdg : posix.join(home, ".local", "share");
+    return posix.join(base, "entail");
+  }
+  if (platform === "win32") {
+    const local = env.LOCALAPPDATA;
+    const base = local && win32.isAbsolute(local) ? local : win32.join(home, "AppData", "Local");
+    return win32.join(base, "entail");
   }
   throw new UnsupportedPlatformError(platform);
 }
@@ -44,7 +51,7 @@ export function ensureDataDirectory(
 
 export class UnsupportedPlatformError extends Error {
   constructor(platform: string) {
-    super(`entail supports Linux (WSL included) and macOS, not ${platform}`);
+    super(`entail supports Linux (WSL included), macOS and Windows, not ${platform}`);
     this.name = "UnsupportedPlatformError";
   }
 }

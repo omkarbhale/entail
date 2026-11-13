@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
+import { fileURLToPath } from "node:url";
 import type { BoardEvent } from "../src/api-types.ts";
 import { EventBus, watchLogs } from "../src/events.ts";
 import { Loop, type PassRequest } from "../src/loop.ts";
@@ -137,24 +138,32 @@ test("an item is remembered as told only once its notice went out, and a PR call
   assert.deepEqual(await notifier.check([ask, merge]), { sent: true, line: "entail: 1 question and 1 call to confirm waiting on you" }, "a PR call on the same issue is announced too");
 });
 
+/** A command line that runs a Node script, the same under /bin/sh and cmd.exe. */
+function nodeCommand(directory: string, name: string, script: string): string {
+  const path = join(directory, name);
+  writeFileSync(path, script);
+  return `"${process.execPath}" "${path}"`;
+}
+
 test("the notice command runs with the line and the link as its last two arguments, and the shipped example writes them to a file", async (t) => {
   const directory = scratch(t);
   const file = join(directory, "notices.txt");
-  const script = join(directory, "notice.sh");
-  writeFileSync(script, `#!/bin/sh\nprintf '%s|%s|%s\\n' "$1" "$2" "$ENTAIL_NOTICE_LINE" > '${file}'\n`);
-  chmodSync(script, 0o755);
-  assert.deepEqual(await sendNotice(`'${script}'`, "entail: 1 question waiting on you", "http://127.0.0.1:4380/#/waiting"), { ok: true });
+  const notice = nodeCommand(
+    directory,
+    "notice.cjs",
+    `require("node:fs").writeFileSync(${JSON.stringify(file)}, [process.argv[2], process.argv[3], process.env.ENTAIL_NOTICE_LINE].join("|") + "\\n");\n`,
+  );
+  assert.deepEqual(await sendNotice(notice, "entail: 1 question waiting on you", "http://127.0.0.1:4380/#/waiting"), { ok: true });
   assert.equal(readFileSync(file, "utf8"), "entail: 1 question waiting on you|http://127.0.0.1:4380/#/waiting|entail: 1 question waiting on you\n");
 
-  const example = new URL("../examples/notice-to-file.sh", import.meta.url).pathname;
+  const windows = process.platform === "win32";
+  const example = fileURLToPath(new URL(`../examples/notice-to-file.${windows ? "cmd" : "sh"}`, import.meta.url));
   const target = join(directory, "from-example.txt");
-  const result = await sendNotice(`ENTAIL_NOTICE_FILE='${target}' '${example}'`, "entail: 2 calls to confirm waiting on you", "http://127.0.0.1:4380/#/waiting");
+  const result = await sendNotice(windows ? `set "ENTAIL_NOTICE_FILE=${target}" && "${example}"` : `ENTAIL_NOTICE_FILE='${target}' '${example}'`, "entail: 2 calls to confirm waiting on you", "http://127.0.0.1:4380/#/waiting");
   assert.deepEqual(result, { ok: true });
-  assert.match(readFileSync(target, "utf8"), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2} entail: 2 calls to confirm waiting on you http:\/\/127\.0\.0\.1:4380\/#\/waiting\n$/u);
+  assert.match(readFileSync(target, "utf8"), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2} entail: 2 calls to confirm waiting on you http:\/\/127\.0\.0\.1:4380\/#\/waiting\r?\n$/u);
 
-  const failing = join(directory, "fail.sh");
-  writeFileSync(failing, "#!/bin/sh\necho nope >&2\nexit 3\n");
-  chmodSync(failing, 0o755);
+  const failing = nodeCommand(directory, "fail.cjs", 'process.stderr.write("nope\\n");\nprocess.exit(3);\n');
   assert.deepEqual(await sendNotice(failing, "l", "k"), { ok: false, error: "exited 3: nope" });
 });
 
