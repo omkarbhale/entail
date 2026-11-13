@@ -28,7 +28,7 @@ jobs:
       - run: npm run build
       - run: npm test
       # The Task Scheduler service on a real Windows: installed and started, running
-      # entail and its board, seen by status, then stopped and removed.
+      # entail (hidden) and its board, seen by status, then stopped and removed.
       - name: service (Windows)
         if: runner.os == 'Windows'
         shell: bash
@@ -40,3 +40,5 @@ jobs:
           node dist/cli.js status
           node dist/cli.js service uninstall
           node dist/cli.js service status | grep "not installed"
+          for attempt in $(seq 15); do node dist/cli.js status | grep -q "entail is not running" && break; sleep 2; done
+          node dist/cli.js status | grep "entail is not running"

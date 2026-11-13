@@ -12,6 +12,7 @@ import {
   launchdPlist,
   machineServiceSystem,
   scheduledTaskXml,
+  TASK_STATE_QUERY,
   serviceDefinition,
   ServiceError,
   serviceEnvironment,
@@ -183,16 +184,16 @@ function windowsInputs(env: NodeJS.ProcessEnv = {}): ServiceInputs {
   };
 }
 
-test("on Windows the service is a Task Scheduler task that runs a batch file running entail run at the user's logon", () => {
+test("on Windows the service is a Task Scheduler task that runs a script running entail run, with no window, at the user's logon", () => {
   const definition = serviceDefinition(windowsInputs());
   assert.equal(definition.manager, "task-scheduler");
-  assert.equal(definition.path, "C:\\Users\\owner\\AppData\\Local\\entail\\entail-service.cmd");
+  assert.equal(definition.path, "C:\\Users\\owner\\AppData\\Local\\entail\\entail-service.vbs");
   assert.deepEqual(definition.content.split("\r\n"), [
-    "@echo off",
-    "rem Written by `entail service install`; removed by `entail service uninstall`.",
-    'set "PATH=C:\\Windows\\system32;C:\\Program Files\\nodejs"',
-    'set "LOCALAPPDATA=C:\\Users\\owner\\AppData\\Local"',
-    '"C:\\Program Files\\nodejs\\node.exe" "C:\\entail\\dist\\cli.js" run',
+    "' Written by `entail service install`; removed by `entail service uninstall`.",
+    'Set shell = CreateObject("WScript.Shell")',
+    'shell.Environment("Process")("PATH") = "C:\\Windows\\system32;C:\\Program Files\\nodejs"',
+    'shell.Environment("Process")("LOCALAPPDATA") = "C:\\Users\\owner\\AppData\\Local"',
+    'WScript.Quit shell.Run("""C:\\Program Files\\nodejs\\node.exe"" ""C:\\entail\\dist\\cli.js"" run", 0, True)',
     "",
   ]);
   const task = (definition.task ?? "").replace(/\s+/g, "");
@@ -201,16 +202,16 @@ test("on Windows the service is a Task Scheduler task that runs a batch file run
     "<UserId>DESK\\owner</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel>",
     "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>",
     "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
-    '<Exec><Command>"C:\\Users\\owner\\AppData\\Local\\entail\\entail-service.cmd"</Command></Exec>',
+    '<Exec><Command>%SystemRoot%\\System32\\wscript.exe</Command><Arguments>//B//NoLogo"C:\\Users\\owner\\AppData\\Local\\entail\\entail-service.vbs"</Arguments></Exec>',
   ]) {
     assert.ok(task.includes(fragment), `the task has ${fragment}`);
   }
 });
 
-test("on Windows the batch file goes in the data directory, and keeps an absolute LOCALAPPDATA only", () => {
+test("on Windows the script goes in the data directory, and keeps an absolute LOCALAPPDATA only", () => {
   assert.equal(
     serviceDefinition(windowsInputs({ LOCALAPPDATA: undefined })).path,
-    "C:\\Users\\owner\\AppData\\Local\\entail\\entail-service.cmd",
+    "C:\\Users\\owner\\AppData\\Local\\entail\\entail-service.vbs",
   );
   assert.deepEqual(serviceEnvironment("win32", { PATH: "C:\\bin", LOCALAPPDATA: "D:\\Local", XDG_DATA_HOME: "D:\\xdg" }), { PATH: "C:\\bin", LOCALAPPDATA: "D:\\Local" });
   assert.deepEqual(serviceEnvironment("win32", { PATH: "C:\\bin", LOCALAPPDATA: "relative" }), { PATH: "C:\\bin" });
@@ -218,13 +219,12 @@ test("on Windows the batch file goes in the data directory, and keeps an absolut
   assert.throws(() => serviceDefinition({ ...windowsInputs(), node: "node.exe" }), ServiceError);
 });
 
-test("the batch file doubles each % and refuses quotes and control characters; the task's XML is escaped", () => {
-  const script = windowsServiceScript({ node: "C:\\a&b\\node.exe", cli: "C:\\100%\\cli.js", environment: { PATH: "C:\\%X%;C:\\b" } });
-  assert.ok(script.includes('set "PATH=C:\\%%X%%;C:\\b"'), script);
-  assert.ok(script.includes('"C:\\a&b\\node.exe" "C:\\100%%\\cli.js" run'), script);
-  assert.throws(() => windowsServiceScript({ node: 'C:\\a"b', cli: "C:\\c", environment: {} }), ServiceError);
+test("the script doubles each quote and refuses control characters; the task's XML is escaped", () => {
+  const script = windowsServiceScript({ node: "C:\\a&b\\node.exe", cli: "C:\\100%\\cli.js", environment: { PATH: 'C:\\"x";C:\\b' } });
+  assert.ok(script.includes('shell.Environment("Process")("PATH") = "C:\\""x"";C:\\b"'), script);
+  assert.ok(script.includes('shell.Run("""C:\\a&b\\node.exe"" ""C:\\100%\\cli.js"" run", 0, True)'), script);
   assert.throws(() => windowsServiceScript({ node: "C:\\n\n", cli: "C:\\c", environment: {} }), ServiceError);
-  assert.ok(scheduledTaskXml({ script: "C:\\a&b\\entail-service.cmd", user: "D<1>\\o'n" }).includes("<UserId>D&lt;1&gt;\\o&apos;n</UserId>"));
+  assert.ok(scheduledTaskXml({ script: "C:\\a&b\\entail-service.vbs", user: "D<1>\\o'n" }).includes("<UserId>D&lt;1&gt;\\o&apos;n</UserId>"));
 });
 
 test("any other platform has no service", (t) => {
@@ -450,19 +450,19 @@ test("status on macOS reads the agent's state from launchctl", async (t) => {
   assert.deepEqual([unloaded.installed, unloaded.active, unloaded.enabled], [true, false, false]);
 });
 
-/** Inputs for this Windows machine with its data directory under `home`, for the tests that write the batch file. */
+/** Inputs for this Windows machine with its data directory under `home`, for the tests that write the script. */
 function windowsHere(home: string): ServiceInputs {
   return { ...windowsInputs({ LOCALAPPDATA: join(home, "Local") }), home, node: process.execPath, cli: CLI };
 }
 
 const onWindows = { skip: process.platform !== "win32" && "writes Windows paths, which only a Windows file system takes" };
 
-test("installing on Windows writes the batch file, creates the task from its XML, then runs it now", onWindows, async (t) => {
+test("installing on Windows writes the script, creates the task from its XML, then runs it now", onWindows, async (t) => {
   const home = tempHome(t);
   const system = fakeSystem();
   const { definition, replaced } = await installService(windowsHere(home), system);
   assert.equal(replaced, false);
-  assert.equal(readFileSync(definition.path, "utf8"), definition.content);
+  assert.equal(readFileSync(definition.path, "utf16le"), `\ufeff${definition.content}`, "the script is UTF-16, so any path fits in it");
   const xml = join(home, "Local", "entail", "entail-service.xml");
   assert.deepEqual(system.calls, [`schtasks /Create /TN entail /XML ${xml} /F`, "schtasks /Run /TN entail"]);
   assert.ok(!existsSync(xml), "the XML is removed once the task is created");
@@ -472,7 +472,7 @@ test("installing on Windows writes the batch file, creates the task from its XML
   assert.equal(again.calls[0], "schtasks /End /TN entail", "an installed task is stopped before it is replaced");
 });
 
-test("a failed schtasks /Create on Windows removes the batch file and the task again", onWindows, async (t) => {
+test("a failed schtasks /Create on Windows removes the script and the task again", onWindows, async (t) => {
   const home = tempHome(t);
   const xml = join(home, "Local", "entail", "entail-service.xml");
   const system = fakeSystem({ results: { [`schtasks /Create /TN entail /XML ${xml} /F`]: { status: 1, output: "ERROR: Access is denied." } } });
@@ -482,7 +482,7 @@ test("a failed schtasks /Create on Windows removes the batch file and the task a
   assert.equal(system.calls.at(-1), "schtasks /Delete /TN entail /F");
 });
 
-test("uninstalling on Windows ends the task, deletes it and removes the batch file", onWindows, async (t) => {
+test("uninstalling on Windows ends the task, deletes it and removes the script", onWindows, async (t) => {
   const home = tempHome(t);
   await installService(windowsHere(home), fakeSystem());
   const system = fakeSystem();
@@ -493,16 +493,16 @@ test("uninstalling on Windows ends the task, deletes it and removes the batch fi
   assert.equal(uninstallService(windowsHere(home), fakeSystem()).removed, false);
 });
 
-test("status on Windows reads the task's state from schtasks", onWindows, async (t) => {
+test("status on Windows reads the task's state by name from PowerShell, the same in every language", onWindows, async (t) => {
   const home = tempHome(t);
   await installService(windowsHere(home), fakeSystem());
-  const query = "schtasks /Query /TN entail /FO CSV /NH";
+  const query = `powershell.exe -NoProfile -NonInteractive -Command ${TASK_STATE_QUERY}`;
   const state = (output: string, status = 0) => {
     const read = serviceStatus(windowsHere(home), fakeSystem({ results: { [query]: { status, output } } }));
     return [read.installed, read.active, read.enabled];
   };
-  assert.deepEqual(state('"\\entail","N/A","Running"'), [true, true, true]);
-  assert.deepEqual(state('"\\entail","N/A","Ready"'), [true, false, true]);
-  assert.deepEqual(state('"\\entail","N/A","Disabled"'), [true, false, false]);
-  assert.deepEqual(state("ERROR: The system cannot find the file specified.", 1), [true, false, false]);
+  assert.deepEqual(state("Running\r\n"), [true, true, true]);
+  assert.deepEqual(state("Ready\r\n"), [true, false, true]);
+  assert.deepEqual(state("Disabled\r\n"), [true, false, false]);
+  assert.deepEqual(state("Get-ScheduledTask : No MSFT_ScheduledTask objects found", 1), [true, false, false]);
 });

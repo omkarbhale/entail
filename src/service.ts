@@ -26,8 +26,8 @@ export const SYSTEMD_UNIT = `${SERVICE_NAME}.service`;
 export const LAUNCHD_LABEL = SERVICE_NAME;
 export const SCHEDULED_TASK = SERVICE_NAME;
 
-/** On Windows, the batch file the task runs, in the data directory; its task's definition is written beside it only while the task is created. */
-export const WINDOWS_SERVICE_FILE = "entail-service.cmd";
+/** On Windows, the script the task runs, in the data directory; its task's definition is written beside it only while the task is created. */
+export const WINDOWS_SERVICE_FILE = "entail-service.vbs";
 export const WINDOWS_TASK_FILE = "entail-service.xml";
 
 /** How long a crashed service waits before it is started again, in seconds. */
@@ -57,7 +57,7 @@ export interface ServiceDefinition {
   manager: ServiceManager;
   path: string;
   content: string;
-  /** On Windows, the task registered with Task Scheduler, which runs the batch file at `path`. */
+  /** On Windows, the task registered with Task Scheduler, which runs the script at `path`. */
   task?: string;
 }
 
@@ -195,23 +195,25 @@ export function launchdPlist({ node, cli, environment }: DefinitionInputs): stri
 }
 
 /**
- * The batch file the Windows task runs: it sets the environment, then runs
- * `entail run`. Batch files are read by cmd.exe, so it ends its lines with
- * CRLF and writes each `%` as `%%`.
+ * The script the Windows task runs with Windows Script Host: it sets the
+ * environment, then runs `entail run` with no window, so nothing appears at
+ * logon and no window can be closed on it, and waits for it, so the task
+ * runs exactly as long as entail does.
  */
 export function windowsServiceScript({ node, cli, environment }: DefinitionInputs): string {
   return [
-    "@echo off",
-    "rem Written by `entail service install`; removed by `entail service uninstall`.",
-    ...Object.entries(environment).map(([name, value]) => `set "${batchText(`${name}=${value}`)}"`),
-    `"${batchText(node)}" "${batchText(cli)}" run`,
+    "' Written by `entail service install`; removed by `entail service uninstall`.",
+    'Set shell = CreateObject("WScript.Shell")',
+    ...Object.entries(environment).map(([name, value]) => `shell.Environment("Process")(${vbsString(name)}) = ${vbsString(value)}`),
+    `WScript.Quit shell.Run(${vbsString(`"${node}" "${cli}" run`)}, 0, True)`,
     "",
   ].join("\r\n");
 }
 
-function batchText(value: string): string {
-  if (/[\u0000-\u001f\u007f"]/u.test(value)) throw new ServiceError(`cannot write a control character or a quote into the service definition: ${JSON.stringify(value)}`);
-  return value.replaceAll("%", "%%");
+/** A VBScript string literal: in double quotes, each one doubled. */
+function vbsString(value: string): string {
+  if (/[\u0000-\u001f\u007f]/u.test(value)) throw new ServiceError(`cannot write a control character into the service definition: ${JSON.stringify(value)}`);
+  return `"${value.replaceAll('"', '""')}"`;
 }
 
 /** The Windows account the task runs as and logs in with: `DOMAIN\user`. */
@@ -222,7 +224,7 @@ function windowsUser(env: NodeJS.ProcessEnv): string {
 }
 
 /**
- * The Task Scheduler task, registered from XML: it runs the batch file when
+ * The Task Scheduler task, registered from XML: it runs the script when
  * the user logs in, as that user and without elevation, so a user who is not
  * an administrator can install it. Unlike a task made with `schtasks /SC
  * ONLOGON`, it runs on battery and is never stopped for running too long.
@@ -256,7 +258,8 @@ export function scheduledTaskXml({ script, user }: { script: string; user: strin
     "  </Settings>",
     '  <Actions Context="Author">',
     "    <Exec>",
-    `      <Command>"${xml(script)}"</Command>`,
+    "      <Command>%SystemRoot%\\System32\\wscript.exe</Command>",
+    `      <Arguments>//B //NoLogo "${xml(script)}"</Arguments>`,
     "    </Exec>",
     "  </Actions>",
     "</Task>",
@@ -277,7 +280,7 @@ export interface CommandResult {
 
 /** What install, uninstall and status reach the machine through. Replaced by a fake in tests. */
 export interface ServiceSystem {
-  /** Runs `systemctl`, `launchctl` or `schtasks`. */
+  /** Runs `systemctl`, `launchctl`, or `schtasks` and `powershell.exe`. */
   exec(file: string, args: string[]): CommandResult;
   /** The copy of entail holding the lock, when one is running. */
   runningCopy(): LockHolder | null;
@@ -325,12 +328,13 @@ export async function installService(inputs: ServiceInputs, system: ServiceSyste
   if (holder) throw new ServiceError(`entail is already running (pid ${holder.pid}, started ${holder.startedAt}); stop it, then run entail service install again`);
 
   mkdirSync(dirname(definition.path), { recursive: true });
-  writeFileSync(definition.path, definition.content, { mode: 0o644 });
+  // Windows Script Host reads a script with a byte order mark as UTF-16, so any path can be in it.
+  writeFileSync(definition.path, definition.manager === "task-scheduler" ? utf16(definition.content) : definition.content, { mode: 0o644 });
   try {
     if (definition.manager === "task-scheduler") {
       // schtasks reads a task's XML as UTF-16, the encoding the XML declares.
       const task = join(dirname(definition.path), WINDOWS_TASK_FILE);
-      writeFileSync(task, Buffer.from(`\ufeff${definition.task}`, "utf16le"));
+      writeFileSync(task, utf16(definition.task ?? ""));
       try {
         must(system, "schtasks", ["/Create", "/TN", SCHEDULED_TASK, "/XML", task, "/F"], inputs);
       } finally {
@@ -401,10 +405,10 @@ export function serviceStatus(inputs: ServiceInputs, system: ServiceSystem): Ser
       active = system.exec("systemctl", ["--user", "is-active", "--quiet", SYSTEMD_UNIT]).status === 0;
       enabled = system.exec("systemctl", ["--user", "is-enabled", "--quiet", SYSTEMD_UNIT]).status === 0;
     } else if (definition.manager === "task-scheduler") {
-      // One CSV row: the task's name, its next run time and its status (Ready, Running or Disabled).
-      const queried = system.exec("schtasks", ["/Query", "/TN", SCHEDULED_TASK, "/FO", "CSV", "/NH"]);
-      const state = queried.status === 0 ? (/"([^"]*)"\s*$/u.exec(queried.output)?.[1] ?? "") : "";
-      enabled = queried.status === 0 && state !== "Disabled";
+      // The task's state by name (Ready, Running, Disabled, Queued), which unlike schtasks' text is the same in every language.
+      const queried = system.exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", TASK_STATE_QUERY]);
+      const state = queried.status === 0 ? queried.output.trim() : "";
+      enabled = state !== "" && state !== "Disabled";
       active = state === "Running";
     } else {
       const printed = system.exec("launchctl", ["print", `gui/${inputs.uid}/${LAUNCHD_LABEL}`]);
@@ -420,6 +424,14 @@ function stopService(definition: ServiceDefinition, inputs: ServiceInputs, syste
   if (definition.manager === "task-scheduler") return existsSync(definition.path) && system.exec("schtasks", ["/End", "/TN", SCHEDULED_TASK]).status === 0;
   if (definition.manager === "systemd") return existsSync(definition.path) && system.exec("systemctl", ["--user", "stop", SYSTEMD_UNIT]).status === 0;
   return system.exec("launchctl", ["bootout", `gui/${inputs.uid}/${LAUNCHD_LABEL}`]).status === 0;
+}
+
+/** What prints the Windows task's state. */
+export const TASK_STATE_QUERY = `(Get-ScheduledTask -TaskName ${SCHEDULED_TASK} -ErrorAction Stop).State`;
+
+/** Text as UTF-16 with a byte order mark. */
+function utf16(text: string): Buffer {
+  return Buffer.from(`\ufeff${text}`, "utf16le");
 }
 
 function must(system: ServiceSystem, file: string, args: string[], inputs: ServiceInputs): void {
