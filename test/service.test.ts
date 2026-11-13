@@ -493,6 +493,14 @@ test("uninstalling on Windows ends the task, deletes it and removes the script",
   assert.equal(uninstallService(windowsHere(home), fakeSystem()).removed, false);
 });
 
+test("uninstalling on Windows also stops the entail the task started, which ending the task leaves running", onWindows, async (t) => {
+  const home = tempHome(t);
+  await installService(windowsHere(home), fakeSystem());
+  const system = fakeSystem({ running: () => ({ pid: 4242, startedAt: "2026-11-13T12:00:00.000Z" }) });
+  uninstallService(windowsHere(home), system);
+  assert.deepEqual(system.calls, ["schtasks /End /TN entail", "taskkill /T /F /PID 4242", "schtasks /Delete /TN entail /F"]);
+});
+
 test("status on Windows reads the task's state by name from PowerShell, the same in every language", onWindows, async (t) => {
   const home = tempHome(t);
   await installService(windowsHere(home), fakeSystem());

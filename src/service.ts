@@ -421,7 +421,14 @@ export function serviceStatus(inputs: ServiceInputs, system: ServiceSystem): Ser
 
 /** Stops an installed service, if any, and says whether one was stopped; a service never loaded has nothing to stop. */
 function stopService(definition: ServiceDefinition, inputs: ServiceInputs, system: ServiceSystem): boolean {
-  if (definition.manager === "task-scheduler") return existsSync(definition.path) && system.exec("schtasks", ["/End", "/TN", SCHEDULED_TASK]).status === 0;
+  if (definition.manager === "task-scheduler") {
+    if (!existsSync(definition.path)) return false;
+    // Ending the task stops only its script, not the entail it started; /End succeeds only on a running task, so the copy holding the lock is the service's.
+    const holder = system.runningCopy();
+    const ended = system.exec("schtasks", ["/End", "/TN", SCHEDULED_TASK]).status === 0;
+    if (ended && holder) system.exec("taskkill", ["/T", "/F", "/PID", String(holder.pid)]);
+    return ended;
+  }
   if (definition.manager === "systemd") return existsSync(definition.path) && system.exec("systemctl", ["--user", "stop", SYSTEMD_UNIT]).status === 0;
   return system.exec("launchctl", ["bootout", `gui/${inputs.uid}/${LAUNCHD_LABEL}`]).status === 0;
 }
