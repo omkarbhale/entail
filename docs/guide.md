@@ -31,6 +31,7 @@ node dist/cli.js land owner/repo#124           # the call on one PR at its head,
 node dist/cli.js replay                        # the case book through both judgments, agreement with the owner
 node dist/cli.js backup status                 # the backup remote, its last push, and whether backup is stuck
 node dist/cli.js restore <git remote>          # on a new machine: bring the records back from the backup remote
+node dist/cli.js suggest owner/repo            # suggest work from the vision and the product, filed as entail:suggested issues
 ```
 
 `node dist/cli.js help` lists every command and option.
@@ -87,7 +88,7 @@ When a go acts (at once with confirm mode off; once the owner confirms it, answe
 
 ## Suggesting work
 
-On demand, entail suggests what should happen next in a repo from its vision and the product as it stands: **Suggest work** on the repo's card on the board, with the model and effort you pick (the repo's own by default), or `entail suggest owner/repo [--model <model>] [--effort <level>]`. One run reads `VISION.md`, the README and the tree at the default branch's head, the open issues and the suggestions filed before and since closed (so nothing filed is suggested again) and your past calls on the repo, and may take up to an hour on a big product. It files each suggestion as an ordinary issue labelled `entail:suggested` (a suggestion larger than one PR as one larger issue), which then gets the usual call like any new issue and keeps that label beside the call's; nothing goes on the board as a question. Each filed issue carries the run's hidden marker, so a restart never files one twice. The log shows each run with what it filed and what it considered and left out, with why; `entail suggest` prints the same. One run per repo at a time. Not part of this: scheduled suggestion runs, and suggestions shown on the board for you to pick from before anything is filed.
+On demand, entail suggests what should happen next in a repo from its vision and the product as it stands: **Suggest work** on the repo's card on the board, with the model and effort you pick (the repo's own by default), or `entail suggest owner/repo [--model <model>] [--effort <level>]` (`gitlab:group/project` for GitLab, where it works the same way). One run reads `VISION.md`, the README and the tree at the default branch's head, the open issues and the suggestions filed before and since closed (so nothing filed is suggested again) and your past calls on the repo, and may take up to an hour on a big product. It files each suggestion as an ordinary issue labelled `entail:suggested` (a suggestion larger than one PR as one larger issue), which then gets the usual call like any new issue and keeps that label beside the call's; nothing goes on the board as a question. Each filed issue carries the run's hidden marker, so a restart never files one twice. The log shows each run with what it filed and what it considered and left out, with why; `entail suggest` prints the same. One run per repo at a time. Not part of this: scheduled suggestion runs, and suggestions shown on the board for you to pick from before anything is filed.
 
 ## The board's API
 

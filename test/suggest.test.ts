@@ -28,7 +28,10 @@ import {
   type SuggestInputs,
   type SuggestionOutcome,
 } from "../src/suggest.ts";
+import { GitLabForge } from "../src/forge/gitlab.ts";
+import type { ForgeRequest } from "../src/forge/transport.ts";
 import { isMention } from "../src/watch.ts";
+import { RecordedTransport } from "./forge/recorded-transport.ts";
 
 const REPO = "acme/tally";
 const SHA = "a".repeat(40);
@@ -333,4 +336,52 @@ test("a run that stops before it answers, as on a forge error, is recorded as fa
   const failed = readLog(dataDirectory, REPO).at(-1)!;
   assert.equal(failed.type, "suggest-failed");
   assert.equal(failed.type === "suggest-failed" && failed.reason, "the run stopped before it answered: gh: HTTP 502");
+});
+
+test("a run on a GitLab project reads its issues and files its suggestions through the GitLab adapter the same way", async (t) => {
+  const host = "gitlab.example.org";
+  const project = "projects/acme%2Ftally";
+  const order = "order_by=created_at&sort=asc&per_page=100";
+  const at = "2026-11-18T10:00:00Z";
+  const gitlabIssue = (iid: number, title: string, extra: Record<string, unknown> = {}) => ({
+    id: 9000 + iid, iid, title, description: "", state: "opened", author: { id: 7, username: "owner" }, labels: [], user_notes_count: 0, created_at: at, updated_at: at, web_url: `https://${host}/acme/tally/-/issues/${iid}`, ...extra,
+  });
+  const page = (body: unknown[]) => ({ status: 200, headers: { "X-Next-Page": "" }, body });
+  const labelled = { request: { method: "GET" as const, path: `${project}/issues?state=all&labels=entail%3Asuggested&${order}` }, response: page([gitlabIssue(2, "Cloud sync", { state: "closed", labels: ["entail:suggested"] })]) };
+  const label = { request: { method: "GET" as const, path: `${project}/labels/entail%3Asuggested` }, response: { status: 200, body: { name: "entail:suggested" } } };
+  const transport = new RecordedTransport({
+    host,
+    exchanges: [
+      { request: { method: "GET", path: `${project}/issues?state=opened&${order}` }, response: page([gitlabIssue(4, "Count words in footnotes")]) },
+      labelled,
+      labelled,
+      label,
+      { request: { method: "POST", path: `${project}/issues` }, response: { status: 201, body: gitlabIssue(11, "Count words in PDFs", { labels: ["entail:suggested"] }) } },
+      label,
+      { request: { method: "POST", path: `${project}/issues` }, response: { status: 201, body: gitlabIssue(12, "A plugin system for formats", { labels: ["entail:suggested"] }) } },
+    ],
+  });
+  t.after(() => transport.assertDone());
+  // A filed issue's body carries the run's id, known only once the run is recorded, so the POST bodies are checked below.
+  const sentBodies: unknown[] = [];
+  const seam = {
+    request: (request: ForgeRequest) => {
+      if (request.method !== "POST") return transport.request(request);
+      sentBodies.push(request.body);
+      return transport.request({ ...request, body: undefined });
+    },
+  };
+  const { dataDirectory, runner, run } = setup(t);
+  runner.script(SUGGEST_KIND, REPO, { output: ANSWER });
+  const outcome = await run({ forge: new GitLabForge({ forge: "gitlab", host, path: "acme/tally" }, seam) });
+  assert.ok(outcome.ok);
+  assert.match(runner.requests[0]!.prompt, /- #2 \(closed\): Cloud sync/u, "a closed suggestion counts as already filed");
+  assert.deepEqual(outcome.filed.map((one) => one.issue.url), [`https://${host}/acme/tally/-/issues/11`, `https://${host}/acme/tally/-/issues/12`]);
+  const sent = sentBodies as { title: string; description: string; labels: string }[];
+  assert.deepEqual(sent.map((one) => [one.title, one.labels]), [
+    ["Count words in PDFs", "entail:suggested"],
+    ["A plugin system for formats", "entail:suggested"],
+  ]);
+  assert.ok(sent[0]!.description.endsWith(`<!-- entail suggestion ${outcome.run.id}.0 -->`));
+  assert.equal(readLog(dataDirectory, REPO).filter((entry) => entry.type === "suggestion-filed").length, 2);
 });
