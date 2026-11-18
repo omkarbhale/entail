@@ -496,3 +496,34 @@ test("reopening an issue and closing a merge request send GitLab's state events"
   await forge.closePullRequest(4);
   assert.equal(transport.requests.length, 2);
 });
+
+test("an issue's blockers are its links of type is_blocked_by, with each blocker's project path and state", async (t) => {
+  const link = (iid: number, full: string, link_type: string, state = "opened") => ({ ...issue(iid, "2026-11-01T10:00:00Z", 0), state, link_type, references: { full } });
+  const { forge } = forgeOn(t, [
+    {
+      request: { method: "GET", path: "projects/acme%2Ftally/issues/5/links" },
+      response: {
+        status: 200,
+        body: [link(3, "acme/tally#3", "is_blocked_by"), link(9, "acme/libs/core#9", "is_blocked_by", "closed"), link(4, "acme/tally#4", "relates_to"), link(6, "acme/tally#6", "blocks")],
+      },
+    },
+    { request: { method: "GET", path: "projects/acme%2Ftally/issues/6/links" }, response: { status: 200, body: [link(4, "acme/tally#4", "relates_to")] } },
+    { request: { method: "GET", path: "projects/acme%2Ftally/issues/7/links" }, response: { status: 403, body: { message: "403 Forbidden" } } },
+  ]);
+  assert.deepEqual(await forge.blockedBy(5), [
+    { path: "acme/tally", number: 3, state: "open" },
+    { path: "acme/libs/core", number: 9, state: "closed" },
+  ]);
+  assert.deepEqual(await forge.blockedBy(6), [], "a Free-tier project's links only relate: read, and none blocks");
+  assert.equal(await forge.blockedBy(7), null, "links GitLab will not list are no links to read: only the text counts");
+});
+
+test("a blocker's state is read from its issue in any project on the host, and a missing one is null", async (t) => {
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: "projects/acme%2Flibs%2Fcore/issues/9" }, response: { status: 200, body: { ...issue(9, "2026-11-01T10:00:00Z", 0), state: "closed" } } },
+    { request: { method: "GET", path: "projects/acme%2Ftally/issues/77" }, response: { status: 404, body: { message: "404 Not found" } } },
+  ]);
+  assert.equal(await forge.issueState("acme/libs/core", 9), "closed");
+  assert.equal(await forge.issueState("acme/tally", 77), null);
+  assert.equal(await forge.issueState("no-namespace", 1), null);
+});

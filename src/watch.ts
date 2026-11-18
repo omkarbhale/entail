@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { openBlockers, readBlockers, refsText, sameBlockers } from "./blockers.ts";
 import { landingPrecedentsFor, OWNER_CASE_BOOK, precedentsFor, renderIssue, renderPullRequest, writeCase, writeLandingCase, type Case, type LandingCase, type OwnerCall } from "./case-book.ts";
 import { ChangeDeduplicator } from "./changes.ts";
 import { composeComment, markedTickets } from "./comment-rules.ts";
@@ -26,11 +27,12 @@ import type { ModelRunner } from "./model-runner.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import { caseFor, landingCaseFor, runSettings } from "./owner.ts";
 import { readPins } from "./pins.ts";
-import { postFor, pullRequestPostFor, type MergeResult } from "./posts.ts";
+import { BLOCKED_LABEL, postFor, pullRequestPostFor, type MergeResult } from "./posts.ts";
 import {
   appendEntry,
   followedPullRequests,
   goCallOn,
+  heldIssues,
   judgedMentions,
   latestCalls,
   latestLandings,
@@ -42,6 +44,7 @@ import {
   pendingWork,
   readLog,
   type ActedEntry,
+  type BlockedEntry,
   repoState,
   SEND_BACK_LIMIT,
   JUDGMENT_ATTEMPTS,
@@ -89,6 +92,17 @@ import { readVision } from "./vision.ts";
  * lets the act go ahead without it; any other label failure holds the act for
  * a retry next pass.
  *
+ * An issue that names an open blocker, in its text ("blocked by #12",
+ * "depends on #12") or by the forge's own blocking links, is held instead of
+ * judged: no call, no criteria and no work, one comment saying what it waits
+ * on, and the `entail:blocked` label (`src/blockers.ts`). A held issue is
+ * weighed again when it changes (an edit, or an `/entail` comment), when the
+ * change feed reports a change to one of its blockers in the same repo (a
+ * blocker closing is one), and, for a blocker in another repo, which this
+ * repo's feed never reports, by reading that blocker's state each pass. Once
+ * none of its blockers is open it is judged as it would have been; while the
+ * same blockers stay open nothing new is posted.
+ *
  * When a go acts and the owner set a start command, entail runs it with the
  * handoff, once per issue, and records that work was started (`src/starts.ts`).
  *
@@ -105,6 +119,8 @@ export type WatchForge = Pick<
   | "project"
   | "changesSince"
   | "issue"
+  | "blockedBy"
+  | "issueState"
   | "comments"
   | "postComment"
   | "addLabel"
@@ -290,38 +306,50 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
   let ok = true;
   let judged = 0;
   const judgedNow = new Set<number>();
-  for (const work of issueWork(fresh, entries, state)) {
+  const current = () => [...readLog(options.dataDirectory, repo), ...planned];
+  const works = issueWork(fresh, entries, state);
+  if (options.actOnly !== true) {
+    for (const number of await heldToWeigh(forge, heldIssues(entries), fresh, works)) works.push({ number, issue: null, mentions: [] });
+    works.sort((a, b) => a.number - b.number);
+  }
+  for (const work of works) {
     options.signal?.throwIfAborted();
     const issue = work.issue ?? (await forge.issue(work.number));
     if (issue === null) continue;
     noteReopened(issue, entries, record);
-    const trigger = triggerFor(issue, work, entries, state);
+    const held = heldIssues(current()).get(issue.number);
+    if (held !== undefined && issue.state !== "open" && work.mentions.length === 0) {
+      // Closed while held: nothing is left to wait for.
+      record({ type: "unblocked", issue: issue.number, why: "closed" });
+      continue;
+    }
+    const trigger = work.mentions.length > 0 ? "mention" : held !== undefined ? held.trigger : triggerFor(issue, work, entries, state);
     if (trigger === null) continue;
-    const entry = await judgeIssue(context, issue, trigger, work.mentions, null);
-    if (entry === null) {
+    const outcome = await holdOrJudge(context, issue, trigger, work.mentions, held, record);
+    if (outcome === "failed") {
       ok = false;
       continue;
     }
-    record(entry);
     judgedNow.add(issue.number);
-    judged++;
+    if (outcome === "judged") judged++;
   }
 
   // The owner asked for the open backlog: each issue on it with no call yet, while it is still open.
   if (options.actOnly !== true) {
     const called = latestCalls(entries);
+    const held = heldIssues(current());
     for (const number of backlogIssues(entries)) {
-      if (called.has(number) || judgedNow.has(number)) continue;
+      // A held issue is weighed again only when it or one of its blockers changes.
+      if (called.has(number) || judgedNow.has(number) || held.has(number)) continue;
       options.signal?.throwIfAborted();
       const issue = await forge.issue(number);
       if (issue === null || issue.state !== "open") continue;
-      const entry = await judgeIssue(context, issue, "backlog", [], null);
-      if (entry === null) {
+      const outcome = await holdOrJudge(context, issue, "backlog", [], undefined, record);
+      if (outcome === "failed") {
         ok = false;
         continue;
       }
-      record(entry);
-      judged++;
+      if (outcome === "judged") judged++;
     }
   }
 
@@ -369,7 +397,7 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
       if (options.signal?.aborted) throw error;
       acted = false;
       const message = error instanceof Error ? error.message : String(error);
-      const issue = pending.kind === "call" ? pending.entry.issue.number : pending.call.issue.number;
+      const issue = pending.kind === "call" || pending.kind === "blocked" ? pending.entry.issue.number : pending.call.issue.number;
       options.log?.warn("act-failed", { repo, issue, error: message });
       context.failure = failureAt(options, `acting on #${issue}`, message, error instanceof RateLimitedError ? error.resetAt : undefined);
       options.print(`${repo}#${issue}: entail could not act on the issue: ${message}; it tries again next pass`);
@@ -400,6 +428,68 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
   // A judgment that did not run is tried again: the changes are read again from the old cursor.
   if (!ok) options.seen.delete(repo);
   return { ok: ok && acted, judged, posted, ...(context.failure === null ? {} : { failure: context.failure }) };
+}
+
+/**
+ * The held issues to weigh again though they did not change themselves: each
+ * whose blocker in this repo changed in this batch, and each with a blocker in
+ * another repo that is no longer open, read from the forge since this repo's
+ * feed does not report it. Issues already weighed in this pass are left out.
+ */
+async function heldToWeigh(forge: WatchForge, held: ReadonlyMap<number, BlockedEntry>, changes: readonly Change[], works: readonly IssueWork[]): Promise<number[]> {
+  const path = forge.setting.path.toLowerCase();
+  const changed = new Set(changes.flatMap((change) => (change.kind === "issue" ? [change.issue.number] : [])));
+  const weighed = new Set(works.map((work) => work.number));
+  const again: number[] = [];
+  for (const [number, hold] of held) {
+    if (weighed.has(number)) continue;
+    const here = hold.blockers.filter((blocker) => blocker.path.toLowerCase() === path);
+    let weigh = here.some((blocker) => changed.has(blocker.number));
+    for (const blocker of hold.blockers) {
+      if (weigh) break;
+      if (blocker.path.toLowerCase() !== path) weigh = (await forge.issueState(blocker.path, blocker.number)) !== "open";
+    }
+    if (weigh) again.push(number);
+  }
+  return again;
+}
+
+/**
+ * Weighs one issue: holds it when one of its blockers is open, or judges it.
+ * A hold with the same open blockers as the standing one, and no new
+ * `/entail` comment to answer, records nothing, so nothing new is posted.
+ */
+async function holdOrJudge(
+  context: JudgeContext,
+  issue: Issue,
+  trigger: Trigger,
+  mentions: Mention[],
+  held: BlockedEntry | undefined,
+  record: (entry: NewEntry) => Entry,
+): Promise<"held" | "judged" | "failed"> {
+  const { options, forge, state } = context;
+  const reading = await readBlockers(forge, issue);
+  const open = openBlockers(reading.blockers);
+  const carried = [...(held?.mentions ?? []), ...mentions];
+  if (open.length > 0) {
+    if (held !== undefined && mentions.length === 0 && sameBlockers(held.blockers, open)) return "held";
+    record({
+      type: "blocked",
+      issue: { number: issue.number, title: issue.title, url: issue.url, author: issue.author.username, createdAt: issue.createdAt },
+      trigger,
+      mentions: carried,
+      content: contentHash(issue),
+      blockers: open,
+      forgeLinks: reading.forgeLinks,
+    });
+    options.log?.info("held", { repo: state.repo, issue: issue.number, blockers: open.map((ref) => `${ref.path}#${ref.number}`), forgeLinks: reading.forgeLinks });
+    options.print(`${state.repo}#${issue.number}: held, blocked by ${refsText(open, state.repo)}${reading.forgeLinks ? "" : " (the forge's blocked-by links could not be read; only the text was checked)"}`);
+    return "held";
+  }
+  const entry = await judgeIssue(context, issue, trigger, carried, null);
+  if (entry === null) return "failed";
+  record(entry);
+  return "judged";
 }
 
 /** The issues the owner asked entail to judge from the open backlog, in the order asked. */
@@ -555,7 +645,7 @@ async function act(
   entries: () => Entry[],
   cannotLabel: () => Promise<string | null>,
 ): Promise<boolean> {
-  const post = postFor(pending, options.owner);
+  const post = postFor(pending, options.owner, repo);
   if (post === null) return false;
   const command = options.settings.start ?? null;
   const handoff = command === null ? null : handoffFor(repo, pending);
@@ -563,14 +653,17 @@ async function act(
   const body = composeComment(options.owner, post.markerFor, post.text);
   const name = `${repo}#${post.issue}`;
   // The owner's action reaches the case book as its window closes, before anything is posted for it.
-  if (!options.dryRun && pending.kind !== "call") await writeCase(join(options.dataDirectory, OWNER_CASE_BOOK), caseFor(repo, pending.call, pending.action));
+  if (!options.dryRun && pending.kind !== "call" && pending.kind !== "blocked") await writeCase(join(options.dataDirectory, OWNER_CASE_BOOK), caseFor(repo, pending.call, pending.action));
   if (options.dryRun) {
     options.print(`would post on ${name}${post.close ? " and close it" : post.reopen ? " and reopen it if closed" : ""}${post.label === null ? "" : `, labelled ${post.label}`}:\n${indent(body)}`);
     record({ type: "acted", for: post.markerFor, issue: post.issue, comment: { id: 0, url: "(dry run)" }, closed: post.close, ...start });
     return true;
   }
-  const live = post.reopen || post.label !== null ? await forge.issue(post.issue) : null;
+  // A call that waits to be confirmed puts on no label, but the hold it ends takes its label off.
+  const unhold = post.label === null && pending.kind === "call";
+  const live = post.reopen || post.label !== null || unhold ? await forge.issue(post.issue) : null;
   const label = post.label === null ? null : await putLabel(forge, post.issue, post.label, live?.labels ?? [], cannotLabel);
+  if (unhold && live?.labels.includes(BLOCKED_LABEL) === true && (await cannotLabel()) === null) await forge.removeLabel(post.issue, BLOCKED_LABEL);
   const comments = await forge.comments("issue", post.issue);
   const already = comments.find((comment) => markedTickets(comment.body).includes(post.markerFor));
   const comment = already === undefined ? await forge.postComment("issue", post.issue, body) : { id: already.id, url: already.url };

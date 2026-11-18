@@ -1,6 +1,13 @@
 import type { Criterion, IssueCall } from "./judgment.ts";
 import type { LandingCall } from "./landing.ts";
-import { criteriaOf, linkCriterion, type LandingPending, type Pending } from "./records.ts";
+import { refsText } from "./blockers.ts";
+import {
+  criteriaOf,
+  linkCriterion,
+  type BlockedEntry,
+  type LandingPending,
+  type Pending,
+} from "./records.ts";
 
 /**
  * What entail posts on an issue for each thing it acts on, as the text that
@@ -30,13 +37,24 @@ export interface Post {
 }
 
 /** The labels entail puts on an issue, one at a time: the call that acted on it. */
-export type EntailLabel = "entail:go" | "entail:no" | "entail:ask";
+export type EntailLabel = "entail:go" | "entail:no" | "entail:ask" | "entail:blocked";
 
-/** The post for something entail has to act on, or null for work that is not a post (a judgment still to run). */
-export function postFor(pending: Pending, owner: string): Post | null {
+/** The label a held issue carries while it waits on its blockers; the call's own label replaces it. */
+export const BLOCKED_LABEL = "entail:blocked";
+
+/**
+ * The post for something entail has to act on, or null for work that is not
+ * a post (a judgment still to run). `repo` is the issue's repo, `owner/name`,
+ * so a blocker there is named by its number alone.
+ */
+export function postFor(pending: Pending, owner: string, repo: string): Post | null {
   switch (pending.kind) {
     case "rerun":
       return null;
+    case "blocked": {
+      const { entry } = pending;
+      return { issue: entry.issue.number, markerFor: entry.id, text: blockedText(entry, repo), close: false, reopen: false, label: BLOCKED_LABEL };
+    }
     case "call": {
       const { entry } = pending;
       const issue = entry.issue.number;
@@ -82,6 +100,15 @@ export function postFor(pending: Pending, owner: string): Post | null {
       };
     }
   }
+}
+
+/** The note on a held issue: what it waits on, and what makes entail pick it up again. */
+export function blockedText(entry: Pick<BlockedEntry, "blockers" | "forgeLinks">, repo: string): string {
+  const one = entry.blockers.length === 1;
+  const head = `This issue is blocked by ${refsText(entry.blockers, repo)}, which ${one ? "is" : "are"} still open. entail is waiting on ${one ? "it" : "them"} and makes no call here until then: no criteria, and no work starts.`;
+  const again = `entail picks this issue up again when it is edited (for example to remove a blocker), on an \`/entail\` comment, or when ${one ? "the blocker closes" : "the blockers close"}.`;
+  const text = entry.forgeLinks ? "" : "The forge's own blocked-by links could not be read for this repo, so only this issue's text was checked for blockers.";
+  return join(head, again, text);
 }
 
 /**

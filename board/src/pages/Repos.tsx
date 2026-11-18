@@ -189,6 +189,15 @@ function RepoCard({ repo, settings, showRepo }: { repo: RepoView; settings: Sett
           Stalled: {stalled.line}
         </p>
       ))}
+      {repo.blocked.map((held) => (
+        <p key={held.issue} className="small muted note">
+          Held:{" "}
+          <a href={held.url} target="_blank" rel="noreferrer">
+            #{held.issue}
+          </a>{" "}
+          waits on {held.blockers.join(", ")}; no call until {held.blockers.length === 1 ? "it closes" : "they close"}.
+        </p>
+      ))}
       {checkResult !== null && <p className="small muted note" role="status">{checkText(checkResult, repo.repo)}</p>}
       {fresh !== null && fresh.openIssues > 0 && !repo.backlogAsked && (
         <p className="small note">

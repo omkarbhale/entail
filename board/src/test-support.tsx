@@ -230,6 +230,7 @@ export function aRepo(overrides: Partial<RepoView> = {}): RepoView {
     checkedAt: new Date(Date.now() - 40_000).toISOString(),
     failing: null,
     stalled: [],
+    blocked: [],
     backlogAsked: false,
     cannotLabel: null,
     suggesting: null,

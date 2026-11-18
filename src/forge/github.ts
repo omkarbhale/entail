@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   type Actor,
+  type Blocker,
   assertEntailLabel,
   type Change,
   type ChangeBatch,
@@ -101,6 +102,22 @@ const CLOSING_ISSUES_QUERY = `query ($owner: String!, $name: String!, $number: I
       baseRefName
       closingIssuesReferences(first: 100, after: $after) {
         nodes { number repository { databaseId } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}`;
+
+/**
+ * The issues GitHub's issue dependencies say block an issue, with their
+ * state. REST has the same links, but GraphQL carries each blocker's repo
+ * and state in one read.
+ */
+const BLOCKED_BY_QUERY = `query ($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      blockedBy(first: 100, after: $after) {
+        nodes { number state repository { nameWithOwner } }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -301,6 +318,46 @@ export class GitHubForge implements Forge {
     const issue = this.#issue(raw);
     // A transferred issue, followed to its new repo, is no longer this repo's issue by that number.
     return issue.number === issueNumber ? issue : null;
+  }
+
+  /**
+   * The issue's "blocked by" links from GitHub's issue dependencies. An API
+   * without the field, as an older schema would answer, means GitHub keeps no
+   * such links here: null, so only the issue's text names blockers.
+   */
+  async blockedBy(issueNumber: number): Promise<Blocker[] | null> {
+    const blockers: Blocker[] = [];
+    let after: string | null = null;
+    for (;;) {
+      let repository: Record<string, unknown>;
+      try {
+        repository = await this.#graphqlRepository(BLOCKED_BY_QUERY, pathNumber(issueNumber), after);
+      } catch (error) {
+        if (error instanceof ForgeRequestError && /\bblockedBy\b/u.test(error.message) && /doesn't exist|does not exist|undefined field/iu.test(error.message)) return null;
+        throw error;
+      }
+      const connection = graphqlField(graphqlField(repository, "issue"), "blockedBy");
+      for (const node of graphqlNodes(connection)) {
+        if (!isObject(node) || typeof node.number !== "number" || !isObject(node.repository) || typeof node.repository.nameWithOwner !== "string") continue;
+        const state = node.state === "OPEN" ? "open" : node.state === "CLOSED" ? "closed" : null;
+        if (state === null) continue;
+        blockers.push({ path: node.repository.nameWithOwner, number: node.number, state });
+      }
+      after = nextGraphqlPage(connection);
+      if (after === null) break;
+    }
+    return blockers;
+  }
+
+  async issueState(path: string, issueNumber: number): Promise<"open" | "closed" | null> {
+    if (!REPO_PATH.test(path)) return null;
+    const url = `repos/${path}/issues/${pathNumber(issueNumber)}`;
+    const response = await this.#get(url, {});
+    if (response.status === 404 || response.status === 410 || response.status === 301) return null;
+    this.#ensureOk(response, url, "GET");
+    const raw = parseJson(response, this.setting.host, url, "GET");
+    if (!isObject(raw) || (raw.state !== "open" && raw.state !== "closed")) throw this.#malformed(response.status, url, "no state for the issue");
+    return raw.state;
   }
 
   /** github.com is the only GitHub host, with no version to read, so it is always served. */

@@ -1,5 +1,6 @@
 import {
   type Actor,
+  type Blocker,
   assertEntailLabel,
   type Change,
   type ChangeBatch,
@@ -238,6 +239,43 @@ export class GitLabForge implements Forge {
     if (response.status === 404) return null;
     this.#ensureOk(response, path, "GET");
     return this.#issue(parseJson(response, this.setting.host, path, "GET"));
+  }
+
+  /**
+   * The issue's links of type "is blocked by", from GitLab's issue links. Only
+   * GitLab Premium and up links issues as blocking; on the Free tier every link
+   * relates, so none blocks and only the issue's text names blockers. Null when
+   * GitLab will not list the issue's links at all.
+   */
+  async blockedBy(issueNumber: number): Promise<Blocker[] | null> {
+    const path = `${this.#projectRef}/issues/${pathNumber(issueNumber)}/links`;
+    const response = await this.#get(path);
+    if (response.status === 403 || response.status === 404) return null;
+    this.#ensureOk(response, path, "GET");
+    const links = parseJson(response, this.setting.host, path, "GET");
+    if (!Array.isArray(links)) throw this.#malformed(response.status, path, "expected a list of linked issues");
+    const blockers: Blocker[] = [];
+    for (const link of links) {
+      if (!isObject(link) || link.link_type !== "is_blocked_by" || typeof link.iid !== "number") continue;
+      const state = link.state === "opened" ? "open" : link.state === "closed" ? "closed" : null;
+      const full = isObject(link.references) && typeof link.references.full === "string" ? /^(.+)#\d+$/u.exec(link.references.full)?.[1] : undefined;
+      if (state === null || full === undefined) continue;
+      blockers.push({ path: full, number: link.iid, state });
+    }
+    return blockers;
+  }
+
+  async issueState(path: string, issueNumber: number): Promise<"open" | "closed" | null> {
+    if (!PROJECT_PATH.test(path) || path.split("/").some((segment) => /^\.+$/.test(segment))) return null;
+    const url = `projects/${encodeURIComponent(path)}/issues/${pathNumber(issueNumber)}`;
+    const response = await this.#get(url);
+    if (response.status === 404) return null;
+    this.#ensureOk(response, url, "GET");
+    const raw = parseJson(response, this.setting.host, url, "GET");
+    if (!isObject(raw)) return null;
+    if (raw.state === "opened") return "open";
+    if (raw.state === "closed") return "closed";
+    return null;
   }
 
   /**
