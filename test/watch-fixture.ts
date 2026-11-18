@@ -20,6 +20,7 @@ import {
   type Project,
   type PullRequest,
   type PullRequestState,
+  type RepoAccess,
 } from "../src/forge/forge.ts";
 import type { Verdict } from "../src/judgment.ts";
 import { JUDGMENT_KIND } from "../src/judgment.ts";
@@ -70,6 +71,12 @@ export class FakeForge implements WatchForge {
   refuseMerge: string | null = null;
   /** Set to make every read fail, as a forge outage would. */
   down = false;
+  /** What the logged-in account may do; set `cannotLabelAndComment` for an account without triage access. */
+  repoAccess: RepoAccess = { cannotLabelAndComment: null, mayLackMerge: null };
+  /** Set to make every label write fail with this message. */
+  refuseLabels: string | null = null;
+  /** Each label write, in order: `+entail:go #12` adds, `-entail:ask #12` removes. */
+  readonly labelWrites: string[] = [];
 
   tick(): string {
     this.#clock += 60_000;
@@ -235,6 +242,32 @@ export class FakeForge implements WatchForge {
     const comment = this.comment(number, body, OWNER_ACCOUNT);
     this.posted.push({ issue: number, body, id: comment.id });
     return { id: comment.id, url: comment.url };
+  }
+
+  async access(): Promise<RepoAccess> {
+    this.#check();
+    return { ...this.repoAccess };
+  }
+
+  async addLabel(number: number, label: string): Promise<void> {
+    this.#check();
+    if (this.refuseLabels !== null) throw new Error(this.refuseLabels);
+    const issue = this.issues.get(number)!;
+    this.labelWrites.push(`+${label} #${number}`);
+    if (!issue.labels.includes(label)) issue.labels = [...issue.labels, label];
+  }
+
+  async removeLabel(number: number, label: string): Promise<void> {
+    this.#check();
+    if (this.refuseLabels !== null) throw new Error(this.refuseLabels);
+    const issue = this.issues.get(number)!;
+    this.labelWrites.push(`-${label} #${number}`);
+    issue.labels = issue.labels.filter((one) => one !== label);
+  }
+
+  /** The labels an issue carries now. */
+  labelsOn(number: number): string[] {
+    return [...this.issues.get(number)!.labels];
   }
 
   async closeIssue(number: number): Promise<void> {

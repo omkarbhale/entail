@@ -19,6 +19,13 @@ describe("Repos", () => {
     expect(screen.getByText(/^watching · checked 4\ds ago$/u)).toBeTruthy();
   });
 
+  it("says once on the repo's card why entail cannot label its issues", async () => {
+    fakeApi({ repos: [aRepo({ cannotLabel: "the logged-in account has read access only; adding labels needs triage access or more" })] });
+    renderBoard("#/repos");
+    expect(await screen.findByText("entail cannot label issues here:")).toBeTruthy();
+    expect(screen.getByText(/read access only; adding labels needs triage access or more\. Calls still post and close/u)).toBeTruthy();
+  });
+
   it("switches confirm mode with a pending state and Saved, and says what keeps waiting", async () => {
     const api = fakeApi();
     api.route((method, path, body) => {

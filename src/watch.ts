@@ -6,6 +6,8 @@ import { composeComment, markedTickets } from "./comment-rules.ts";
 import type { CursorStore } from "./cursors.ts";
 import {
   allChecksFinished,
+  assertEntailLabel,
+  ENTAIL_LABEL_PREFIX,
   projectKey,
   RateLimitedError,
   requiredChecksReported,
@@ -53,6 +55,7 @@ import {
   type NewEntry,
   type OwnerWord,
   type Pending,
+  type LabelChange,
   type RepoState,
   type Trigger,
   workStarted,
@@ -79,6 +82,12 @@ import { readVision } from "./vision.ts";
  * The owner's action on a PR's call is acted on the same way, once its
  * window has closed.
  *
+ * Each act on an issue puts the `entail:` label for the call that acted on
+ * it (`entail:go`, `entail:no`, or `entail:ask` while a question waits),
+ * taking off any other `entail:` label. Only an account that cannot label
+ * lets the act go ahead without it; any other label failure holds the act for
+ * a retry next pass.
+ *
  * When a go acts and the owner set a start command, entail runs it with the
  * handoff, once per issue, and records that work was started (`src/starts.ts`).
  *
@@ -96,6 +105,9 @@ export type WatchForge = Pick<
   | "issue"
   | "comments"
   | "postComment"
+  | "addLabel"
+  | "removeLabel"
+  | "access"
   | "closeIssue"
   | "reopenIssue"
   | "pullRequest"
@@ -328,10 +340,14 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
   // One post that fails, such as on an issue deleted since, does not hold up the others; it is tried again next pass.
   let posted = 0;
   let acted = true;
+  let access: Promise<string | null> | null = null;
+  // What the account may do is read once per pass, and only when a label is to go on.
+  const cannotLabel = () =>
+    (access ??= forge.access().then((read) => read.cannotLabelAndComment));
   for (const pending of pendingWork([...readLog(options.dataDirectory, repo), ...planned], now())) {
     options.signal?.throwIfAborted();
     try {
-      if (await act(options, repo, forge, pending, record, () => [...readLog(options.dataDirectory, repo), ...planned])) posted++;
+      if (await act(options, repo, forge, pending, record, () => [...readLog(options.dataDirectory, repo), ...planned], cannotLabel)) posted++;
     } catch (error) {
       if (options.signal?.aborted) throw error;
       acted = false;
@@ -504,10 +520,19 @@ function ownerComment(owner: OwnerRun): { author: string; createdAt: string; bod
 
 /**
  * Acts on GitHub for one entry: posts its comment unless a comment carrying
- * its marker is already there, closes the issue if it is to be closed, and
- * records that it acted. Returns whether it acted.
+ * its marker is already there, closes the issue if it is to be closed, puts
+ * on its `entail:` label, and records that it acted, with what came of the
+ * label. Returns whether it acted.
  */
-async function act(options: PassOptions, repo: string, forge: WatchForge, pending: Pending, record: (entry: NewEntry) => Entry, entries: () => Entry[]): Promise<boolean> {
+async function act(
+  options: PassOptions,
+  repo: string,
+  forge: WatchForge,
+  pending: Pending,
+  record: (entry: NewEntry) => Entry,
+  entries: () => Entry[],
+  cannotLabel: () => Promise<string | null>,
+): Promise<boolean> {
   const post = postFor(pending, options.owner);
   if (post === null) return false;
   const command = options.settings.start ?? null;
@@ -518,20 +543,55 @@ async function act(options: PassOptions, repo: string, forge: WatchForge, pendin
   // The owner's action reaches the case book as its window closes, before anything is posted for it.
   if (!options.dryRun && pending.kind !== "call") await writeCase(join(options.dataDirectory, OWNER_CASE_BOOK), caseFor(repo, pending.call, pending.action));
   if (options.dryRun) {
-    options.print(`would post on ${name}${post.close ? " and close it" : post.reopen ? " and reopen it if closed" : ""}:\n${indent(body)}`);
+    options.print(`would post on ${name}${post.close ? " and close it" : post.reopen ? " and reopen it if closed" : ""}${post.label === null ? "" : `, labelled ${post.label}`}:\n${indent(body)}`);
     record({ type: "acted", for: post.markerFor, issue: post.issue, comment: { id: 0, url: "(dry run)" }, closed: post.close, ...start });
     return true;
   }
+  const live = post.reopen || post.label !== null ? await forge.issue(post.issue) : null;
+  const label = post.label === null ? null : await putLabel(forge, post.issue, post.label, live?.labels ?? [], cannotLabel);
   const comments = await forge.comments("issue", post.issue);
   const already = comments.find((comment) => markedTickets(comment.body).includes(post.markerFor));
   const comment = already === undefined ? await forge.postComment("issue", post.issue, body) : { id: already.id, url: already.url };
   if (post.close) await forge.closeIssue(post.issue, "not-planned");
-  const reopened = post.reopen && (await forge.issue(post.issue))?.state === "closed";
+  const reopened = post.reopen && live?.state === "closed";
   if (reopened) await forge.reopenIssue(post.issue);
-  record({ type: "acted", for: post.markerFor, issue: post.issue, comment, closed: post.close, ...start });
-  options.log?.info("acted", { repo, issue: post.issue, for: post.markerFor, comment: comment.url, closed: post.close, alreadyPosted: already !== undefined });
-  options.print(`${name}: ${already === undefined ? "posted" : "found already posted"} ${comment.url}${post.close ? ", closed the issue" : reopened ? ", reopened the issue" : ""}`);
+  record({ type: "acted", for: post.markerFor, issue: post.issue, comment, closed: post.close, ...(label === null ? {} : { label }), ...start });
+  options.log?.info("acted", { repo, issue: post.issue, for: post.markerFor, comment: comment.url, closed: post.close, alreadyPosted: already !== undefined, ...(label === null ? {} : { label: label.label, labelRemoved: label.removed }) });
+  if (label?.failed !== undefined) options.log?.warn("label-failed", { repo, issue: post.issue, label: label.label, error: label.failed });
+  const labelled = label === null || label.already ? "" : label.failed === undefined ? `, labelled it ${label.label}` : `, could not label it ${label.label} (${label.failed})`;
+  options.print(`${name}: ${already === undefined ? "posted" : "found already posted"} ${comment.url}${post.close ? ", closed the issue" : reopened ? ", reopened the issue" : ""}${labelled}`);
   return true;
+}
+
+/**
+ * Puts `label` on an issue that carries `carried`, taking off any other
+ * `entail:` label first, so the issue carries one at a time. A label the
+ * issue carries already is not added again. An account that may not label
+ * here is returned for the act to record, and the act goes ahead without the
+ * label; any other failure throws, so the act is tried again next pass.
+ */
+async function putLabel(forge: WatchForge, issue: number, label: string, carried: readonly string[], cannotLabel: () => Promise<string | null>): Promise<LabelChange> {
+  const removed: string[] = [];
+  const already = carried.includes(label);
+  const others = carried.filter((other) => other !== label && other.startsWith(ENTAIL_LABEL_PREFIX) && isEntailLabel(other));
+  if (already && others.length === 0) return { label, already, removed };
+  const cannot = await cannotLabel();
+  if (cannot !== null) return { label, already: false, removed, failed: cannot };
+  for (const other of others) {
+    await forge.removeLabel(issue, other);
+    removed.push(other);
+  }
+  if (!already) await forge.addLabel(issue, label);
+  return { label, already, removed };
+}
+
+function isEntailLabel(label: string): boolean {
+  try {
+    assertEntailLabel(label);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

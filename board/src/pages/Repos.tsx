@@ -189,6 +189,11 @@ function RepoCard({ repo, settings, showRepo }: { repo: RepoView; settings: Sett
           {backlog.isError && <span className="bad"> {backlog.error instanceof ApiError ? backlog.error.message : "entail did not answer"}. Try again.</span>}
         </p>
       )}
+      {repo.cannotLabel !== null && (
+        <p className="small note">
+          <span className="bad">entail cannot label issues here:</span> {repo.cannotLabel}. Calls still post and close; issues go without their <code>entail:</code> label.
+        </p>
+      )}
       {repo.backlogAsked && fresh !== null && <p className="small note">entail is judging the open backlog; each call appears on Waiting and in the log as it is made.</p>}
       <div className="rrow">
         <span className="lbl">Confirm mode</span>

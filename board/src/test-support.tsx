@@ -229,6 +229,7 @@ export function aRepo(overrides: Partial<RepoView> = {}): RepoView {
     pins: { file: "/home/me/.local/share/entail/pins/github.com/omkarbhale/entail.md", topics: [] },
     checkedAt: new Date(Date.now() - 40_000).toISOString(),
     backlogAsked: false,
+    cannotLabel: null,
     ...overrides,
   };
 }

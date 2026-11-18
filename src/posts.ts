@@ -21,7 +21,16 @@ export interface Post {
   close: boolean;
   /** The owner's go: a closed issue is reopened. */
   reopen: boolean;
+  /**
+   * The `entail:` label the issue carries once this acts: the call that acted,
+   * or the question waiting on the board. Null for a call that still waits to
+   * be confirmed: its label comes with the confirmation.
+   */
+  label: EntailLabel | null;
 }
+
+/** The labels entail puts on an issue, one at a time: the call that acted on it. */
+export type EntailLabel = "entail:go" | "entail:no" | "entail:ask";
 
 /** The post for something entail has to act on, or null for work that is not a post (a judgment still to run). */
 export function postFor(pending: Pending, owner: string): Post | null {
@@ -36,9 +45,10 @@ export function postFor(pending: Pending, owner: string): Post | null {
         const head = entry.owner.kind === "override" ? `**Go**, by ${owner}, overriding entail's call on the board.` : `**Go**, on ${owner}'s answer on the board.`;
         const reason = entry.owner.kind === "answer" && entry.call.call === "go" ? entry.call.reason : entry.owner.words;
         const criteria = entry.call.call === "no" ? [] : entry.call.criteria;
-        return { issue, markerFor: entry.id, text: join(head, escape(reason), criteriaText(criteria)), close: false, reopen: entry.owner.call === "go" };
+        return { issue, markerFor: entry.id, text: join(head, escape(reason), criteriaText(criteria)), close: false, reopen: entry.owner.call === "go", label: `entail:${entry.owner.call}` };
       }
-      return { issue, markerFor: entry.id, text: callText(entry.call, entry.confirm, owner), close: entry.call.call === "no" && !entry.confirm, reopen: false };
+      const waits = entry.confirm && entry.call.call !== "ask";
+      return { issue, markerFor: entry.id, text: callText(entry.call, entry.confirm, owner), close: entry.call.call === "no" && !entry.confirm, reopen: false, label: waits ? null : `entail:${entry.call.call}` };
     }
     case "confirmed": {
       const { call, action } = pending;
@@ -49,13 +59,14 @@ export function postFor(pending: Pending, owner: string): Post | null {
         text: called === "no" ? `${owner} confirmed this call on the board: no. Closing the issue as not planned.` : `${owner} confirmed this call on the board: go.`,
         close: called === "no",
         reopen: false,
+        label: called === "no" ? "entail:no" : "entail:go",
       };
     }
     case "owner-no": {
       const { call, action } = pending;
       const head = action.type === "overridden" ? `**No**, by ${owner}, overriding entail's call on the board.` : `**No**, on ${owner}'s answer on the board.`;
       const words = action.type === "overridden" ? action.reason : action.answer;
-      return { issue: call.issue.number, markerFor: action.id, text: join(head, escape(words), "Closing the issue as not planned."), close: true, reopen: false };
+      return { issue: call.issue.number, markerFor: action.id, text: join(head, escape(words), "Closing the issue as not planned."), close: true, reopen: false, label: "entail:no" };
     }
     case "owner-go": {
       // Go, but differently: the owner's line is the criterion, word for word, in place of entail's.
@@ -67,6 +78,7 @@ export function postFor(pending: Pending, owner: string): Post | null {
         text: join(head, `What the PR must do beyond solving the issue, in ${owner}'s words:\n\n- ${escape(action.reason).replace(/\n+/gu, " ")}`),
         close: false,
         reopen: true,
+        label: "entail:go",
       };
     }
   }
