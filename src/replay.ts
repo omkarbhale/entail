@@ -73,7 +73,7 @@ export interface LandingReplayResult {
 /** A landing case's PR read from git: a read-only checkout of its head and its diff against its base. */
 export type LandingCaseReading = (past: LandingCase) => Promise<{ checkout: string; diff: string }>;
 
-/** The landing judgment's inputs for a case: its own PR, issue, criteria and vision, and every other landing case as precedent. */
+/** The landing judgment's inputs for a case: its own PR, issue (if any), criteria and vision, and every other landing case as precedent. */
 export function landingCaseInputs(past: LandingCase, book: readonly LandingCase[], reading: { checkout: string; diff: string }): LandingInputs {
   const others = book.filter((other) => other.slug !== past.slug);
   return {
@@ -81,14 +81,15 @@ export function landingCaseInputs(past: LandingCase, book: readonly LandingCase[
     pr: { number: past.pr, text: past.prText },
     head: past.head,
     base: past.base,
-    issue: { number: past.issue, text: past.issueText },
+    // A case with no cleared ticket behind its PR has no issue and no criteria: it is judged on the vision alone, as it was.
+    issue: past.issue === null ? null : { number: past.issue, text: past.issueText },
     criteria: past.criteria,
     vision: past.vision.trim() === "" ? null : { text: past.vision, commit: past.visionCommit },
     // Cases record no pins yet: the seeded repo had none.
     pins: [],
     facts: past.facts,
     diff: reading.diff,
-    precedents: landingPrecedentsFor(others, past.repo, past.issueText),
+    precedents: landingPrecedentsFor(others, past.repo, past.issue === null ? past.prText : past.issueText),
     sendBacks: [],
     checkout: reading.checkout,
   };

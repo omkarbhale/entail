@@ -348,7 +348,7 @@ export function landingView(repo: string, entry: LandingEntry, status: CallStatu
     id: entry.id,
     kind: "pr",
     repo,
-    issue: { ...entry.issue, author: "" },
+    issue: entry.issue === null ? null : { ...entry.issue, author: "" },
     issueText: entry.issueText,
     body: issueBody(entry.prText),
     visionCommit: entry.vision?.commit ?? null,
@@ -787,7 +787,7 @@ export function logItems(dataDirectory: string, book: readonly Case[], repoFilte
         case "overridden":
         case "answered": {
           const landing = prCalls.get(entry.call);
-          items.push({ kind: "owner", repo, at: entry.at, action: entry, issue: calls.get(entry.call)?.issue ?? (landing ? { ...landing.issue, author: "" } : null), pr: landing?.pr ?? null });
+          items.push({ kind: "owner", repo, at: entry.at, action: entry, issue: calls.get(entry.call)?.issue ?? (landing?.issue ? { ...landing.issue, author: "" } : null), pr: landing?.pr ?? null });
           break;
         }
         case "acted":
@@ -1066,7 +1066,7 @@ export function landingCaseFor(repo: string, landing: LandingEntry, action: Owne
     kind: "landing" as const,
     slug: landingCaseSlug(repo, landing.pr.number),
     repo,
-    issue: landing.issue.number,
+    issue: landing.issue?.number ?? null,
     pr: landing.pr.number,
     head: landing.head,
     base: landing.base,
@@ -1126,14 +1126,15 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
     switch (item.kind) {
       case "call": {
         if (item.pr !== null) {
-          lines.push(`${at}  ${where(item.pr.number)}  ${item.call.toUpperCase()} by entail at ${item.pr.head.slice(0, 7)}: ${item.pr.title} (closes #${item.issue.number})`, `      ${item.reason}`);
+          lines.push(`${at}  ${where(item.pr.number)}  ${item.call.toUpperCase()} by entail at ${item.pr.head.slice(0, 7)}: ${item.pr.title} (${item.issue === null ? "no ticket" : `closes #${item.issue.number}`})`, `      ${item.reason}`);
           lines.push(...prLines(item.pr, "      "));
           if (item.question !== null) lines.push(`      question: ${item.question.question}`);
           lines.push(`      ${statusLine(item)} · ${item.model} at ${item.effort} effort · call ${item.id}`);
           break;
         }
         const whose = item.owner === null ? "entail" : `entail, on ${item.owner.kind === "answer" ? "the owner's answer" : "the owner's override"} (the owner's call: ${item.owner.call})`;
-        lines.push(`${at}  ${where(item.issue.number)}  ${item.call.toUpperCase()} by ${whose}: ${item.issue.title}`, `      ${item.reason}`);
+        const issue = item.issue!;
+        lines.push(`${at}  ${where(issue.number)}  ${item.call.toUpperCase()} by ${whose}: ${issue.title}`, `      ${item.reason}`);
         lines.push(...recheckLines(item.recheck, "      "));
         for (const line of item.restsOn.visionLines) lines.push(`      rests on the vision: > ${line.text}`);
         for (const past of item.restsOn.cases) lines.push(`      rests on case ${past.slug}`);
@@ -1162,7 +1163,10 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         break;
       }
       case "pr":
-        if (item.entry.type === "followed") lines.push(`${at}  ${where(item.entry.pr.number)}  following PR "${item.entry.pr.title}", which closes #${item.entry.issue}`);
+        if (item.entry.type === "followed") {
+          const behind = item.entry.issue === null ? "which has no cleared ticket behind it: judged on the vision alone" : `which closes #${item.entry.issue}`;
+          lines.push(`${at}  ${where(item.entry.pr.number)}  following PR "${item.entry.pr.title}", ${behind}`);
+        }
         else if (item.entry.type === "landing-failed") lines.push(`${at}  ${where(item.entry.pr)}  the landing judgment at ${item.entry.head.slice(0, 7)} gave no call: ${item.entry.reason}`);
         else lines.push(`${at}  ${where(item.entry.pr)}  stopped following the PR: it is ${item.entry.state}`);
         break;
@@ -1265,8 +1269,8 @@ export function formatWaiting(items: readonly CallView[]): string {
   const blocks = items.map((item) => {
     const lines =
       item.pr === null
-        ? [`${item.repo}#${item.issue.number}: ${item.issue.title}`, `  ${item.issue.url}`]
-        : [`${item.repo}#${item.pr.number} (PR, closes #${item.issue.number}): ${item.pr.title}`, `  ${item.pr.url}`];
+        ? [`${item.repo}#${item.issue!.number}: ${item.issue!.title}`, `  ${item.issue!.url}`]
+        : [`${item.repo}#${item.pr.number} (PR, ${item.issue === null ? "no ticket" : `closes #${item.issue.number}`}): ${item.pr.title}`, `  ${item.pr.url}`];
     if (item.call === "ask") {
       lines.push(`  QUESTION (call ${item.id}): ${item.question!.question}`, `  Why it is a question: ${item.question!.why}`, `  entail's reasoning: ${item.reason}`);
     } else {

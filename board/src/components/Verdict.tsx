@@ -19,7 +19,7 @@ export function External({ href, children, className }: { href: string; children
 }
 
 export function Meta({ item, now }: { item: CallView; now: number }) {
-  const filed = item.issue.createdAt;
+  const filed = item.issue?.createdAt;
   return (
     <div className="meta">
       <span className="repo" title={item.repo}>
@@ -27,14 +27,20 @@ export function Meta({ item, now }: { item: CallView; now: number }) {
       </span>
       <span className="sep">·</span>
       {item.pr === null ? (
-        <External href={item.issue.url}>Issue #{item.issue.number} ↗</External>
+        <External href={item.issue!.url}>Issue #{item.issue!.number} ↗</External>
       ) : (
         <>
           <External href={item.pr.url}>PR #{item.pr.number} ↗</External>
           <span className="sep">·</span>
-          <span>
-            closes <External href={item.issue.url}>#{item.issue.number}</External>
-          </span>
+          {item.issue === null ? (
+            <span className="tag" title="No cleared ticket is behind this PR: entail judged it on the vision alone, with no criteria.">
+              no ticket
+            </span>
+          ) : (
+            <span>
+              closes <External href={item.issue.url}>#{item.issue.number}</External>
+            </span>
+          )}
         </>
       )}
       <span className="sep">·</span>
@@ -205,7 +211,7 @@ function PullRequestFacts({ item }: { item: CallView }) {
       {pr.beyond.length > 0 && (
         <details className="beyond">
           <summary>
-            Beyond the criteria · {sorted("needed")} needed · {sorted("harmless")} harmless · {sorted("unwanted")} unwanted
+            {item.issue === null ? "What it does" : "Beyond the criteria"} · {sorted("needed")} needed · {sorted("harmless")} harmless · {sorted("unwanted")} unwanted
           </summary>
           <ul>
             {pr.beyond.map((one, index) => (

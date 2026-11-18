@@ -115,17 +115,19 @@ export interface PullRequestView {
 
 /**
  * A call as the board reads it: on an issue (go, no or ask) or, with `kind`
- * "pr", on a PR that closes an issue (merge, send-back or ask). A PR's call
- * names the issue it closes in `issue`, carries the criteria entail set for
- * that issue in `criteria`, and everything about the PR in `pr`.
+ * "pr", on a PR (merge, send-back or ask). A PR's call names the issue it
+ * closes in `issue`, or null when no cleared ticket is behind it, carries the
+ * criteria entail set for that issue in `criteria`, and everything about the
+ * PR in `pr`.
  */
 export interface CallView {
   id: number;
   /** "issue" for the call on an issue, "pr" for the landing call on a PR. */
   kind: "issue" | "pr";
   repo: string;
-  issue: { number: number; title: string; url: string; author: string; createdAt?: string };
-  /** The issue as the judgment read it: title, body and comments, as markdown. */
+  /** The issue; on a PR's call, the issue it closes, or null when no cleared ticket is behind the PR and it was judged on the vision alone. */
+  issue: { number: number; title: string; url: string; author: string; createdAt?: string } | null;
+  /** The issue as the judgment read it: title, body and comments, as markdown; empty with no issue. */
   issueText: string;
   /** The issue's own words, or for a PR the PR's description: as judged, without title or comments. */
   body: string;

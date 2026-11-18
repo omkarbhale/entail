@@ -163,8 +163,9 @@ export class Notifier {
     return sent;
   }
 
-  async check(items: readonly (Pick<CallView, "call" | "repo" | "kind"> & { issue: { number: number } })[]): Promise<{ sent: boolean; line: string | null }> {
-    const keys = items.map((item) => `${item.repo}#${item.kind}#${item.issue.number}`);
+  async check(items: readonly (Pick<CallView, "call" | "repo" | "kind"> & { issue: { number: number } | null; pr?: { number: number } | null })[]): Promise<{ sent: boolean; line: string | null }> {
+    // A PR with no cleared ticket behind it is known by its own number.
+    const keys = items.map((item) => (item.issue === null ? `${item.repo}#${item.kind}#pr-${item.pr?.number ?? 0}` : `${item.repo}#${item.kind}#${item.issue.number}`));
     const told = new Set(this.#read().waiting);
     const fresh = keys.filter((key) => !told.has(key));
     const command = this.#options.command();

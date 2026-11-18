@@ -240,12 +240,12 @@ export function precedentsFor(cases: readonly Case[], repo: string, issueText: s
   return rankByRelevance(cases, repo, issueText).slice(0, limit);
 }
 
-function rankByRelevance<C extends { slug: string; repo: string; issueText: string }>(cases: readonly C[], repo: string, issueText: string): C[] {
+function rankByRelevance<C extends { slug: string; repo: string; issueText: string }>(cases: readonly C[], repo: string, issueText: string, textOf: (past: C) => string = (past) => past.issueText): C[] {
   const words = wordsOf(issueText);
   const scored = cases.map((past) => ({
     past,
     sameRepo: past.repo.toLowerCase() === repo.toLowerCase(),
-    overlap: overlap(words, wordsOf(past.issueText)),
+    overlap: overlap(words, wordsOf(textOf(past))),
   }));
   scored.sort((a, b) => Number(b.sameRepo) - Number(a.sameRepo) || b.overlap - a.overlap || a.past.slug.localeCompare(b.past.slug));
   return scored.map((entry) => entry.past);
@@ -291,12 +291,15 @@ export interface ForgeFacts {
  * Its directory `cases/<slug>/` holds:
  *
  * - `issue.md`: the issue the PR closes, as {@link renderIssue} writes it;
+ *   absent for a PR with no cleared ticket behind it;
  * - `vision.md`: VISION.md on the default branch the PR was judged against;
  * - `criteria.md`: the criteria entail set for the issue at intake, one
- *   `- ` item each, with an indented `Basis:` line when one is known;
+ *   `- ` item each, with an indented `Basis:` line when one is known; absent
+ *   or empty when there are none, as for a PR with no cleared ticket;
  * - `pr.md`: the PR's title and description as its author wrote them;
  * - `facts.json`: the checks and changed files read from the forge at the head;
- * - `call.md`: front matter with `kind: landing`, the repo, issue, PR, the
+ * - `call.md`: front matter with `kind: landing`, the repo, issue (`none`,
+ *   or no line, for a PR with no cleared ticket behind it), PR, the
  *   judged head and the base it was diffed against, the owner's call, the
  *   date, the vision commit and where the reason comes from; then the reason
  *   and any notes. The diff is read again from git at the head and base.
@@ -305,12 +308,14 @@ export interface LandingCase {
   kind: "landing";
   slug: string;
   repo: string;
-  issue: number;
+  /** The issue the PR closes; null for a PR with no cleared ticket behind it, judged on the vision alone. */
+  issue: number | null;
   pr: number;
   /** The PR's head commit the call was made at. */
   head: string;
   /** The default branch's commit the PR was diffed against. */
   base: string;
+  /** The issue as judged; empty with no issue. */
   issueText: string;
   vision: string;
   visionCommit: string;
@@ -371,9 +376,20 @@ function isLandingCall(text: string): boolean {
 }
 
 async function readLandingCase(directory: string, slug: string): Promise<LandingCase> {
-  const [issueText, vision, criteria, prText, facts, call] = await Promise.all(
-    ["issue.md", "vision.md", "criteria.md", "pr.md", "facts.json", "call.md"].map((name) => readFile(join(directory, name), "utf8")),
-  );
+  // issue.md and criteria.md may be absent: a PR with no cleared ticket behind it has neither.
+  const optional = (name: string) =>
+    readFile(join(directory, name), "utf8").catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return "";
+      throw error;
+    });
+  const [issueText, vision, criteria, prText, facts, call] = await Promise.all([
+    optional("issue.md"),
+    readFile(join(directory, "vision.md"), "utf8"),
+    optional("criteria.md"),
+    readFile(join(directory, "pr.md"), "utf8"),
+    readFile(join(directory, "facts.json"), "utf8"),
+    readFile(join(directory, "call.md"), "utf8"),
+  ]);
   try {
     return {
       kind: "landing",
@@ -424,9 +440,10 @@ export function parseLandingCall(text: string): LandingCallFields {
   if (!(LANDING_CALLS as readonly string[]).includes(call)) throw new Error(`call.md's call is ${call}, not merge or send-back`);
   const [reason = "", ...rest] = match[2]!.trim().split(/\n\s*\n/u);
   if (reason.trim() === "") throw new Error("call.md has no reason");
+  const issue = fields.get("issue");
   return {
     repo: need("repo"),
-    issue: number("issue"),
+    issue: issue === undefined || issue === "" || issue === "none" ? null : number("issue"),
     pr: number("pr"),
     head: need("head"),
     base: need("base"),
@@ -444,7 +461,7 @@ export function renderLandingCall(call: LandingCallFields): string {
   const front = [
     "kind: landing",
     `repo: ${call.repo}`,
-    `issue: ${call.issue}`,
+    `issue: ${call.issue ?? "none"}`,
     `pr: ${call.pr}`,
     `head: ${call.head}`,
     `base: ${call.base}`,
@@ -461,9 +478,9 @@ export function renderLandingCall(call: LandingCallFields): string {
 export async function writeLandingCase(directory: string, past: LandingCase): Promise<string> {
   parseLandingCall(renderLandingCall(past));
   return replaceCaseDirectory(directory, past.slug, {
-    "issue.md": past.issueText,
+    // A PR with no cleared ticket behind it has no issue and no criteria to keep.
+    ...(past.issue === null ? {} : { "issue.md": past.issueText, "criteria.md": renderCriteria(past.criteria) }),
     "vision.md": past.vision,
-    "criteria.md": renderCriteria(past.criteria),
     "pr.md": past.prText,
     "facts.json": `${JSON.stringify(past.facts, null, 2)}\n`,
     "call.md": renderLandingCall(past),
@@ -476,5 +493,6 @@ export async function writeLandingCase(directory: string, past: LandingCase): Pr
  * small, else the same repo's that share the most words with the issue.
  */
 export function landingPrecedentsFor(cases: readonly LandingCase[], repo: string, issueText: string, limit = PRECEDENT_LIMIT): LandingCase[] {
-  return rankByRelevance(cases, repo, issueText).slice(0, limit);
+  // A case with no issue behind it is matched on its PR's words instead.
+  return rankByRelevance(cases, repo, issueText, (past) => (past.issue === null ? past.prText : past.issueText)).slice(0, limit);
 }

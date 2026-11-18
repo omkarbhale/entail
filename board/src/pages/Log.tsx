@@ -279,8 +279,9 @@ function Row({ row, open, toggle }: { row: LogRow; open: boolean; toggle: () => 
           <span className="lline">
             <span className="lref">
               <b>{shortName(call.repo)}</b> {call.pr === null ? "" : "PR "}#{refNumber(call)}
+              {call.pr !== null && call.issue === null && <span className="tag">no ticket</span>}
             </span>
-            <span className="ltitle">{call.pr?.title ?? call.issue.title}</span>
+            <span className="ltitle">{call.pr?.title ?? call.issue?.title}</span>
           </span>
           <span className="lreason">{firstLine}</span>
         </span>
@@ -329,7 +330,7 @@ function Detail({ row }: { row: LogRow }) {
         ))}
       </ul>
       <div className="actions">
-        <External href={call.pr?.url ?? call.issue.url} className="btn sm">
+        <External href={call.pr?.url ?? call.issue?.url ?? ""} className="btn sm">
           Open {call.pr === null ? "issue" : "PR"} on {forgeName(call.repo)} ↗
         </External>
         {call.status === "waiting" && (

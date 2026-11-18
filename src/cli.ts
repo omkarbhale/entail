@@ -143,8 +143,8 @@ calls      the log: every call with its reason, and every confirmation, override
            answer and post, for one repo or all.
 judge      make the call on one issue and print it. It posts nothing.
 land       make the landing call on one PR at its head and print it, against the
-           criteria of the go entail logged on the issue it closes (or --issue). It
-           posts and merges nothing.
+           criteria of the go entail logged on the issue it closes (or --issue), or
+           on the vision alone when it closes none. It posts and merges nothing.
 replay     run every case in the case book through its judgment (issue cases through
            the call on an issue, landing cases through the call on a PR) and print
            agreement with the owner's calls, disagreements first.
@@ -882,20 +882,20 @@ async function landCommand(args: string[]): Promise<number> {
   const pr = await forge.pullRequest(reference.number);
   const entries = readLog(dataDirectory, repo);
 
-  let issueNumber: number;
+  // A PR that closes no issue by the forge's link data, and names none with --issue, is judged on the vision alone.
+  let issueNumber: number | null;
   if (values.issue !== undefined) {
     issueNumber = Number(values.issue);
     if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) throw new UsageError("--issue is an issue number");
   } else {
     const linked = await forge.linkedIssues(reference.number);
     const judged = linked.find((number) => goCallOn(entries, number) !== null);
-    if (judged === undefined && linked.length === 0) throw new Error(`${repo}#${reference.number} closes no issue by ${forgeTitle(repo)}'s link data; name one with --issue`);
-    issueNumber = judged ?? linked[0]!;
+    issueNumber = judged ?? linked[0] ?? null;
   }
-  const go = goCallOn(entries, issueNumber);
-  let issueText: string;
+  const go = issueNumber === null ? null : goCallOn(entries, issueNumber);
+  let issueText = "";
   if (go !== null) issueText = go.issueText;
-  else {
+  else if (issueNumber !== null) {
     const issue = await forge.issue(issueNumber);
     if (issue === null) throw new Error(`${repo}#${issueNumber} is not an issue`);
     const comments = await forge.comments("issue", issueNumber);
@@ -915,13 +915,13 @@ async function landCommand(args: string[]): Promise<number> {
         pr: { number: reference.number, text: renderPullRequest(pr) },
         head: pr.headSha,
         base: reading.base,
-        issue: { number: issueNumber, text: issueText },
+        issue: issueNumber === null ? null : { number: issueNumber, text: issueText },
         criteria,
         vision: reading.vision,
         pins: reading.pins,
         facts: { checks: report.checks, required: report.required, files },
         diff: reading.diff,
-        precedents: landingPrecedentsFor(await landingBook(dataDirectory), repo, issueText),
+        precedents: landingPrecedentsFor(await landingBook(dataDirectory), repo, issueNumber === null ? renderPullRequest(pr) : issueText),
         sendBacks: [],
         checkout: reading.checkout,
       },
@@ -929,9 +929,14 @@ async function landCommand(args: string[]): Promise<number> {
     );
     if (values.json) console.log(JSON.stringify(judgment, null, 2));
     else if (judgment.ok) {
-      console.log(`${repo}#${reference.number} at ${pr.headSha}, closing #${issueNumber}: ${pr.title}`);
-      console.log(go === null ? `(#${issueNumber} has no go in entail's log: judged against no criteria)\n` : `(against the criteria of call ${go.id} on #${issueNumber}; ${sendBacksPosted(entries, reference.number)} send-backs posted before)\n`);
-      console.log(formatLandingCall(judgment.call));
+      if (issueNumber === null) {
+        console.log(`${repo}#${reference.number} at ${pr.headSha}, with no issue behind it: ${pr.title}`);
+        console.log(`(it closes no issue by ${forgeTitle(repo)}'s link data: judged on the vision alone)\n`);
+      } else {
+        console.log(`${repo}#${reference.number} at ${pr.headSha}, closing #${issueNumber}: ${pr.title}`);
+        console.log(go === null ? `(#${issueNumber} has no go in entail's log: judged against no criteria)\n` : `(against the criteria of call ${go.id} on #${issueNumber}; ${sendBacksPosted(entries, reference.number)} send-backs posted before)\n`);
+      }
+      console.log(formatLandingCall(judgment.call, issueNumber === null));
       console.log(`\n${runLine(judgment.facts, options)}`);
     } else {
       console.error(`entail: the run gave no call (${judgment.failure.kind}): ${judgment.failure.message}`);

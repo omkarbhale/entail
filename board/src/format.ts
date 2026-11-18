@@ -58,7 +58,8 @@ export function shortName(repo: string): string {
 
 /** The number an item is known by: the PR's for a call on a PR, the issue's otherwise. */
 export function refNumber(item: Pick<CallView, "issue" | "pr">): number {
-  return item.pr?.number ?? item.issue.number;
+  // Only a PR's call can have no issue.
+  return item.pr?.number ?? item.issue!.number;
 }
 
 /** An item's key across calls: an issue or a PR judged again keeps it. */
@@ -90,7 +91,8 @@ export function sizeLine(item: CallView): string {
 export function confirmLabel(item: CallView): string {
   if (item.call === "merge") return `Confirm · merge #${refNumber(item)}`;
   if (item.call === "send-back") return `Confirm · send back #${refNumber(item)}`;
-  return item.call === "no" ? `Confirm · close #${item.issue.number}` : `Confirm · go on #${item.issue.number}`;
+  const n = refNumber(item);
+  return item.call === "no" ? `Confirm · close #${n}` : `Confirm · go on #${n}`;
 }
 
 /** Where a criterion comes from, in words. */
@@ -127,7 +129,7 @@ export type AnswerChoice = { to: OwnerCallName; label: string; note: string; lea
 
 /** The two answers to a question, and what each does. */
 export function answerChoices(item: CallView): AnswerChoice[] {
-  const n = item.issue.number;
+  const n = refNumber(item);
   if (item.pr !== null) {
     return [
       { to: "merge", label: "Merge it", note: `entail merges #${item.pr.number} at the head it judged, with your answer as the reason.`, lean: false },

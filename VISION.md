@@ -55,6 +55,7 @@ Every answer is recorded under the name of whoever gave it, through a single pat
 
 At intake, a ticket gets its call, and one that is accepted is answered with the few criteria an implementer would not guess.
 At landing, the PR is checked for everything the ticket required, plus the repo's generic criteria, such as whether the tests ran.
+A PR with no cleared ticket behind it is judged on the vision alone: merged when it leaves the product better, and otherwise sent back with what needs to change.
 When a PR fails its criteria, entail decides whether to comment on the PR with what needs to change, raise it again, or cancel it, and it never fixes the PR itself.
 Cancelling a ticket whose PR keeps failing is entail's call, logged with its reason, and does not need the owner.
 Generic per-repo criteria are a setting fixed once per repo, not a question asked per ticket.

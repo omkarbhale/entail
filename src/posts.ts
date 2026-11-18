@@ -205,11 +205,15 @@ export function pullRequestPostFor(pending: LandingPending, owner: string, pullR
       const { entry } = pending;
       const { call } = entry;
       const base = { pr: entry.pr.number, markerFor: entry.id };
+      // A PR with no cleared ticket behind it says so after its opening line, with the vision lines the call rests on.
+      const ticketless = entry.issue === null;
+      const behind = ticketless ? join(noTicketText(pullRequest), visionLinesText(call.restsOn.visionLines)) : "";
+      const checklist = checklistText(call, ticketless);
       if (call.call === "merge") {
         if (entry.confirm) {
-          return { ...base, merge: false, close: false, sentBack: false, text: () => join(`**Merge.** ${escape(call.reason)}`, checklistText(call), `This call waits for ${owner} to confirm it on entail's board; nothing is merged until then.`) };
+          return { ...base, merge: false, close: false, sentBack: false, text: () => join(`**Merge.** ${escape(call.reason)}`, behind, checklist, `This call waits for ${owner} to confirm it on entail's board; nothing is merged until then.`) };
         }
-        return { ...base, merge: true, close: false, sentBack: false, text: (merge) => join(`**Merge.** ${escape(call.reason)}`, checklistText(call), mergeText(merge, entry.head)) };
+        return { ...base, merge: true, close: false, sentBack: false, text: (merge) => join(`**Merge.** ${escape(call.reason)}`, behind, checklist, mergeText(merge, entry.head)) };
       }
       if (call.call === "send-back") {
         const cancelling = entry.cancel
@@ -217,9 +221,10 @@ export function pullRequestPostFor(pending: LandingPending, owner: string, pullR
             ? `entail has sent this ${pullRequest} back ${entry.sendBacks} times before. It closes unmerged once ${owner} confirms this call on entail's board.`
             : `entail has sent this ${pullRequest} back ${entry.sendBacks} times before. Closing it unmerged.`
           : "entail judges it again on its next push.";
-        return { ...base, merge: false, close: entry.cancel && !entry.confirm, sentBack: true, text: () => join(`**Send back.** ${escape(call.reason)}`, needsText(call.needsToChange), checklistText(call), cancelling) };
+        return { ...base, merge: false, close: entry.cancel && !entry.confirm, sentBack: true, text: () => join(`**Send back.** ${escape(call.reason)}`, behind, needsText(call.needsToChange), checklist, cancelling) };
       }
-      return { ...base, merge: false, close: false, sentBack: false, text: () => `A question about this ${pullRequest} is waiting for ${owner} on entail's board. Nothing is merged until it is answered.` };
+      const asked = `A question about this ${pullRequest} is waiting for ${owner} on entail's board. Nothing is merged until it is answered.`;
+      return { ...base, merge: false, close: false, sentBack: false, text: () => (ticketless ? join(asked, noTicketText(pullRequest)) : asked) };
     }
     case "landing-confirmed": {
       const { landing, action } = pending;
@@ -256,15 +261,20 @@ function needsText(items: readonly string[]): string {
   return `What needs to change:\n\n${items.map((item) => `- ${escape(item).replace(/\n+/gu, " ")}`).join("\n")}`;
 }
 
-/** The criteria marked met or unmet, and what the PR does beyond them, as the comment shows them. */
-function checklistText(call: LandingCall): string {
+/** The line a call on a PR with no cleared ticket behind it carries. */
+function noTicketText(pullRequest: string): string {
+  return `No cleared ticket is behind this ${pullRequest}, so entail judged it on the vision alone.`;
+}
+
+/** The criteria marked met or unmet, and what the PR does beyond them (or, with no ticket, what it does), as the comment shows them. */
+function checklistText(call: LandingCall, ticketless = false): string {
   const parts: string[] = [];
   if (call.criteria.length > 0) {
     parts.push(`Criteria:\n\n${call.criteria.map((check) => `- ${check.met ? "Met" : "**Not met**"}: ${escape(check.criterion).replace(/\n+/gu, " ")}`).join("\n")}`);
   }
   if (call.beyond.length > 0) {
     const label = { needed: "Needed", harmless: "Harmless", unwanted: "**Unwanted**" } as const;
-    parts.push(`Beyond the criteria:\n\n${call.beyond.map((item) => `- ${label[item.sort]}: ${escape(item.change).replace(/\n+/gu, " ")}`).join("\n")}`);
+    parts.push(`${ticketless ? "What it does" : "Beyond the criteria"}:\n\n${call.beyond.map((item) => `- ${label[item.sort]}: ${escape(item.change).replace(/\n+/gu, " ")}`).join("\n")}`);
   }
   return parts.join("\n\n");
 }

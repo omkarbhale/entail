@@ -21,7 +21,7 @@ import {
 } from "./forge/forge.ts";
 import { oneLine, type RepoFailure } from "./health.ts";
 import { formatCall, judge, JUDGMENT_PROMPT_VERSION, RECHECK_PROMPT_VERSION } from "./judgment.ts";
-import { ciGreen, ciProblems, formatLandingCall, judgeLanding, LANDING_PROMPT_VERSION, touched } from "./landing.ts";
+import { ciGreen, ciProblems, formatLandingCall, judgeLanding, landingPromptVersion, touched, type LinkedIssue } from "./landing.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import type { ModelRunner } from "./model-runner.ts";
 import type { OperationalLog } from "./operational-log.ts";
@@ -30,6 +30,7 @@ import { readPins } from "./pins.ts";
 import { BLOCKED_LABEL, postFor, pullRequestPostFor, type MergeResult } from "./posts.ts";
 import {
   appendEntry,
+  clearedGoOn,
   followedPullRequests,
   goCallOn,
   heldIssues,
@@ -83,8 +84,9 @@ import { collapseWhitespace, readVision, visionTextChange, type VisionChange } f
  * has closed: entail then writes it to the owner's case book and posts it.
  *
  * The pass also follows each open PR that the forge says closes an issue
- * entail called go on: once CI has finished at a head it has not judged, the
- * landing judgment makes the call on that head, and entail posts it on the
+ * whose go has acted, and each open, non-draft PR with no such issue behind
+ * it, which is judged on the vision alone: once CI has finished at a head it
+ * has not judged, the landing judgment makes the call on that head, and entail posts it on the
  * PR, merges at that head (unless the repo is in confirm mode), or closes a
  * PR it sent back too often. A new push is judged again; nothing is reused.
  * The owner's action on a PR's call is acted on the same way, once its
@@ -985,10 +987,14 @@ const CHECKS_WINDOW_MS = 10 * 60 * 1000;
 
 /**
  * Follows and judges the repo's PRs: each open PR that changed this pass and
- * each PR already followed. A PR is followed once the forge's own link data
- * says it closes an issue entail called go on; a followed PR's every new head
- * is judged once its checks have finished, and a PR merged or closed is no
- * longer followed. Returns whether every PR could be read.
+ * each PR already followed. A PR to the default branch is followed with its
+ * issue once the forge's own link data says it closes an issue whose go has
+ * acted; an open, non-draft one with no cleared ticket behind it (linked to
+ * no such issue, or to one whose go still waits for the owner) is followed
+ * with none, and judged on the vision alone until a go on an issue it is
+ * linked to acts. A followed PR's every new head is judged once its checks
+ * have finished, and a PR merged or closed is no longer followed. Returns
+ * whether every PR could be read.
  */
 async function passPullRequests(
   context: JudgeContext,
@@ -1012,13 +1018,32 @@ async function passPullRequests(
     const name = `${repo}#${number}`;
     try {
       const pr = await forge.pullRequest(number);
-      let issue = followed.get(number)?.issue;
-      if (issue === undefined) {
-        if (pr.state !== "open" || pr.baseBranch !== project.defaultBranch) continue;
-        issue = (await forge.linkedIssues(number)).find((linked) => goCallOn(entries, linked) !== null);
-        if (issue === undefined) continue;
-        record({ type: "followed", pr: pullRequestRef(pr), issue });
-        options.print(`${name}: following the pull request "${pr.title}", which closes #${issue}`);
+      const following = followed.get(number);
+      let issue = following?.issue ?? null;
+      let linkedNow = following?.linked ?? [];
+      // A PR followed with no ticket is linked again when it changed, or when a go on an issue it was linked to has acted since.
+      const cleared = (one: number) => clearedGoOn(entries, one, options.now?.() ?? new Date()) !== null;
+      const relink = following !== undefined && following.issue === null && pr.state === "open" && (changed.has(number) || (following.linked ?? []).some(cleared));
+      if (following === undefined || relink) {
+        if (following === undefined && (pr.state !== "open" || pr.baseBranch !== project.defaultBranch)) continue;
+        const linked = await forge.linkedIssues(number);
+        const closes = linked.find(cleared) ?? null;
+        if (following === undefined) {
+          if (closes === null && pr.draft) continue;
+          record({ type: "followed", pr: pullRequestRef(pr), issue: closes, ...(closes === null ? { linked } : {}) });
+          options.print(
+            closes === null
+              ? `${name}: following the pull request "${pr.title}", which has no cleared ticket behind it: it is judged on the vision alone`
+              : `${name}: following the pull request "${pr.title}", which closes #${closes}`,
+          );
+        } else if (closes !== null) {
+          record({ type: "followed", pr: pullRequestRef(pr), issue: closes });
+          options.print(`${name}: the pull request now closes #${closes}, whose go has acted: it is judged against that go's criteria from now on`);
+        } else if (!sameIssues(linked, following.linked ?? [])) {
+          record({ type: "followed", pr: pullRequestRef(pr), issue: null, linked });
+        }
+        issue = closes;
+        linkedNow = linked;
       }
       if (pr.state !== "open") {
         record({ type: "unfollowed", pr: number, state: pr.state });
@@ -1026,7 +1051,9 @@ async function passPullRequests(
         continue;
       }
       if (pr.draft || pr.baseBranch !== project.defaultBranch) continue;
-      if (latest.get(number)?.head === pr.headSha) continue;
+      // A head is judged once on what is behind it: a PR whose go acted since it was judged with no ticket is judged again against the criteria.
+      const last = latest.get(number);
+      if (last?.head === pr.headSha && (last.issue?.number ?? null) === issue) continue;
       const failures = entries.filter((entry) => entry.type === "landing-failed" && entry.pr === number && entry.head === pr.headSha).length;
       if (failures >= JUDGMENT_ATTEMPTS) {
         if (changed.has(number)) options.print(`${name}: landing is stalled at ${pr.headSha.slice(0, 7)}: the judgment gave no call ${failures} times; it resumes with a new push`);
@@ -1037,12 +1064,12 @@ async function passPullRequests(
         if (changed.has(number)) options.print(`${name}: waiting for CI to finish at ${pr.headSha.slice(0, 7)} before judging`);
         continue;
       }
-      const go = goCallOn(entries, issue);
-      if (go === null) {
+      const go = issue === null ? null : goCallOn(entries, issue);
+      if (issue !== null && go === null) {
         if (changed.has(number)) options.print(`${name}: #${issue} no longer has a go, so the pull request is not judged`);
         continue;
       }
-      const entry = await judgePullRequest(context, pr, go, { checks: report.checks, required: report.required }, entries);
+      const entry = await judgePullRequest(context, pr, go, { checks: report.checks, required: report.required }, entries, go === null ? linkedNow.map((one) => ({ number: one, standing: linkedStanding(entries, one) })) : []);
       if ("waiting" in entry) {
         options.log?.info("checks-awaited", { repo, pr: number, head: pr.headSha, why: entry.waiting });
         if (changed.has(number)) options.print(`${name}: ${entry.waiting}; not judged yet`);
@@ -1066,17 +1093,37 @@ async function passPullRequests(
   return { ok, judged };
 }
 
+/** Where an issue a PR with no cleared ticket is linked to stands with entail, in a sentence for the landing judgment. */
+function linkedStanding(entries: readonly Entry[], issue: number): string {
+  const call = latestCalls(entries).get(issue);
+  if (call === undefined) return "entail has made no call on it.";
+  const effective = call.owner?.call ?? call.call.call;
+  if (effective === "no") return `${call.owner === null ? "entail" : "the owner"} said no to it: ${call.call.reason}`;
+  if (effective === "ask") return `entail's question on it waits for the owner's answer: ${call.call.call === "ask" ? call.call.question : call.call.reason}`;
+  return "entail's go on it waits for the owner to confirm it.";
+}
+
+function sameIssues(a: readonly number[], b: readonly number[]): boolean {
+  return a.length === b.length && a.every((one) => b.includes(one));
+}
+
 function pullRequestRef(pr: PullRequest): LandingEntry["pr"] {
   return { number: pr.number, title: pr.title, url: pr.url, author: pr.author.username };
 }
 
-/** Makes the landing call on a PR's head; `failed` with the reason when the run gave none, or `waiting` when CI has not reported at the head. */
+/**
+ * Makes the landing call on a PR's head, against the criteria of the go it
+ * closes, or on the vision alone when `go` is null: no cleared ticket is
+ * behind it. `failed` with the reason when the run gave none, or `waiting`
+ * when CI has not reported at the head.
+ */
 async function judgePullRequest(
   context: JudgeContext,
   pr: PullRequest,
-  go: CallEntry,
+  go: CallEntry | null,
   checks: Pick<LandingEntry["facts"], "checks" | "required">,
   entries: readonly Entry[],
+  linked: LinkedIssue[],
 ): Promise<NewEntry | { failed: string } | { waiting: string }> {
   const { options, state, forge } = context;
   const { repo } = state;
@@ -1090,7 +1137,7 @@ async function judgePullRequest(
       if (age < CHECKS_WINDOW_MS) return { waiting: `no checks have reported at ${pr.headSha.slice(0, 7)} yet, which was committed ${Math.max(0, Math.round(age / 60_000))} minutes ago` };
       if (reading.definesCI) return { waiting: `the repository defines CI but no check has reported at ${pr.headSha.slice(0, 7)}` };
     }
-    const criteria = go.call.call === "no" ? [] : go.call.criteria;
+    const criteria = go === null || go.call.call === "no" ? [] : go.call.criteria;
     const sendBacks = sendBacksPosted(entries, pr.number);
     const sentBack = new Set(entries.flatMap((entry) => (entry.type === "pr-acted" && entry.pr === pr.number && entry.sentBack ? [entry.for] : [])));
     const earlier = entries.flatMap((entry) =>
@@ -1105,13 +1152,14 @@ async function judgePullRequest(
         pr: { number: pr.number, text: prText },
         head: pr.headSha,
         base: reading.base,
-        issue: { number: go.issue.number, text: go.issueText },
+        issue: go === null ? null : { number: go.issue.number, text: go.issueText },
         criteria,
+        ...(go === null ? { linked } : {}),
         vision: reading.vision,
         pins: reading.pins,
         facts,
         diff: reading.diff,
-        precedents: landingPrecedentsFor(await options.landingBook(), repo, go.issueText),
+        precedents: landingPrecedentsFor(await options.landingBook(), repo, go === null ? prText : go.issueText),
         sendBacks: earlier,
         checkout: reading.checkout,
       },
@@ -1123,19 +1171,22 @@ async function judgePullRequest(
       return { failed: `${judgment.failure.kind}: ${judgment.failure.message}` };
     }
     const { call } = judgment;
-    const cancel = call.call === "send-back" && sendBacks >= SEND_BACK_LIMIT;
+    // A PR with no ticket behind it has no ticket to cancel: it is sent back each time, never closed.
+    const cancel = go !== null && call.call === "send-back" && sendBacks >= SEND_BACK_LIMIT;
     options.log?.info("landed-call", { repo, pr: pr.number, head: pr.headSha, call: call.call, cancel, model: judgment.facts.model, costUsd: judgment.facts.estimatedCostUsd });
-    options.print(`${name} at ${pr.headSha.slice(0, 7)}, closing #${go.issue.number}: ${pr.title}\n${indent(formatLandingCall(call))}${cancel ? `\n    (sent back ${sendBacks} times before: this cancels it)` : ""}`);
+    const behind = go === null ? "with no cleared ticket behind it, judged on the vision alone" : `closing #${go.issue.number}`;
+    options.print(`${name} at ${pr.headSha.slice(0, 7)}, ${behind}: ${pr.title}\n${indent(formatLandingCall(call, go === null))}${cancel ? `\n    (sent back ${sendBacks} times before: this cancels it)` : ""}`);
     return {
       type: "landing",
       pr: pullRequestRef(pr),
-      issue: { number: go.issue.number, title: go.issue.title, url: go.issue.url },
-      issueCall: go.id,
-      issueText: go.issueText,
+      issue: go === null ? null : { number: go.issue.number, title: go.issue.title, url: go.issue.url },
+      issueCall: go?.id ?? null,
+      issueText: go?.issueText ?? "",
       prText,
       head: pr.headSha,
       base: reading.base,
       vision: reading.vision,
+      ...(go === null && linked.length > 0 ? { linked } : {}),
       criteria,
       facts,
       touched: touched(files, reading.pins),
@@ -1145,7 +1196,7 @@ async function judgePullRequest(
       confirm: state.confirm,
       model: judgment.facts.model,
       effort,
-      promptVersion: LANDING_PROMPT_VERSION,
+      promptVersion: landingPromptVersion(go === null ? null : go.issue),
       costUsd: judgment.facts.estimatedCostUsd,
     };
   } finally {
@@ -1174,7 +1225,7 @@ async function actOnPullRequest(
   if (options.dryRun) {
     const merge: MergeResult | null = post.merge ? { merged: true, sha: landing.head, commit: null } : null;
     const body = composeComment(options.owner, post.markerFor, post.text(merge));
-    const what = [post.merge ? `merge at ${landing.head}` : "", post.close ? "close it unmerged" : "", productQuestion ? `raise #${landing.issue.number}'s question to ${options.owner}` : ""].filter((part) => part !== "");
+    const what = [post.merge ? `merge at ${landing.head}` : "", post.close ? "close it unmerged" : "", productQuestion && landing.issue !== null ? `raise #${landing.issue.number}'s question to ${options.owner}` : ""].filter((part) => part !== "");
     options.print(`would post on ${name}${what.length > 0 ? `, then ${what.join(" and ")}` : ""}:\n${indent(body)}`);
     record({ type: "pr-acted", for: post.markerFor, pr: post.pr, comment: { id: 0, url: "(dry run)" }, merged: null, refused: null, sentBack: post.sentBack, closed: post.close });
     return true;

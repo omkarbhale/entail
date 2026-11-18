@@ -130,6 +130,15 @@ describe("Log", () => {
     await waitFor(() => expect(filters).toContain("prs"));
   });
 
+  it("shows a PR's call with no cleared ticket behind it as no ticket", async () => {
+    const call = { ...aPullRequestCall({ id: 42, judgedAt: at(0) }), issue: null };
+    fakeApi({ log: () => ({ rows: [aRow(call, { day: dayOf(0), trail: [] })], suggestions: [], next: null, counts: { ...counts, prs: 1 } }) });
+    renderBoard("#/log");
+    const row = await screen.findByRole("button", { name: /Fix for 142/u });
+    expect(within(row).getByText("no ticket")).toBeTruthy();
+    expect(within(row).getByText("PR #1142", { exact: false })).toBeTruthy();
+  });
+
   it("says when there is nothing yet, and when entail cannot be read", async () => {
     const api = fakeApi();
     const { unmount } = renderBoard("#/log");

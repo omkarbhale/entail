@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
@@ -190,6 +190,40 @@ test("a landing case is written and read back whole, beside issue cases, and a l
   assert.deepEqual(merged.map((c) => [c.slug, c.call]), [["acme-tally-pr-14", "send-back"]]);
   assert.deepEqual(parseCriteria(renderCriteria(past.criteria)), past.criteria);
   assert.deepEqual(parseCriteria(renderCriteria([])), []);
+});
+
+test("a landing case with no cleared ticket behind its PR has no issue and no criteria, and is read back whole; an empty criteria.md is no criteria", async (t) => {
+  const dir = temporary(t);
+  const past: LandingCase = {
+    kind: "landing",
+    slug: landingCaseSlug("acme/tally", 20),
+    repo: "acme/tally",
+    issue: null,
+    pr: 20,
+    head: "d".repeat(40),
+    base: "c".repeat(40),
+    issueText: "",
+    vision: "# Vision\n\ntally counts words offline.\n",
+    visionCommit: "c".repeat(40),
+    criteria: [],
+    prText: "# Read standard input\n\n(no description)\n",
+    facts: { checks: [], required: [], files: [] },
+    call: "send-back",
+    reason: "It phones home, against the vision's offline line.",
+    reasonFrom: "the owner's override on the board",
+    date: "2026-11-18",
+    notes: "",
+  };
+  await writeLandingCase(dir, past);
+  assert.equal(existsSync(join(dir, past.slug, "issue.md")), false);
+  assert.equal(existsSync(join(dir, past.slug, "criteria.md")), false);
+  assert.match(readFileSync(join(dir, past.slug, "call.md"), "utf8"), /^issue: none$/mu);
+  assert.deepEqual(await readLandingCaseBook(dir), [past]);
+
+  // A hand-written case may leave the issue line out and keep an empty criteria.md.
+  writeFileSync(join(dir, past.slug, "criteria.md"), "");
+  writeFileSync(join(dir, past.slug, "call.md"), readFileSync(join(dir, past.slug, "call.md"), "utf8").replace(/^issue: none\n/mu, ""));
+  assert.deepEqual(await readLandingCaseBook(dir), [past]);
 });
 
 test("a landing case with a call other than merge or send-back is refused, naming the case", async (t) => {

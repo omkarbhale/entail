@@ -22,63 +22,105 @@ export const LANDING_KIND = "pr-call";
 /** Changes whenever the prompt or the answer's shape changes, so a call records what judged it. */
 export const LANDING_PROMPT_VERSION = "pr-call-1";
 
+/** The same for the call on a PR with no cleared ticket behind it, judged on the vision alone. */
+export const VISION_ONLY_PROMPT_VERSION = "pr-call-vision-1";
+
+/** The prompt version a landing call is made with: the vision-only one when no issue is behind the PR. */
+export function landingPromptVersion(issue: unknown): string {
+  return issue === null ? VISION_ONLY_PROMPT_VERSION : LANDING_PROMPT_VERSION;
+}
+
 /** How anything a PR does beyond its criteria is sorted; only unwanted sends a PR back. */
 export const BEYOND_SORTS = ["needed", "harmless", "unwanted"] as const;
 
 export type BeyondSort = (typeof BEYOND_SORTS)[number];
 
-/** The answer the model gives, as JSON. */
-export const LANDING_SCHEMA = object({
-  call: oneOf(
-    ["merge", "send-back", "ask"],
-    "merge: it solves the problem, meets every criterion, CI is green and nothing it does is unwanted; send-back: something must change before it can merge; ask: you cannot tell, or it makes a large or hard-to-undo change the issue did not approve.",
-  ),
-  reason: string("Why, in plain words, in one to three sentences, for the owner to read."),
-  solves: object(
-    {
-      solved: boolean("Whether the PR solves the problem the issue describes."),
-      evidence: string("What in the diff or the repo at the PR's head shows it, naming files or code."),
-    },
-    "Whether the PR solves the issue's problem, which is always required.",
-  ),
-  criteria: arrayOf(
-    object({
-      criterion: string("The criterion, as given."),
-      met: boolean("Whether the PR meets it."),
-      evidence: string("What in the diff, the repo at the PR's head or the forge's facts you relied on, naming files or code; for unmet, what is missing."),
-    }),
-    "One entry per criterion given, in the order given; empty when none was given.",
-  ),
-  beyond: arrayOf(
-    object({
-      change: string("What the PR does that no criterion and not the problem itself names, in one sentence a user or maintainer would recognise."),
-      sort: oneOf(BEYOND_SORTS, "needed, harmless or unwanted, as defined in the instructions."),
-      why: string("Why it is sorted so: for needed, what it is needed for; for unwanted, how it makes the product worse or what the owner did not ask for."),
-    }),
-    "Each thing the PR does beyond solving the problem and meeting the criteria that is worth the owner's notice. Empty when there is none.",
-  ),
-  needs_to_change: arrayOf(
-    string("One thing the PR must change before it can merge, as an instruction to its author."),
-    "For send-back: what must change, one item per change. Empty for merge and ask.",
-  ),
-  product_call: boolean(
-    "For send-back: true when what blocks the PR is a product question the owner must settle (the criteria conflict, or the issue's approach itself is in doubt), rather than work the PR has not yet done right. False otherwise.",
-  ),
-  question: nullable(
-    object({
-      question: string("The one question for the owner, answerable without reading anything else."),
-      why: string("What makes it a question."),
-    }),
-    "For ask, and for a send-back that is a product call: the one question for the owner. Null otherwise.",
-  ),
-  rests_on: object(
-    {
-      vision_lines: arrayOf(string(), "Each vision line the call rests on, quoted exactly as it stands in the vision; empty when none."),
-      cases: arrayOf(string(), "The slug of each past case the call rests on; empty when none does."),
-    },
-    "What the call rests on.",
-  ),
-});
+/**
+ * The answer the model gives, as JSON. A PR with no cleared ticket behind it
+ * gives the same answer with words fitted to it: `solves` says whether it
+ * leaves the product better, `criteria` is empty, and `beyond` is everything
+ * the PR does, sorted against the vision.
+ */
+function landingSchema(ticket: boolean) {
+  return object({
+    call: oneOf(
+      ["merge", "send-back", "ask"],
+      ticket
+        ? "merge: it solves the problem, meets every criterion, CI is green and nothing it does is unwanted; send-back: something must change before it can merge; ask: you cannot tell, or it makes a large or hard-to-undo change the issue did not approve."
+        : "merge: it leaves the product better, CI is green and nothing it does is unwanted; send-back: something must change before it can merge; ask: you cannot tell, or it makes a large or hard-to-undo change the owner has not approved.",
+    ),
+    reason: string("Why, in plain words, in one to three sentences, for the owner to read."),
+    solves: ticket
+      ? object(
+          {
+            solved: boolean("Whether the PR solves the problem the issue describes."),
+            evidence: string("What in the diff or the repo at the PR's head shows it, naming files or code."),
+          },
+          "Whether the PR solves the issue's problem, which is always required.",
+        )
+      : object(
+          {
+            solved: boolean("Whether the PR leaves the product better, judged on the vision and the product alone."),
+            evidence: string("What in the diff, the repo at the PR's head or the vision shows it, naming files, code or vision lines."),
+          },
+          "Whether the PR leaves the product better, which is always required; with no ticket behind it, this stands where solving an issue's problem would.",
+        ),
+    criteria: arrayOf(
+      object({
+        criterion: string("The criterion, as given."),
+        met: boolean("Whether the PR meets it."),
+        evidence: string("What in the diff, the repo at the PR's head or the forge's facts you relied on, naming files or code; for unmet, what is missing."),
+      }),
+      ticket ? "One entry per criterion given, in the order given; empty when none was given." : "Always empty: no criteria were given.",
+    ),
+    beyond: ticket
+      ? arrayOf(
+          object({
+            change: string("What the PR does that no criterion and not the problem itself names, in one sentence a user or maintainer would recognise."),
+            sort: oneOf(BEYOND_SORTS, "needed, harmless or unwanted, as defined in the instructions."),
+            why: string("Why it is sorted so: for needed, what it is needed for; for unwanted, how it makes the product worse or what the owner did not ask for."),
+          }),
+          "Each thing the PR does beyond solving the problem and meeting the criteria that is worth the owner's notice. Empty when there is none.",
+        )
+      : arrayOf(
+          object({
+            change: string("One thing the PR does, in one sentence a user or maintainer would recognise."),
+            sort: oneOf(BEYOND_SORTS, "needed, harmless or unwanted, as defined in the instructions."),
+            why: string("Why it is sorted so, against the vision: for needed, what in the vision or the product it serves; for unwanted, how it makes the product worse or goes against the vision."),
+          }),
+          "What the PR does, each change worth the owner's notice, sorted against the vision. Empty only when it does nothing worth notice.",
+        ),
+    needs_to_change: arrayOf(
+      string("One thing the PR must change before it can merge, as an instruction to its author."),
+      "For send-back: what must change, one item per change. Empty for merge and ask.",
+    ),
+    product_call: boolean(
+      ticket
+        ? "For send-back: true when what blocks the PR is a product question the owner must settle (the criteria conflict, or the issue's approach itself is in doubt), rather than work the PR has not yet done right. False otherwise."
+        : "For send-back: true when what blocks the PR is a product question the owner must settle (whether the product should do what the PR does at all), rather than work the PR has not yet done right. False otherwise.",
+    ),
+    question: nullable(
+      object({
+        question: string("The one question for the owner, answerable without reading anything else."),
+        why: string("What makes it a question."),
+      }),
+      "For ask, and for a send-back that is a product call: the one question for the owner. Null otherwise.",
+    ),
+    rests_on: object(
+      {
+        vision_lines: arrayOf(string(), "Each vision line the call rests on, quoted exactly as it stands in the vision; empty when none."),
+        cases: arrayOf(string(), "The slug of each past case the call rests on; empty when none does."),
+      },
+      "What the call rests on.",
+    ),
+  });
+}
+
+/** The answer on a PR that closes an issue whose go acted. */
+export const LANDING_SCHEMA = landingSchema(true);
+
+/** The answer on a PR with no cleared ticket behind it, judged on the vision alone. */
+export const VISION_ONLY_LANDING_SCHEMA = landingSchema(false);
 
 export type LandingAnswer = Infer<typeof LANDING_SCHEMA>;
 
@@ -223,6 +265,13 @@ export interface EarlierSendBack {
   needsToChange: string[];
 }
 
+/** An issue a PR with no cleared ticket behind it is linked to, and where it stands: no go of it has acted. */
+export interface LinkedIssue {
+  number: number;
+  /** Where the issue stands with entail, in a sentence: no call yet, a go or a question waiting on the owner, or a no with its reason. */
+  standing: string;
+}
+
 /** Everything the landing judgment reads about one PR. */
 export interface LandingInputs {
   /** The repo, as `owner/name`. */
@@ -232,8 +281,11 @@ export interface LandingInputs {
   head: string;
   /** The default branch's commit the diff is taken against. */
   base: string;
-  issue: { number: number; text: string };
-  /** The criteria entail set at intake. */
+  /** The issue the PR closes, whose go acted; null when no cleared ticket is behind it, so it is judged on the vision alone. */
+  issue: { number: number; text: string } | null;
+  /** With no issue: the issues the forge links the PR to, none with a go that acted, and where each stands with entail. */
+  linked?: LinkedIssue[];
+  /** The criteria entail set at intake; none with no issue. */
   criteria: LandingCriterion[];
   vision: { text: string; commit: string } | null;
   pins: string[];
@@ -253,7 +305,6 @@ export const DIFF_LIMIT = 120_000;
 /** The landing judgment's prompt. */
 export function landingPrompt(inputs: LandingInputs): string {
   const name = `${inputs.repo}#${inputs.pr.number}`;
-  const issueName = `${inputs.repo}#${inputs.issue.number}`;
   const vision =
     inputs.vision === null
       ? "This repo has no VISION.md. Judge on the merits alone."
@@ -274,6 +325,8 @@ export function landingPrompt(inputs: LandingInputs): string {
           .map((back) => `At ${back.head}:\n${back.needsToChange.map((item) => `- ${item}`).join("\n")}`)
           .join("\n\n")}`;
   const diff = inputs.diff.length <= DIFF_LIMIT ? inputs.diff : `${inputs.diff.slice(0, DIFF_LIMIT)}\n[…the diff is cut here; read the rest in the checkout]`;
+  if (inputs.issue === null) return visionOnlyPrompt(inputs, { name, vision, pins, precedents, sendBacks, diff });
+  const issueName = `${inputs.repo}#${inputs.issue.number}`;
 
   return `You are making the owner's landing call on ${name}, a pull request that closes ${issueName}.
 
@@ -349,6 +402,91 @@ ${diff.trim()}
 Now answer the owner's question for this PR: does it solve the issue's problem, meet its criteria and leave the product better?`;
 }
 
+/**
+ * The prompt for a PR with no cleared ticket behind it: no issue is linked,
+ * or the go on the one linked still waits for the owner. It asks the same
+ * question with no problem and no criteria to check: does the PR leave the
+ * product better, judged on the vision and the product alone? What the PR
+ * does is sorted the way a ticketed PR's extras are, and the same outputs and
+ * mechanical rules apply.
+ */
+function visionOnlyPrompt(
+  inputs: LandingInputs,
+  parts: { name: string; vision: string; pins: string; precedents: string; sendBacks: string; diff: string },
+): string {
+  const { name } = parts;
+  const linked =
+    inputs.linked === undefined || inputs.linked.length === 0
+      ? ""
+      : `\n\n## Issues it is linked to\n\nThe forge links this PR to these issues, none of them with a go that has acted, so none puts criteria behind it. Where one was closed as no, its reason stands unless the vision now says otherwise; where one waits on the owner, a PR that settles what the owner has yet to decide is the owner's call: ask.\n\n${inputs.linked
+          .map((one) => `- ${inputs.repo}#${one.number}: ${one.standing}`)
+          .join("\n")}`;
+  return `You are making the owner's landing call on ${name}, a pull request with no cleared ticket behind it: the forge links it to no issue whose go has acted, because it closes none or the go on the one it closes still waits for the owner. There is no issue and there are no criteria to check.
+
+The question is the owner's: does this PR leave the product better, judged on the vision and the product alone? If it does, it should be merged.
+
+Answer merge, send-back or ask.
+
+- **merge**: it leaves the product better, CI is green, and nothing it does is unwanted. It is merged at ${inputs.head} without the owner.
+- **send-back**: something must change before it can merge. Your list of what must change is posted on the PR for its author; entail never changes the PR itself.
+- **ask**: you cannot tell whether merging leaves the product better, or the PR makes a large or hard-to-undo change the owner has not approved. The owner gets one question.
+
+## How to judge
+
+Judge substance, not wording. Read the diff and, where it helps, the repo at the PR's head; the checkout you are in is that head. The PR's description is its author's account and proves nothing: CI results and changed files come from the forge, below, and whether the work is right comes from the code. With no ticket behind it, the vision is the owner's word on what better means: where it speaks it decides, and where it is silent judge the change on its merits.
+
+1. **Better.** Does the PR leave the product better? Answer it in \`solves\`: solved means it does. Say what shows it, quoting the vision lines it rests on.
+2. **The criteria.** There are none. Answer with an empty criteria list.
+3. **What the PR does.** List what the PR does that is worth the owner's notice, in \`beyond\`, and sort each against the vision:
+   - **needed**: it is the PR's own change and the vision or the product's plain good supports it, or it follows from that change: the job could not be done well without it. Tests, docs and build changes that go with the change are part of it.
+   - **harmless**: not needed, but it does not make the product worse and the owner would not mind: a small tidy-up, a clearer message, a refactor nearby.
+   - **unwanted**: it makes the product worse, goes against the vision, or is a change the owner would want to decide on first: an extra feature the vision does not support, an unrelated change to how something works, a change to a pinned topic, removing something users rely on.
+   Leave out what is too small to notice. When unsure between needed and harmless, either is fine: neither sends the PR back.
+4. **The call.** Merge when the PR leaves the product better, CI is green and nothing it does is unwanted. Send back when it leaves the product no better, CI is not green, or something it does is unwanted, and say exactly what must change. Only those send a PR back: never send back a PR for what is needed or harmless, or for style.
+
+Ask only when you cannot tell whether merging leaves the product better, or when the PR makes a large or hard-to-undo change: it removes or replaces something users rely on, changes stored data or a public interface others depend on, or changes the vision or a pinned topic. With no ticket behind it, no such change was approved.
+
+A send-back is a **product call** when what blocks the PR is a question for the owner, such as whether the product should do what the PR does at all, rather than work the PR has not done right. Then also ask the one question the owner must answer.
+
+Every call rests on the vision: name in \`rests_on\` each vision line it relies on, quoted exactly, or the past case it follows.
+
+The past cases below are landing calls the owner actually made, with their reasons. Where one is like this PR, follow it and name it.
+
+## The repo
+
+You are in a read-only checkout of ${inputs.repo} at ${inputs.head}, the PR's head. The diff below is against ${inputs.base}, the default branch it would merge into. This is a product call with an eye on whether the code does what it claims, not a style review.
+
+## The vision
+
+${parts.vision}
+
+## Pins
+
+${parts.pins}
+
+## Past landing cases
+
+${parts.precedents}${linked}
+
+## What the forge reports at ${inputs.head}
+
+${factsText(inputs.facts)}
+
+## The PR: ${name}, as its author describes it
+
+<pr>
+${inputs.pr.text.trim()}
+</pr>${parts.sendBacks}
+
+## The diff
+
+<diff>
+${parts.diff.trim()}
+</diff>
+
+Now answer the owner's question for this PR: does it leave the product better, judged on the vision and the product alone?`;
+}
+
 /** The forge's facts as the prompt states them. */
 export function factsText(facts: ForgeFacts): string {
   const checks =
@@ -366,7 +504,9 @@ export function factsText(facts: ForgeFacts): string {
 function landingPrecedent(past: LandingCase): string {
   const lines = [
     `### Case ${past.slug}: the owner's call was ${past.call}`,
-    `${past.repo} PR #${past.pr}, closing #${past.issue} ("${issueTitle(past.issueText)}"), decided ${past.date}. The owner's reason: ${past.reason}`,
+    past.issue === null
+      ? `${past.repo} PR #${past.pr}, with no cleared ticket behind it, decided ${past.date}. The owner's reason: ${past.reason}`
+      : `${past.repo} PR #${past.pr}, closing #${past.issue} ("${issueTitle(past.issueText)}"), decided ${past.date}. The owner's reason: ${past.reason}`,
   ];
   if (past.notes !== "") lines.push(past.notes);
   if (past.criteria.length > 0) lines.push(`The criteria it was judged against:\n${past.criteria.map((c) => `- ${c.criterion}`).join("\n")}`);
@@ -390,8 +530,8 @@ export async function judgeLanding(runner: ModelRunner, inputs: LandingInputs, o
       kind: LANDING_KIND,
       ticket: `${inputs.repo}#${inputs.pr.number}`,
       prompt: landingPrompt(inputs),
-      promptVersion: LANDING_PROMPT_VERSION,
-      schema: LANDING_SCHEMA,
+      promptVersion: landingPromptVersion(inputs.issue),
+      schema: inputs.issue === null ? VISION_ONLY_LANDING_SCHEMA : LANDING_SCHEMA,
       checkout: inputs.checkout,
       sha: inputs.head,
       model,
@@ -406,18 +546,18 @@ export async function judgeLanding(runner: ModelRunner, inputs: LandingInputs, o
 }
 
 /** A landing call as plain text, for the terminal. */
-export function formatLandingCall(call: LandingCall): string {
+export function formatLandingCall(call: LandingCall, ticketless = false): string {
   const lines = [`${call.call}: ${call.reason}`];
   if (call.guard !== null) lines.push(`  (the model said ${call.guard.from}; ${call.guard.rule === "ci" ? "CI is not green" : "only the owner lets this merge"}: ${call.guard.detail})`);
   for (const line of call.restsOn.visionLines) lines.push(`  rests on the vision: > ${line}`);
   for (const slug of call.restsOn.cases) lines.push(`  rests on case ${slug}`);
-  lines.push("", `Solves the problem: ${call.solves.solved ? "yes" : "no"}. ${call.solves.evidence}`);
+  lines.push("", `${ticketless ? "Leaves the product better" : "Solves the problem"}: ${call.solves.solved ? "yes" : "no"}. ${call.solves.evidence}`);
   if (call.criteria.length > 0) {
     lines.push("", "Criteria:");
     for (const check of call.criteria) lines.push(`  - [${check.met ? "met" : "UNMET"}] ${check.criterion}`, `      ${check.evidence}`);
   }
   if (call.beyond.length > 0) {
-    lines.push("", "Beyond the criteria:");
+    lines.push("", ticketless ? "What the PR does:" : "Beyond the criteria:");
     for (const item of call.beyond) lines.push(`  - [${item.sort}] ${item.change}`, `      ${item.why}`);
   }
   if (call.needsToChange.length > 0) {
