@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { ActionView, CallView, FailingView, HeldView, LogFilter, LogPage, LogRow, PullRequestView, RepoView, TrailStep, WaitingResponse } from "./api-types.ts";
+import type { ActionView, CallView, FailingView, HeldView, LogFilter, LogPage, LogRow, PullRequestView, RepoView, StalledView, TrailStep, WaitingResponse } from "./api-types.ts";
 import { caseSlug, LANDING_CALLS, landingCaseSlug, OWNER_CALLS, type Case, type LandingCase, type LandingOwnerCall, type OwnerCall } from "./case-book.ts";
 import { ciGreen } from "./landing.ts";
 import { EFFORTS, type Effort } from "./model-runner.ts";
@@ -15,6 +15,7 @@ import {
   landingStatuses,
   latestCalls,
   latestLandings,
+  stalledLandings,
   loggedRepos,
   readLog,
   repoState,
@@ -161,6 +162,13 @@ export interface RepoViewOptions {
   failing?: (repo: string) => FailingView | null;
 }
 
+export function stalledViews(entries: readonly Entry[]): StalledView[] {
+  return stalledLandings(entries).map((stalled) => ({
+    ...stalled,
+    line: `PR #${stalled.pr} judged ${stalled.attempts} times without an answer: ${stalled.reason}; judged again on the next push`,
+  }));
+}
+
 export function repoViews(dataDirectory: string, settings: GlobalSettings, options: RepoViewOptions = {}): RepoView[] {
   return loggedRepos(dataDirectory).flatMap((repo) => {
     const entries = readLog(dataDirectory, repo);
@@ -185,6 +193,7 @@ export function repoViews(dataDirectory: string, settings: GlobalSettings, optio
         pins: { file, topics: readPinsNow(file) },
         checkedAt: options.checkedAt?.(repo) ?? null,
         failing: options.failing?.(repo) ?? null,
+        stalled: stalledViews(entries),
         backlogAsked: entries.some((entry) => entry.type === "backlog" && entry.at >= (state.since ?? "")),
       },
     ];

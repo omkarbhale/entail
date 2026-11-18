@@ -719,7 +719,6 @@ async function judgePullRequest(
     );
     if (!judgment.ok) {
       options.log?.warn("landing-failed", { repo, pr: pr.number, failure: judgment.failure.kind, message: judgment.failure.message });
-      context.failure = failureAt(options, `judging PR #${pr.number}`, `${judgment.failure.kind}: ${judgment.failure.message}`, judgment.failure.resetAt);
       options.print(`${name}: the landing judgment gave no call (${judgment.failure.kind}): ${judgment.failure.message}; it is tried again next pass, up to ${JUDGMENT_ATTEMPTS} times at this head`);
       return { failed: `${judgment.failure.kind}: ${judgment.failure.message}` };
     }

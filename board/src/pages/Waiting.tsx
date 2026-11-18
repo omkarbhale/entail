@@ -244,18 +244,28 @@ function Card(props: {
   );
 }
 
-/** One line while any enrolled repo's checks are failing: entail makes no calls there until they work again. */
+/** Lines while any enrolled repo's checks are failing (entail makes no calls there) or a PR's landing is stalled. */
 function FailingNote({ repos, now }: { repos: readonly RepoView[]; now: number }) {
   const failing = repos.filter((repo) => repo.failing !== null);
-  if (failing.length === 0) return null;
-  const first = failing[0]!;
+  const stalled = repos.flatMap((repo) => repo.stalled.map((item) => ({ repo: repo.repo, line: item.line })));
+  if (failing.length === 0 && stalled.length === 0) return null;
+  const first = failing[0];
   return (
-    <p className="err" role="alert">
-      {failing.length === 1
-        ? `entail is making no calls on ${first.repo}: failing since ${ago(first.failing!.since, now)}: ${first.failing!.reason}`
-        : `entail is making no calls on ${failing.length} repos: ${failing.map((repo) => repo.repo).join(", ")} are failing.`}{" "}
-      <a href="#/repos">Repos</a>
-    </p>
+    <>
+      {first !== undefined && (
+        <p className="err" role="alert">
+          {failing.length === 1
+            ? `entail is making no calls on ${first.repo}: failing since ${ago(first.failing!.since, now)}: ${first.failing!.reason}`
+            : `entail is making no calls on ${failing.length} repos: ${failing.map((repo) => repo.repo).join(", ")} are failing.`}{" "}
+          <a href="#/repos">Repos</a>
+        </p>
+      )}
+      {stalled.map((item) => (
+        <p key={`${item.repo}-${item.line}`} className="err" role="alert">
+          {item.repo} stalled: {item.line} <a href="#/repos">Repos</a>
+        </p>
+      ))}
+    </>
   );
 }
 

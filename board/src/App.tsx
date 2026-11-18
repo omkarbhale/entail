@@ -178,8 +178,8 @@ function Sync({ live }: { live: LiveState }) {
   } else {
     const repos = `watching ${status.data.repos} repo${status.data.repos === 1 ? "" : "s"}`;
     text = status.data.checking ? `${repos} · checking…` : status.data.checkedAt ? `${repos} · checked ${ago(status.data.checkedAt, now)}` : repos;
-    if (status.data.failing.length > 0) {
-      text = `${text} · ${status.data.failing.length} failing`;
+    if (status.data.failing.length + status.data.stalled.length > 0) {
+      text = `${text} · ${status.data.failing.length > 0 ? `${status.data.failing.length} failing` : `${status.data.stalled.length} stalled`}`;
       tone = "off";
     }
     if (live === "connecting") {

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CallView } from "./api-types.ts";
+import type { CallView, StalledView } from "./api-types.ts";
 import { FAILING_NOTICE_AFTER_MS, failureReason, type Failing } from "./health.ts";
 import { cmdArguments } from "./windows.ts";
 
@@ -138,6 +138,31 @@ export class Notifier {
     return sent;
   }
 
+  /**
+   * Tells the owner once for each PR head whose landing stalled. Each is
+   * remembered in `notices.json` once the command delivered it, so a restart
+   * does not tell it again and a head that was not told is tried again.
+   */
+  async stalled(items: readonly { repo: string; stalled: Pick<StalledView, "pr" | "head" | "line"> }[]): Promise<string[]> {
+    const state = this.#read();
+    const told = new Set(state.stalled);
+    const command = this.#options.command();
+    const sent: string[] = [];
+    const keys = items.map(({ repo, stalled }) => `${repo}#${stalled.pr}#${stalled.head}`);
+    const kept = new Set(keys.filter((key) => told.has(key)));
+    for (const [index, { repo, stalled }] of items.entries()) {
+      if (kept.has(keys[index]!) || command === null) continue;
+      const line = `entail: ${repo} stalled: ${stalled.line}`;
+      const result = await (this.#options.send ?? sendNotice)(command, line, this.#options.link);
+      this.#options.onResult?.({ ...result, line });
+      if (!result.ok) continue;
+      sent.push(line);
+      kept.add(keys[index]!);
+    }
+    this.#write({ ...this.#read(), stalled: [...kept].sort() });
+    return sent;
+  }
+
   async check(items: readonly (Pick<CallView, "call" | "repo" | "kind"> & { issue: { number: number } })[]): Promise<{ sent: boolean; line: string | null }> {
     const keys = items.map((item) => `${item.repo}#${item.kind}#${item.issue.number}`);
     const told = new Set(this.#read().waiting);
@@ -158,7 +183,7 @@ export class Notifier {
     this.#write({ ...this.#read(), waiting: [...keys] });
   }
 
-  #read(): { waiting: string[]; failing: string[] } {
+  #read(): { waiting: string[]; failing: string[]; stalled: string[] } {
     let value: unknown = null;
     try {
       value = JSON.parse(readFileSync(join(this.#options.dataDirectory, NOTICES_FILE), "utf8"));
@@ -169,10 +194,10 @@ export class Notifier {
       const list = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
       return Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
     };
-    return { waiting: strings("waiting"), failing: strings("failing") };
+    return { waiting: strings("waiting"), failing: strings("failing"), stalled: strings("stalled") };
   }
 
-  #write(told: { waiting: string[]; failing: string[] }): void {
+  #write(told: { waiting: string[]; failing: string[]; stalled: string[] }): void {
     const path = join(this.#options.dataDirectory, NOTICES_FILE);
     const staging = `${path}.new-${process.pid}`;
     writeFileSync(staging, `${JSON.stringify(told, null, 2)}\n`, { mode: 0o600 });

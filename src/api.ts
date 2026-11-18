@@ -22,6 +22,7 @@ import {
   OwnerError,
   repoName,
   repoViews,
+  stalledViews,
   type RepoViewOptions,
   undoAction,
   unenroll,
@@ -287,6 +288,7 @@ function status(options: ApiOptions): StatusView {
       const failing = failingOf(health, repo);
       return failing === null ? [] : [{ repo, failing }];
     }),
+    stalled: repos.flatMap((repo) => stalledViews(readLog(options.dataDirectory, repo)).map((stalled) => ({ repo, stalled }))),
     checkedAt: options.loop?.lastPassAt ?? null,
     checking: options.loop?.checking ?? false,
     url: options.url ?? null,

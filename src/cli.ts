@@ -423,6 +423,7 @@ async function runCommand(args: string[]): Promise<number> {
       afterPass: async () => {
         await notifier.check(waitingItems(dataDirectory, await caseBook(dataDirectory)));
         await notifier.health(health.repos(), new Date());
+        await notifier.stalled(repoViews(dataDirectory, settingsIn(dataDirectory)).flatMap((view) => view.stalled.map((stalled) => ({ repo: view.repo, stalled }))));
       },
       onError: (error) => {
         log.error("pass-error", { error: error instanceof Error ? error.message : String(error) });
@@ -559,6 +560,7 @@ async function statusCommand(args: string[]): Promise<number> {
       `${repo.repo.padEnd(width)}  confirm ${repo.confirm ? "on " : "off"}  ${checked === null ? (running === null ? "not checked: entail is not running" : "not checked yet") : `checked ${ago(checked, now)}`}${failing === null ? "" : `, failing since ${ago(failing.since, now)}: ${failing.reason}`}  ${repo.waiting} waiting`,
     );
   }
+  for (const repo of repos) for (const stalled of repo.stalled) console.log(`${repo.repo.padEnd(width)}  stalled: ${stalled.line}`);
   const waiting = waitingItems(dataDirectory, await caseBook(dataDirectory));
   const questions = waiting.filter((item) => item.call === "ask").length;
   console.log(

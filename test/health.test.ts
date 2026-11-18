@@ -6,7 +6,8 @@ import { createApi } from "../src/api.ts";
 import { FAILING_NOTICE_AFTER_MS, Health } from "../src/health.ts";
 import { JUDGMENT_KIND } from "../src/judgment.ts";
 import { Notifier, type NoticeResult } from "../src/notices.ts";
-import { harness, REPO, verdict, type Harness } from "./watch-fixture.ts";
+import { repoViews } from "../src/owner.ts";
+import { harness, landingAnswer, OWNER, REPO, verdict, type Harness } from "./watch-fixture.ts";
 
 /**
  * A running copy in miniature: each pass feeds the health of each repo it
@@ -32,6 +33,7 @@ function running(t: TestContext, h: Harness = harness(t)) {
     const now = () => new Date(clock);
     await h.pass({ now, onChecked: (repo, outcome) => health.checked(repo, outcome.failure, now().toISOString()) });
     await current.health(health.repos(), now());
+    await current.stalled(repoViews(h.dataDirectory, { owner: OWNER, model: "m", effort: "low" }).flatMap((view) => view.stalled.map((stalled) => ({ repo: view.repo, stalled }))));
   };
   return {
     h,
@@ -131,4 +133,37 @@ test("the API says which repos are failing, since when and why, until one works 
 
   health.checked(REPO, undefined, new Date().toISOString());
   assert.deepEqual(((await (await fetch(`${base}/api/status`)).json()) as { failing: unknown[] }).failing, []);
+});
+
+test("a landing judgment that gives no call three times at one head is stalled: told once, neither failing nor recovered, and shown in the views", async (t) => {
+  const r = running(t, harness(t, { confirm: false }));
+  r.h.forge.file(1, "Read standard input", "tally only reads files.");
+  r.h.script(1, verdict({ criteria: [{ source: "reading", criterion: "Words from standard input count.", basis: "One total." }] }));
+  await r.pass();
+  const head = "1".repeat(40);
+  r.h.forge.openPull(4, "Read standard input", { head, closes: [1] });
+  r.h.forge.report(head, ["test", "passed"]);
+  r.h.scriptLanding(4, "fail", "fail", "fail", landingAnswer());
+  for (let n = 0; n < 6; n++) {
+    await r.pass();
+    r.advance(FAILING_NOTICE_AFTER_MS);
+  }
+  assert.equal(r.h.runner.requests.filter((request) => request.kind === "pr-call").length, 3);
+  assert.equal(r.health.failing(REPO), null);
+  assert.equal(r.sent.length, 1);
+  assert.match(r.sent[0]!, new RegExp(`^entail: ${REPO} stalled: PR #4 judged 3 times without an answer: .+; judged again on the next push$`, "u"));
+
+  const [view] = repoViews(r.h.dataDirectory, { owner: OWNER, model: "m", effort: "low" });
+  assert.equal(view!.stalled.length, 1);
+  assert.equal(view!.stalled[0]!.attempts, 3);
+  assert.equal(`entail: ${REPO} stalled: ${view!.stalled[0]!.line}`, r.sent[0]);
+
+  r.restart();
+  await r.pass();
+  assert.equal(r.sent.length, 1, "a restart does not tell it again");
+
+  r.h.forge.editPull(4, { headSha: "2".repeat(40) });
+  r.h.forge.report("2".repeat(40), ["test", "passed"]);
+  await r.pass();
+  assert.deepEqual(repoViews(r.h.dataDirectory, { owner: OWNER, model: "m", effort: "low" })[0]!.stalled, []);
 });

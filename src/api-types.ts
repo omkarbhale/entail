@@ -221,6 +221,8 @@ export interface RepoView {
   checkedAt: string | null;
   /** While its last check failed and none has succeeded since: since when, and why. */
   failing: FailingView | null;
+  /** The PRs whose landing judgment gave no call every time it was tried at their head; a new push is judged again. */
+  stalled: StalledView[];
   /** Whether the owner already asked for the open backlog to be judged. */
   backlogAsked: boolean;
 }
@@ -236,6 +238,16 @@ export interface FailingView {
   resetAt: string | null;
   /** The last failure on one line, for the owner to read. */
   reason: string;
+}
+
+/** A PR entail stopped judging at its head after repeated judgments without an answer. */
+export interface StalledView {
+  pr: number;
+  head: string;
+  attempts: number;
+  reason: string;
+  /** For the owner to read: "PR #124 judged 3 times without an answer: <reason>; judged again on the next push". */
+  line: string;
 }
 
 export interface SettingsView {
@@ -255,6 +267,8 @@ export interface StatusView {
   checking: boolean;
   /** The enrolled repos whose checks are failing now, with why. */
   failing: { repo: string; failing: FailingView }[];
+  /** The stalled PRs of the enrolled repos. */
+  stalled: { repo: string; stalled: StalledView }[];
   /** Where the board is served, for notices. */
   url: string | null;
 }
