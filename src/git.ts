@@ -37,6 +37,8 @@ export interface GitRunOptions {
   okExitCodes?: number[];
   /** Ends the command with SIGTERM after this long, for one that may wait on the network. */
   timeoutMs?: number;
+  /** The directory the command runs in; the process's own by default. */
+  cwd?: string;
 }
 
 export interface GitResult {
@@ -97,6 +99,14 @@ export class Git {
   }
 }
 
+/**
+ * Runs `git <args>` outside any one repository, as `git clone` is, with the
+ * same environment and output settings as {@link Git.run}.
+ */
+export function runGitCommand(args: string[], options: GitRunOptions = {}): Promise<GitResult> {
+  return runGit([...STABLE_OUTPUT_CONFIG.flatMap((setting) => ["-c", setting]), ...args], args, options);
+}
+
 function runGit(fullArgs: string[], shownArgs: string[], options: GitRunOptions): Promise<GitResult> {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const name of REPOSITORY_ENV_VARS) delete env[name];
@@ -104,7 +114,7 @@ function runGit(fullArgs: string[], shownArgs: string[], options: GitRunOptions)
   const okExitCodes = [0, ...(options.okExitCodes ?? [])];
 
   return new Promise((resolve, reject) => {
-    const child = spawn("git", fullArgs, { env, stdio: ["ignore", "pipe", "pipe"], timeout: options.timeoutMs });
+    const child = spawn("git", fullArgs, { env, stdio: ["ignore", "pipe", "pipe"], timeout: options.timeoutMs, cwd: options.cwd });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));

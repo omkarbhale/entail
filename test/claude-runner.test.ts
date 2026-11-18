@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { claudeArguments, ClaudeRunner, usageLimit } from "../src/claude-runner.ts";
 import { DEFAULT_MODEL, type ModelRunRequest } from "../src/model-runner.ts";
@@ -47,7 +47,7 @@ type Behaviour =
 function fakeClaude(
   t: TestContext,
   behaviour: Behaviour,
-): { command: string; pid: () => number; invocation: () => { argv: string[]; cwd: string; stdin: string }; signals: () => string[] } {
+): { command: string; pid: () => number; invocation: () => { argv: string[]; cwd: string; stdin: string; ceiling?: string }; signals: () => string[] } {
   const dir = temporary(t, "entail-fake-claude-");
   const command = join(dir, "claude");
   const script = process.platform === "win32" ? join(dir, "claude.cjs") : command;
@@ -70,7 +70,7 @@ let stdin = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { stdin += chunk; });
 process.stdin.on("end", () => {
-  fs.writeFileSync(${JSON.stringify(invocationFile)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), stdin }));
+  fs.writeFileSync(${JSON.stringify(invocationFile)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), stdin, ceiling: process.env.GIT_CEILING_DIRECTORIES }));
   if (behaviour.print) {
     const { stdout = "", stderr = "", code = 0 } = behaviour.print;
     process.stderr.write(stderr);
@@ -85,7 +85,7 @@ process.stdin.on("end", () => {
   return {
     command,
     pid: () => Number(readFileSync(pidFile, "utf8")),
-    invocation: () => JSON.parse(readFileSync(invocationFile, "utf8")) as { argv: string[]; cwd: string; stdin: string },
+    invocation: () => JSON.parse(readFileSync(invocationFile, "utf8")) as { argv: string[]; cwd: string; stdin: string; ceiling?: string },
     signals: () => (existsSync(signalsFile) ? readFileSync(signalsFile, "utf8").split("\n").filter((line) => line !== "") : []),
   };
 }
@@ -168,6 +168,7 @@ test("a run in the checkout returns the structured output with its facts", async
   });
   const invocation = fake.invocation();
   assert.equal(realpathSync(invocation.cwd), realpathSync(at.path), "the run reads the checkout");
+  assert.equal(invocation.ceiling, dirname(at.path), "git run for the model never looks above the checkout, into the data directory");
   assert.equal(invocation.stdin, "Judge the ticket.", "the prompt goes on stdin");
   assert.deepEqual(invocation.argv, claudeArguments(request(at)));
 });

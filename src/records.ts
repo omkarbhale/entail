@@ -513,7 +513,7 @@ function safeReaddir(directory: string): string[] {
 
 export const SETTINGS_FILE = "settings.json";
 
-/** Settings for every repo: the owner's name on comments, the model and effort a repo uses unless it names its own, and where notices go. */
+/** Settings for every repo: the owner's name on comments, the model and effort a repo uses unless it names its own, where notices go, and where the records are backed up. */
 export interface GlobalSettings {
   /** The owner's display name, as comments name them; the username the forge CLI is logged in as when unset. */
   owner: string | null;
@@ -530,6 +530,11 @@ export interface GlobalSettings {
    * standard input; null starts nothing. See `src/starts.ts`.
    */
   start?: string | null;
+  /**
+   * The git remote entail backs its records up to after each pass; null backs
+   * nothing up. See `src/backup.ts`.
+   */
+  backup?: string | null;
 }
 
 export function readSettings(dataDirectory: string, defaults: { model: string }): GlobalSettings {
@@ -546,6 +551,7 @@ export function readSettings(dataDirectory: string, defaults: { model: string })
     effort: (EFFORTS as readonly unknown[]).includes(parsed.effort) ? (parsed.effort as Effort) : DEFAULT_EFFORT,
     notice: typeof parsed.notice === "string" && parsed.notice.trim() !== "" ? parsed.notice : null,
     start: typeof parsed.start === "string" && parsed.start.trim() !== "" ? parsed.start : null,
+    backup: typeof parsed.backup === "string" && parsed.backup.trim() !== "" ? parsed.backup : null,
   };
 }
 

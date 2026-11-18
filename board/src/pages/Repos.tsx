@@ -433,8 +433,10 @@ function checkText(outcome: { ok: true; result: CheckResponse } | { ok: false; e
   return `Checked just now: ${parts.join(", ")}.`;
 }
 
-/** The notice and start commands as set, read only; they are changed from the command line. */
+/** The notice and start commands and the backup remote as set, read only; they are changed from the command line. */
 function Notices({ settings }: { settings: SettingsView }) {
+  const now = useNow();
+  const { backup } = settings;
   const [name, setName] = useState(settings.owner ?? "");
   useEffect(() => setName(settings.owner ?? ""), [settings.owner]);
   const owner = useSave((value: string) => api.changeSettings({ owner: value }));
@@ -454,6 +456,18 @@ function Notices({ settings }: { settings: SettingsView }) {
         <b>Starting work.</b> When a go acts (at once, or once you confirm it), entail runs a command with the issue, the reason and the criteria as JSON on its standard input, once per issue. Now: <code id="start-command">{settings.start ?? "none"}</code>
         <p className="hint">
           Change it from the command line: <code>entail settings --start '&lt;command&gt;'</code> (or <code>--start none</code>), e.g. <code>examples/start-to-file.sh</code> in entail’s checkout.
+        </p>
+      </div>
+      <div className="setting">
+        <b>Backup.</b> After each pass entail commits its log, your case book, the settings and the pins, and pushes them to a git remote with your own git. Now: <code id="backup-remote">{backup.remote ?? "none"}</code>
+        {backup.remote !== null && backup.problem === null && <span className="muted">{backup.pushedAt === null ? " · no push yet" : ` · last pushed ${ago(backup.pushedAt, now)}`}</span>}
+        {backup.problem !== null && (
+          <p className="small bad note" role="status">
+            Backup {backup.problem.kind === "stuck" ? "stuck" : "failing"} since {ago(backup.problem.since, now)}: {backup.problem.reason}.
+          </p>
+        )}
+        <p className="hint">
+          Change it from the command line: <code>entail settings --backup &lt;git remote url&gt;</code> (or <code>--backup none</code>). A new machine restores from it with <code>entail restore &lt;git remote url&gt;</code>.
         </p>
       </div>
       <form onSubmit={saveName} className="setting">

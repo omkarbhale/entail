@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import { resolveDataDirectory } from "../src/data-directory.ts";
 import { Health } from "../src/health.ts";
 import { LOCK_FILE } from "../src/lock.ts";
 import { appendEntry } from "../src/records.ts";
+import { git, tempDirectory } from "./git-fixture.ts";
 
 test("an issue reference is owner/repo#number, or gitlab:group/repo#number", () => {
   assert.deepEqual(parseIssueReference("omkarbhale/entail#179"), { path: "omkarbhale/entail", number: 179 });
@@ -138,13 +139,47 @@ function scratchHome(t: TestContext): { dataDirectory: string; out: string[] } {
 test("the start command is set and cleared from the command line, for every repo only", async (t) => {
   const { out } = scratchHome(t);
   assert.equal(await main(["settings", "--start", "examples/start-to-file.sh"]), 0);
-  assert.match(out.pop()!, /\nstart work with: examples\/start-to-file\.sh$/u);
+  assert.match(out.pop()!, /\nstart work with: examples\/start-to-file\.sh\nbackup: none$/u);
   assert.equal(await main(["settings"]), 0);
-  assert.match(out.pop()!, /\nnotices: none\nstart work with: examples\/start-to-file\.sh$/u);
+  assert.match(out.pop()!, /\nnotices: none\nstart work with: examples\/start-to-file\.sh\nbackup: none$/u);
   assert.equal(await main(["settings", "--start", "none"]), 0);
-  assert.match(out.pop()!, /\nstart work with: none$/u);
+  assert.match(out.pop()!, /\nstart work with: none\nbackup: none$/u);
   assert.equal(await main(["settings", "acme/tally", "--start", "x"]), 2);
-  assert.match(out.pop()!, /--owner, --notice and --start are settings for every repo/u);
+  assert.match(out.pop()!, /--owner, --notice, --start and --backup are settings for every repo/u);
+});
+
+test("the backup remote is set from the command line, pushes at once, reports how it went, and restores on a fresh install", async (t) => {
+  const { dataDirectory, out } = scratchHome(t);
+  appendEntry(dataDirectory, "acme/tally", { type: "enrolled", by: "Omkar", since: "2026-11-12T09:00:00.000Z", confirm: true });
+  const remote = join(tempDirectory(t, "cli-backup"), "records.git");
+  git(tempDirectory(t, "cli-backup-cwd"), "init", "--quiet", "--bare", remote);
+
+  assert.equal(await main(["backup", "status"]), 0);
+  assert.match(out.pop()!, /^Backup: none/u);
+  assert.equal(await main(["settings", "--backup=--upload-pack=x"]), 2);
+  assert.match(out.pop()!, /--backup is a git remote URL, or none/u);
+
+  assert.equal(await main(["settings", "--backup", remote]), 0);
+  assert.match(out.pop()!, /^Backed up the records to .*records\.git \([0-9a-f]{12}\)\.$/u);
+  assert.match(out.pop()!, new RegExp(`\\nbackup: ${remote.replace(/[\\^$.*+?()[\]{}|]/gu, "\\$&")}$`, "u"));
+  assert.match(git(remote, "show", "main:log/github.com/acme/tally.jsonl"), /"enrolled"/u);
+  assert.match(git(remote, "show", "main:settings.json"), /"backup"/u);
+  assert.equal(await main(["backup", "status"]), 0);
+  assert.match(out.pop()!, /^Backup: .*records\.git, last took a push \d+ s ago\.$/u);
+
+  // A fresh install elsewhere: an empty data directory restored from the remote.
+  const { dataDirectory: fresh, out: freshOut } = scratchHome(t);
+  assert.equal(await main(["restore", remote]), 0);
+  const printed = freshOut.join("\n");
+  assert.match(printed, /Restored entail's records from .*records\.git into /u);
+  assert.match(printed, /the log of 1 repo, 1 entry: acme\/tally \(1\)/u);
+  assert.match(printed, /The restored settings back up to .*records\.git: once entail runs here it pushes there/u);
+  assert.equal(readFileSync(join(fresh, "log", "github.com", "acme", "tally.jsonl"), "utf8"), readFileSync(join(dataDirectory, "log", "github.com", "acme", "tally.jsonl"), "utf8"));
+  assert.equal(await main(["restore", remote]), 1);
+  assert.match(freshOut.pop()!, /is not empty .*entail restores only into an empty data directory/u);
+
+  assert.equal(await main(["settings", "--backup", "none"]), 0);
+  assert.match(freshOut.pop()!, /\nbackup: none$/u);
 });
 
 test("status says entail is not running, lists each enrolled repo with its confirm mode, and what waits", async (t) => {
@@ -173,7 +208,7 @@ test("status says entail is not running, lists each enrolled repo with its confi
   assert.match(screen, /^entail is not running\. Start it with: entail service install \(or entail run\)\.\nThe board is at http:\/\/127\.0\.0\.1:4999\/ while it runs\./u);
   assert.match(screen, /\nacme\/tally {2}confirm on {3}not checked: entail is not running {2}1 waiting\n/u);
   assert.match(screen, /\nacme\/wordy {2}confirm off {2}not checked: entail is not running {2}0 waiting\n/u);
-  assert.match(screen, /\nWaiting on you: 1 question\.\nNotices: none\. Start work with: none\.$/u);
+  assert.match(screen, /\nWaiting on you: 1 question\.\nNotices: none\. Start work with: none\.\nBackup: none \(entail settings --backup <git remote url> turns it on\)\.$/u);
 });
 
 test("status reads when each repo was last checked from the running copy's board", async (t) => {
