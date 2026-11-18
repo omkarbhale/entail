@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type {
   ActionView,
+  BlockedView,
   CallView,
   FailingView,
   HeldView,
@@ -16,6 +17,7 @@ import type {
   WaitingResponse,
 } from "./api-types.ts";
 import { caseSlug, LANDING_CALLS, landingCaseSlug, OWNER_CALLS, type Case, type LandingCase, type LandingOwnerCall, type OwnerCall } from "./case-book.ts";
+import { refsText, refText } from "./blockers.ts";
 import { ciGreen } from "./landing.ts";
 import { EFFORTS, type Effort } from "./model-runner.ts";
 import { parsePins, pinsFile } from "./pins.ts";
@@ -25,6 +27,7 @@ import {
   criteriaOf,
   heldActions,
   isOwnerAction,
+  heldIssues,
   labelProblem,
   landingStatuses,
   latestCalls,
@@ -223,6 +226,13 @@ export function stalledViews(entries: readonly Entry[]): StalledView[] {
   }));
 }
 
+/** The issues entail holds back in a repo, each on its open blockers. */
+export function blockedViews(repo: string, entries: readonly Entry[]): BlockedView[] {
+  return [...heldIssues(entries).values()]
+    .sort((a, b) => a.issue.number - b.issue.number)
+    .map((hold) => ({ issue: hold.issue.number, url: hold.issue.url, title: hold.issue.title, blockers: hold.blockers.map((ref) => refText(ref, repo)), since: hold.at }));
+}
+
 export function repoViews(dataDirectory: string, settings: GlobalSettings, options: RepoViewOptions = {}): RepoView[] {
   return loggedRepos(dataDirectory).flatMap((repo) => {
     const entries = readLog(dataDirectory, repo);
@@ -248,6 +258,7 @@ export function repoViews(dataDirectory: string, settings: GlobalSettings, optio
         checkedAt: options.checkedAt?.(repo) ?? null,
         failing: options.failing?.(repo) ?? null,
         stalled: stalledViews(entries),
+        blocked: blockedViews(repo, entries),
         backlogAsked: entries.some((entry) => entry.type === "backlog" && entry.at >= (state.since ?? "")),
         cannotLabel: labelProblem(entries),
         suggesting: suggestingView(entries, options.suggesting?.(repo) ?? null),
@@ -598,6 +609,14 @@ function logRow(repo: string, entry: CallEntry, statuses: Map<number, CallStatus
   const call = callView(repo, entry, statuses.get(entry.id)!, entries, book);
   const trail: TrailStep[] = [{ at: entry.at, text: `Judged: ${entry.call.call}${TRIGGER_WORDS[entry.trigger]} · ${entry.model}, ${entry.effort}` }];
   const actedFor = (id: number) => entries.find((other) => other.type === "acted" && other.for === id);
+  // The holds that kept this issue waiting on its blockers before this call: those since its previous call.
+  const index = entries.indexOf(entry);
+  const previous = entries.findLastIndex((other, at) => at < index && other.type === "call" && other.issue.number === entry.issue.number);
+  for (const hold of entries.slice(previous + 1, index)) {
+    if (hold.type !== "blocked" || hold.issue.number !== entry.issue.number) continue;
+    const note = actedFor(hold.id);
+    trail.push({ at: hold.at, text: `Held: blocked by ${refsText(hold.blockers, repo)}${note?.type === "acted" ? "; posted a note on the issue" : ""}`, ...(note?.type === "acted" ? { url: note.comment.url } : {}) });
+  }
   const posted = actedFor(entry.id);
   if (posted?.type === "acted") {
     trail.push({ at: posted.at, text: entry.call.call === "ask" ? "Posted a note on the issue that a question is waiting on the board" : posted.closed ? "Posted the call on the issue and closed it" : "Posted the call on the issue", url: posted.comment.url });
@@ -701,7 +720,9 @@ export type LogItem =
   /** A suggestion run the owner asked for: what it suggested and left out, or why it gave nothing. */
   | { kind: "suggestion"; repo: string; at: string; run: SuggestionRunView }
   /** One suggestion filed as an issue. */
-  | { kind: "suggestion-filed"; repo: string; at: string; for: number; index: number; issue: { number: number; url: string }; already: boolean };
+  | { kind: "suggestion-filed"; repo: string; at: string; for: number; index: number; issue: { number: number; url: string }; already: boolean }
+  /** entail held an issue on its open blockers, or let a held issue go when it closed. */
+  | { kind: "held"; repo: string; at: string; entry: Extract<Entry, { type: "blocked" | "unblocked" }> };
 
 /**
  * The log of one repo, or of every repo, oldest first: each repo's in the
@@ -758,6 +779,10 @@ export function logItems(dataDirectory: string, book: readonly Case[], repoFilte
         case "unfollowed":
         case "landing-failed":
           items.push({ kind: "pr", repo, at: entry.at, entry });
+          break;
+        case "blocked":
+        case "unblocked":
+          items.push({ kind: "held", repo, at: entry.at, entry });
           break;
         default:
           items.push({ kind: "repo", repo, at: entry.at, entry });
@@ -1126,6 +1151,12 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
       case "suggestion-filed":
         lines.push(`${at}  ${where(item.issue.number)}  ${item.already ? "found already filed" : "filed"} suggestion ${item.index + 1} of run ${item.for}: ${item.issue.url}`);
         break;
+      case "held": {
+        const { entry } = item;
+        if (entry.type === "blocked") lines.push(`${at}  ${where(entry.issue.number)}  HELD: ${entry.issue.title}`, `      blocked by ${refsText(entry.blockers, item.repo)}, still open; no call until none is${entry.forgeLinks ? "" : " (only the issue's text was checked: the forge's blocked-by links could not be read)"} · hold ${entry.id}`);
+        else lines.push(`${at}  ${where(entry.issue)}  no longer held: the issue was closed`);
+        break;
+      }
       case "repo": {
         const { entry } = item;
         if (entry.type === "enrolled") lines.push(`${at}  ${where(null) || item.repo}  enrolled by ${entry.by}, judging issues filed from ${entry.since.slice(0, 16).replace("T", " ")}, confirm mode ${entry.confirm ? "on" : "off"}`);

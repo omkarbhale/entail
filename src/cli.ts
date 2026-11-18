@@ -633,11 +633,15 @@ async function statusCommand(args: string[]): Promise<number> {
     const checked = live?.checkedAt.get(repo.repo) ?? null;
     const failing = live?.failing.get(repo.repo) ?? null;
     console.log(
-      `${repo.repo.padEnd(width)}  confirm ${repo.confirm ? "on " : "off"}  ${checked === null ? (running === null ? "not checked: entail is not running" : "not checked yet") : `checked ${ago(checked, now)}`}${failing === null ? "" : `, failing since ${ago(failing.since, now)}: ${failing.reason}`}  ${repo.waiting} waiting`,
+      `${repo.repo.padEnd(width)}  confirm ${repo.confirm ? "on " : "off"}  ${checked === null ? (running === null ? "not checked: entail is not running" : "not checked yet") : `checked ${ago(checked, now)}`}${failing === null ? "" : `, failing since ${ago(failing.since, now)}: ${failing.reason}`}  ${repo.waiting} waiting${repo.blocked.length > 0 ? `, ${repo.blocked.length} held` : ""}`,
     );
     if (repo.cannotLabel !== null) console.log(`${" ".repeat(width)}  entail cannot label issues here: ${repo.cannotLabel}. Calls still post and close.`);
   }
   for (const repo of repos) for (const stalled of repo.stalled) console.log(`${repo.repo.padEnd(width)}  stalled: ${stalled.line}`);
+  for (const repo of repos) {
+    if (repo.blocked.length === 0) continue;
+    console.log(`${repo.repo.padEnd(width)}  ${repo.blocked.length} held on open blockers: ${repo.blocked.map((held) => `#${held.issue} (blocked by ${held.blockers.join(", ")})`).join("; ")}`);
+  }
   const waiting = waitingItems(dataDirectory, await caseBook(dataDirectory));
   const questions = waiting.filter((item) => item.call === "ask").length;
   console.log(

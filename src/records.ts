@@ -6,6 +6,7 @@ import type { Criterion, IssueCall } from "./judgment.ts";
 import type { LandingCall } from "./landing.ts";
 import { DEFAULT_EFFORT, EFFORTS, type Effort } from "./model-runner.ts";
 import { forgeHost, GITLAB_PREFIX, repoSetting } from "./repo-ref.ts";
+import type { IssueRef } from "./forge/forge.ts";
 import type { Handoff } from "./starts.ts";
 
 /**
@@ -106,6 +107,35 @@ export interface CallEntry extends EntryBase {
   effort: Effort;
   promptVersion: string;
   costUsd: number | null;
+}
+
+/**
+ * entail held an issue back with no call: an issue it names as a blocker, in
+ * its text or by the forge's links, is still open. Nothing is judged and no
+ * work starts on it until none is; the issue's latest hold stands until a
+ * call on it or an `unblocked` entry. entail posts one comment and the
+ * `entail:blocked` label for each hold.
+ */
+export interface BlockedEntry extends EntryBase {
+  type: "blocked";
+  issue: { number: number; title: string; url: string; author: string; createdAt: string };
+  /** What made entail weigh the issue: the trigger its call carries once no blocker is open. */
+  trigger: Trigger;
+  /** The `/entail` comments the hold answers, carried to the call made once no blocker is open. */
+  mentions: Mention[];
+  /** The issue's title and body as read, hashed as a call's are. */
+  content: string;
+  /** The open blockers, as `owner/name` and number. */
+  blockers: IssueRef[];
+  /** Whether the forge's own blocking links were read; false when only the issue's text counted. */
+  forgeLinks: boolean;
+}
+
+/** A held issue was closed before any of its blockers was cleared: it is no longer held. */
+export interface UnblockedEntry extends EntryBase {
+  type: "unblocked";
+  issue: number;
+  why: "closed";
 }
 
 /** A PR as the log names it. */
@@ -373,7 +403,9 @@ export type Entry =
   | StartedEntry
   | SuggestedEntry
   | SuggestionFiledEntry
-  | SuggestFailedEntry;
+  | SuggestFailedEntry
+  | BlockedEntry
+  | UnblockedEntry;
 
 /** An entry as written, before it has an id and a time. */
 export type NewEntry = Entry extends infer E ? (E extends Entry ? Omit<E, "id" | "at"> : never) : never;
@@ -629,7 +661,7 @@ export function latestCalls(entries: readonly Entry[]): Map<number, CallEntry> {
 export function judgedMentions(entries: readonly Entry[]): Set<string> {
   const seen = new Set<string>();
   for (const entry of entries) {
-    if (entry.type === "call") for (const mention of entry.mentions) seen.add(mentionKey(mention));
+    if (entry.type === "call" || entry.type === "blocked") for (const mention of entry.mentions) seen.add(mentionKey(mention));
   }
   return seen;
 }
@@ -638,9 +670,25 @@ export function mentionKey(mention: Pick<Mention, "id" | "updatedAt">): string {
   return `${mention.id}@${Date.parse(mention.updatedAt)}`;
 }
 
+/**
+ * The issues entail holds back now, each with its latest hold: a hold with no
+ * call on the issue after it and not ended by an `unblocked` entry.
+ */
+export function heldIssues(entries: readonly Entry[]): Map<number, BlockedEntry> {
+  const held = new Map<number, BlockedEntry>();
+  for (const entry of entries) {
+    if (entry.type === "blocked") held.set(entry.issue.number, entry);
+    else if (entry.type === "call") held.delete(entry.issue.number);
+    else if (entry.type === "unblocked") held.delete(entry.issue);
+  }
+  return held;
+}
+
 /** An entry entail still has to act on the forge for, in log order. */
 export type Pending =
   | { kind: "call"; entry: CallEntry }
+  /** A hold: posted as a note that the issue waits on its blockers, with the `entail:blocked` label. */
+  | { kind: "blocked"; entry: BlockedEntry }
   | { kind: "confirmed"; action: ConfirmedEntry; call: CallEntry }
   /** An override to no or a no answer: closed with the owner's words. */
   | { kind: "owner-no"; action: OverriddenEntry | AnsweredEntry; call: CallEntry }
@@ -652,6 +700,7 @@ export type Pending =
 /**
  * What entail has yet to do on the forge, in log order: calls to post (only an
  * issue's latest call; one judged again before it was posted is not posted),
+ * the standing hold on each blocked issue to post,
  * confirmations to post, owner's calls of no to post and close, owner's goes
  * made differently to post, and owner's calls of go whose judgment has to run
  * again on the owner's word. An owner's action still in its undo window, or
@@ -670,9 +719,15 @@ export function pendingWork(entries: readonly Entry[], now: Date = new Date()): 
     }
   }
   const latest = latestCalls(entries);
+  const held = heldIssues(entries);
   const pending: Pending[] = [];
   for (const entry of entries) {
     if (acted.has(entry.id)) continue;
+    if (entry.type === "blocked") {
+      // Only the standing hold is posted: one a call or a newer hold replaced has nothing left to say.
+      if (held.get(entry.issue.number)?.id === entry.id) pending.push({ kind: "blocked", entry });
+      continue;
+    }
     if (entry.type === "call") {
       if (latest.get(entry.issue.number)?.id === entry.id) pending.push({ kind: "call", entry });
       continue;

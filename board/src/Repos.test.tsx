@@ -26,6 +26,13 @@ describe("Repos", () => {
     expect(screen.getByText(/read access only; adding labels needs triage access or more\. Calls still post and close/u)).toBeTruthy();
   });
 
+  it("lists on the repo's card each issue held on its open blockers", async () => {
+    fakeApi({ repos: [aRepo({ blocked: [{ issue: 5, url: "https://github.com/omkarbhale/entail/issues/5", title: "Export per-chapter counts", blockers: ["#3", "acme/core#9"], since: "2026-11-12T10:00:00.000Z" }] })] });
+    renderBoard("#/repos");
+    expect((await screen.findByRole("link", { name: "#5" })).getAttribute("href")).toBe("https://github.com/omkarbhale/entail/issues/5");
+    expect(screen.getByText(/waits on #3, acme\/core#9; no call until they close\./u)).toBeTruthy();
+  });
+
   it("switches confirm mode with a pending state and Saved, and says what keeps waiting", async () => {
     const api = fakeApi();
     api.route((method, path, body) => {

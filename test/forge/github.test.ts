@@ -566,3 +566,38 @@ test("a new issue is filed with its entail: labels, each created first when miss
   await assert.rejects(forge.createIssue("x", "y", ["bug"]), /entail writes only its own labels/);
   assert.equal(transport.requests.length, 3);
 });
+
+test("an issue's blockers come from GitHub's issue dependencies, paged, with each blocker's repo and state", async (t) => {
+  const page = (nodes: unknown[], hasNextPage: boolean) => ({ data: { repository: { issue: { blockedBy: { nodes, pageInfo: { hasNextPage, endCursor: "Mg" } } } } } });
+  const { forge, requests } = graphqlTransport(t, [
+    { body: page([{ number: 3, state: "OPEN", repository: { nameWithOwner: "acme/tally" } }], true) },
+    { body: page([{ number: 9, state: "CLOSED", repository: { nameWithOwner: "acme/core" } }], false) },
+  ]);
+  assert.deepEqual(await forge.blockedBy(5), [
+    { path: "acme/tally", number: 3, state: "open" },
+    { path: "acme/core", number: 9, state: "closed" },
+  ]);
+  assert.deepEqual(requests.map((r) => r.variables), [
+    { owner: "acme", name: "tally", number: 5, after: null },
+    { owner: "acme", name: "tally", number: 5, after: "Mg" },
+  ]);
+});
+
+test("an API without issue dependencies reads as no blocking links, so only the text counts; other errors still throw", async (t) => {
+  const { forge } = graphqlTransport(t, [
+    { body: { errors: [{ message: "Field 'blockedBy' doesn't exist on type 'Issue'" }] } },
+    { body: { data: { repository: null }, errors: [{ type: "NOT_FOUND", message: "Could not resolve to an Issue with the number of 99." }] } },
+  ]);
+  assert.equal(await forge.blockedBy(5), null);
+  await assert.rejects(forge.blockedBy(99), ForgeRequestError);
+});
+
+test("a blocker's state is read from its issue in any repo, and a missing one is null", async (t) => {
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: "repos/acme/core/issues/9" }, response: { status: 200, body: { ...issue(9009, "2026-11-01T10:00:00Z"), state: "closed" } } },
+    { request: { method: "GET", path: "repos/acme/tally/issues/77" }, response: { status: 404, body: { message: "Not Found" } } },
+  ]);
+  assert.equal(await forge.issueState("acme/core", 9), "closed");
+  assert.equal(await forge.issueState("acme/tally", 77), null);
+  assert.equal(await forge.issueState("not a path", 1), null);
+});

@@ -7,6 +7,8 @@ import { CursorStore } from "../src/cursors.ts";
 import {
   checksByName,
   type Actor,
+  type Blocker,
+  type IssueRef,
   type Change,
   type ChangedFile,
   type Check,
@@ -86,6 +88,42 @@ export class FakeForge implements WatchForge {
   refuseLabels: string | null = null;
   /** Each label write, in order: `+entail:go #12` adds, `-entail:ask #12` removes. */
   readonly labelWrites: string[] = [];
+  /** The forge's own "blocked by" links of each issue. */
+  readonly blocks = new Map<number, IssueRef[]>();
+  /** Issues in other repos, by `owner/name#N`, with their state. */
+  readonly elsewhere = new Map<string, "open" | "closed">();
+  /** Set when the forge keeps no blocking links, as an API without them would. */
+  noBlockingLinks = false;
+  /** Every blocker-state read, `owner/name#N`, in order. */
+  readonly stateReads: string[] = [];
+
+  /** Links `blocker` as blocking `issue`, as GitHub's sidebar does; changes neither issue's update time. */
+  block(issue: number, blocker: number | IssueRef): void {
+    const ref = typeof blocker === "number" ? { path: REPO, number: blocker } : blocker;
+    this.blocks.set(issue, [...(this.blocks.get(issue) ?? []), ref]);
+  }
+
+  async blockedBy(number: number): Promise<Blocker[] | null> {
+    this.#check();
+    if (this.noBlockingLinks) return null;
+    const blockers: Blocker[] = [];
+    for (const ref of this.blocks.get(number) ?? []) {
+      const state = this.#stateOf(ref.path, ref.number);
+      if (state !== null) blockers.push({ ...ref, state });
+    }
+    return blockers;
+  }
+
+  async issueState(path: string, number: number): Promise<"open" | "closed" | null> {
+    this.#check();
+    this.stateReads.push(`${path}#${number}`);
+    return this.#stateOf(path, number);
+  }
+
+  #stateOf(path: string, number: number): "open" | "closed" | null {
+    if (path.toLowerCase() === REPO) return this.issues.get(number)?.state ?? null;
+    return this.elsewhere.get(`${path}#${number}`) ?? null;
+  }
 
   constructor(kind: "github" | "gitlab" = "github") {
     this.kind = kind;

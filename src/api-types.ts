@@ -259,6 +259,8 @@ export interface RepoView {
   failing: FailingView | null;
   /** The PRs whose landing judgment gave no call every time it was tried at their head; a new push is judged again. */
   stalled: StalledView[];
+  /** The issues entail holds with no call while an issue they are blocked by is open. */
+  blocked: BlockedView[];
   /** Whether the owner already asked for the open backlog to be judged. */
   backlogAsked: boolean;
   /** A suggestion run in flight for the repo, or how the last one ended; null when none was asked for. */
@@ -281,6 +283,17 @@ export interface FailingView {
 }
 
 /** A PR entail stopped judging at its head after repeated judgments without an answer. */
+/** An issue entail holds back: blocked by issues still open, so it has no call yet. */
+export interface BlockedView {
+  issue: number;
+  url: string;
+  title: string;
+  /** The open blockers: `#12` in the same repo, `owner/name#12` in another. */
+  blockers: string[];
+  /** ISO time of the standing hold. */
+  since: string;
+}
+
 export interface StalledView {
   pr: number;
   head: string;

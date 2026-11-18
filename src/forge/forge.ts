@@ -76,6 +76,17 @@ export interface Issue {
   url: string;
 }
 
+/** An issue named by repo and number: its repo's path on the same host, such as `acme/tally`, and its number there. */
+export interface IssueRef {
+  path: string;
+  number: number;
+}
+
+/** An issue another issue waits on, with whether it is still open, as the forge reports it. */
+export interface Blocker extends IssueRef {
+  state: "open" | "closed";
+}
+
 /** A comment on an issue. */
 export interface IssueComment {
   /** The forge's numeric id for the comment. */
@@ -384,6 +395,21 @@ export interface Forge {
    * that number: none was ever opened, it was deleted, or the number is a PR's.
    */
   issue(issueNumber: number): Promise<Issue | null>;
+
+  /**
+   * The issues the forge's own dependency data says block an issue (GitHub's
+   * "blocked by" links), each with whether it is open; they may be in other
+   * repos on the same host. Null when the forge keeps no such links for this
+   * repo, so only an issue's text can name its blockers.
+   */
+  blockedBy(issueNumber: number): Promise<Blocker[] | null>;
+
+  /**
+   * Whether an issue in any repo on this host is open or closed, or null when
+   * there is no such issue to read. A blocker's state is always read here,
+   * never taken from text.
+   */
+  issueState(path: string, issueNumber: number): Promise<"open" | "closed" | null>;
 
   // The writes. Every comment passes the comment rules before it is posted.
 
