@@ -543,6 +543,7 @@ async function statusCommand(args: string[]): Promise<number> {
     console.log(
       `${repo.repo.padEnd(width)}  confirm ${repo.confirm ? "on " : "off"}  ${checked === null ? (running === null ? "not checked: entail is not running" : "not checked yet") : `checked ${ago(checked, now)}`}  ${repo.waiting} waiting`,
     );
+    if (repo.cannotLabel !== null) console.log(`${" ".repeat(width)}  entail cannot label issues here: ${repo.cannotLabel}. Calls still post and close.`);
   }
   const waiting = waitingItems(dataDirectory, await caseBook(dataDirectory));
   const questions = waiting.filter((item) => item.call === "ask").length;

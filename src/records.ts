@@ -258,8 +258,32 @@ export interface ActedEntry extends EntryBase {
   issue: number;
   comment: { id: number; url: string };
   closed: boolean;
+  /** What came of the `entail:` label this act puts on the issue; missing when it puts none, as for a call that waits to be confirmed. */
+  label?: LabelChange;
   /** Set when this act is a go acting and a start command was set: the work to start, run once (see `src/starts.ts`). */
   start?: { command: string; handoff: Handoff };
+}
+
+/**
+ * The `entail:` label an act put on an issue: the label, and the other
+ * `entail:` labels it took off so the issue carries one at a time. When the
+ * label could not be put on, `failed` says why; the act went ahead without it.
+ */
+export interface LabelChange {
+  label: string;
+  /** Whether the issue carried the label already, so nothing was added. */
+  already: boolean;
+  removed: string[];
+  failed?: string;
+}
+
+/**
+ * Why entail could not label the repo's issues, from the latest act that
+ * labelled one, or null when that label went on (or none was tried yet).
+ */
+export function labelProblem(entries: readonly Entry[]): string | null {
+  const last = entries.findLast((entry): entry is ActedEntry & { label: LabelChange } => entry.type === "acted" && entry.label !== undefined);
+  return last?.label.failed ?? null;
 }
 
 /** entail ran the start command for a go that acted: by which command, and how it exited. */

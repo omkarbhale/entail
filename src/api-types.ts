@@ -221,6 +221,8 @@ export interface RepoView {
   checkedAt: string | null;
   /** Whether the owner already asked for the open backlog to be judged. */
   backlogAsked: boolean;
+  /** Why the latest `entail:` label entail tried to put on an issue here did not go on, or null when it did or none was tried. */
+  cannotLabel: string | null;
 }
 
 export interface SettingsView {

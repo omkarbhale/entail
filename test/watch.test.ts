@@ -192,7 +192,7 @@ test("a dry run prints what it would post and changes nothing", async (t) => {
   assert.deepEqual(report, { repos: 1, judged: 1, posted: 1, failed: [] });
   const printed = h.printed.join("\n");
   assert.match(printed, /acme\/tally#14 \(new\): Make tally a desktop app\n {4}no: Another product\./u);
-  assert.match(printed, /would post on acme\/tally#14 and close it:\n {4}Speaking from Omkar's entail:\n\n {4}\*\*No\.\*\* Another product\./u);
+  assert.match(printed, /would post on acme\/tally#14 and close it, labelled entail:no:\n {4}Speaking from Omkar's entail:\n\n {4}\*\*No\.\*\* Another product\./u);
   assert.deepEqual(h.forge.posted, []);
   assert.deepEqual(h.forge.closed, []);
   assert.deepEqual(readLog(h.dataDirectory, REPO).map((entry) => entry.type), ["enrolled"]);

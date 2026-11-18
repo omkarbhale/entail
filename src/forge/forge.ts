@@ -308,7 +308,7 @@ export const ENTAIL_LABEL_DESCRIPTION = "Set by entail: see its latest comment o
 /** Throws unless `label` is an `entail:` label entail may write. */
 export function assertEntailLabel(label: string): void {
   if (!label.startsWith(ENTAIL_LABEL_PREFIX) || label.length === ENTAIL_LABEL_PREFIX.length || /[,\s]/.test(label)) {
-    throw new Error(`entail writes only its own labels, such as entail:cleared, not ${JSON.stringify(label)}`);
+    throw new Error(`entail writes only its own labels, such as entail:go, not ${JSON.stringify(label)}`);
   }
 }
 

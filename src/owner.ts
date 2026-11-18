@@ -12,6 +12,7 @@ import {
   HOST,
   isOwnerAction,
   isRepo,
+  labelProblem,
   landingStatuses,
   latestCalls,
   latestLandings,
@@ -183,6 +184,7 @@ export function repoViews(dataDirectory: string, settings: GlobalSettings, optio
         pins: { file, topics: readPinsNow(file) },
         checkedAt: options.checkedAt?.(repo) ?? null,
         backlogAsked: entries.some((entry) => entry.type === "backlog" && entry.at >= (state.since ?? "")),
+        cannotLabel: labelProblem(entries),
       },
     ];
   });
