@@ -6,19 +6,19 @@ The owner's stand-in for product calls on their repos: one call per ticket and p
 
 An owner who runs agent-driven work still has to make the product call on every ticket and every PR, and today that call happens in chat and evaporates there. entail makes it instead. The repo's `VISION.md` is the owner's word on what the product is, and the test entail applies to every change is one question: does this make the product better?
 
-Each issue gets one answer: go, which starts the work with the few criteria an implementer would not guess; no, which closes the ticket with its reason; or ask, which brings one question to the owner. Each PR that closes a go is merged at the head it judged or sent back with what needs to change. Every call is recorded with its reason. entail never writes code, pushes or opens PRs; on the forge it only comments, labels, closes and merges.
+Each issue gets one answer: go, which starts the work with the few criteria an implementer would not guess; no, which closes the ticket with its reason; or ask, which brings one question to the owner. Each PR that closes a go is merged at the head it judged or sent back with what needs to change. Every call is recorded with its reason. entail never writes code, pushes or opens PRs; on GitHub or GitLab it only comments, labels, closes and merges.
 
 Why it exists is in [PROBLEM.md](PROBLEM.md); what it is meant to become is in [VISION.md](VISION.md). The tree was started over on 2026-11-12; [docs/restart-2026-11-12.md](docs/restart-2026-11-12.md) says why.
 
 ## Quickstart
 
-You need Node 24 or newer, `git`, `gh` and `claude` logged in.
+You need Node 24 or newer, `git`, `gh` (or `glab`, for GitLab) and `claude` logged in.
 
 ```sh
 git clone https://github.com/omkarbhale/entail.git && cd entail
 npm ci && npm run build
-gh auth login                        # if gh is not logged in yet
-node dist/cli.js enroll owner/repo   # watch a repo; it starts in confirm mode
+gh auth login                        # or glab auth login, for GitLab
+node dist/cli.js enroll owner/repo   # watch a repo (gitlab:group/project for GitLab); it starts in confirm mode
 node dist/cli.js service install     # run entail now, at every login and after a crash
 node dist/cli.js open                # the board, on http://127.0.0.1:4380/
 ```
@@ -29,7 +29,7 @@ From there the owner files issues and answers on the board; nothing else needs a
 
 **The call on an issue.** Each issue filed on an enrolled repo gets one model run that reads the issue, the vision, the repo and the owner's past calls, and answers go, no or ask. A change that is large or hard to undo is always ask. See [the call on an issue](docs/guide.md#the-call-on-an-issue) and [acting on the call](docs/guide.md#acting-on-the-call).
 
-**The call on a PR.** Once CI finishes on a PR that closes a go, entail checks it against the go's criteria, with the facts read from GitHub rather than the PR's description, and merges it, sends it back or asks. A PR whose CI is not green is never merged. See [landing a PR](docs/guide.md#landing-a-pr).
+**The call on a PR.** Once CI finishes on a PR that closes a go, entail checks it against the go's criteria, with the facts read from the forge rather than the PR's description, and merges it, sends it back or asks. A PR whose CI is not green is never merged. See [landing a PR](docs/guide.md#landing-a-pr).
 
 **Confirm mode.** A repo starts in confirm mode: entail posts its calls but closes and merges nothing until the owner confirms, overrides or answers. The owner turns it off per repo once entail stops being overridden. See [confirm mode](docs/guide.md#confirm-mode).
 
@@ -40,6 +40,7 @@ From there the owner files issues and answers on the board; nothing else needs a
 The [user guide](docs/guide.md) is the reference:
 
 - [Commands](docs/guide.md#commands)
+- [GitLab](docs/guide.md#gitlab)
 - [Running](docs/guide.md#running) and [updating](docs/guide.md#updating) the service
 - [Watching](docs/guide.md#watching), [acting on the call](docs/guide.md#acting-on-the-call) and its labels, [landing a PR](docs/guide.md#landing-a-pr)
 - [Confirm mode](docs/guide.md#confirm-mode) and [the board](docs/guide.md#the-board), with its keys and pages
