@@ -81,7 +81,7 @@ describe("Repos", () => {
     const field = await screen.findByRole("textbox", { name: "Repo to enroll" });
     await userEvent.type(field, "not a repo");
     await userEvent.click(screen.getByRole("button", { name: "Enroll" }));
-    expect(screen.getByText("Use owner/repo, for example omkarbhale/entail.")).toBeTruthy();
+    expect(screen.getByText("Use owner/repo, for example omkarbhale/entail, or gitlab:group/repo for a GitLab project.")).toBeTruthy();
     await userEvent.clear(field);
     await userEvent.type(field, "acme/tally");
     const release = api.hold(/POST \/api\/repos$/u);
@@ -93,6 +93,31 @@ describe("Repos", () => {
     await userEvent.click(offer);
     expect(await screen.findByText(/entail is judging the open backlog/u)).toBeTruthy();
     expect(api.sent(/POST \/api\/repos\/acme\/tally\/backlog/u)).toHaveLength(1);
+  });
+
+  it("enrolls a GitLab project from its gitlab.com address, links its card to GitLab and reaches it by its whole name", async () => {
+    const api = fakeApi({ repos: [] });
+    api.route((method, path, body) => {
+      if (method === "POST" && path === "/api/repos") {
+        const repo = aRepo({ repo: body.repo, calls: 0, waiting: 0, checked: 0, agreed: 0, vision: null, checkedAt: null });
+        api.state.repos = [...api.state.repos, repo];
+        return { status: 201, body: { repo, openIssues: 0 } };
+      }
+      if (method === "POST" && path.endsWith("/check")) return { status: 200, body: { repo: "gitlab:acme/tools/tally", at: new Date().toISOString(), judged: 0, posted: 2, failed: false } };
+      return undefined;
+    });
+    renderBoard("#/repos");
+    const field = await screen.findByRole("textbox", { name: "Repo to enroll" });
+    await userEvent.type(field, "https://gitlab.com/acme/tools/tally");
+    const release = api.hold(/POST \/api\/repos$/u);
+    await userEvent.click(screen.getByRole("button", { name: "Enroll" }));
+    expect(await screen.findByRole("button", { name: "Checking access on GitLab…" })).toBeTruthy();
+    release();
+    const link = await screen.findByRole("link", { name: /gitlab:acme\/tools\/tally/u });
+    expect(link.getAttribute("href")).toBe("https://gitlab.com/acme/tools/tally");
+    await userEvent.click(screen.getByRole("button", { name: "Check now" }));
+    expect(await screen.findByText("Checked just now: 2 posts on GitLab.")).toBeTruthy();
+    expect(api.sent(/POST \/api\/repos\/gitlab%3Aacme%2Ftools%2Ftally\/check/u)).toHaveLength(1);
   });
 
   it("asks before unenrolling, saying what happens to what waits", async () => {

@@ -16,8 +16,8 @@ export type * from "../../src/api-types.ts";
 
 /**
  * The board's only way to entail: its JSON API on the same host. The board
- * never talks to GitHub; entail's own process records every answer and acts
- * on GitHub for it.
+ * never talks to GitHub or GitLab; entail's own process records every answer
+ * and acts on the forge for it.
  */
 
 /** A request entail refused, or one that never reached it. */
@@ -56,7 +56,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return parsed as T;
 }
 
-const repoPath = (repo: string) => repo.split("/").map(encodeURIComponent).join("/");
+/** A repo in the API's paths: `owner/name` for GitHub; a GitLab project, whose path can hold subgroups, as one encoded segment. */
+const repoPath = (repo: string) => (repo.startsWith("gitlab:") ? encodeURIComponent(repo) : repo.split("/").map(encodeURIComponent).join("/"));
 
 export const api = {
   status: () => request<StatusView>("GET", "/api/status"),

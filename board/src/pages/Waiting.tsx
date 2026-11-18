@@ -227,7 +227,7 @@ function Card(props: {
               <kbd>c</kbd> confirm <kbd>o</kbd> override
             </span>
           </div>
-          {!overrideOpen && act.isError && <ErrorNote error={act.error} onDismiss={() => act.reset()} />}
+          {!overrideOpen && act.isError && <ErrorNote error={act.error} repo={item.repo} onDismiss={() => act.reset()} />}
           {overrideOpen && (
             <OverrideForm
               item={item}

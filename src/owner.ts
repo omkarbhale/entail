@@ -9,9 +9,7 @@ import {
   callStatuses,
   criteriaOf,
   heldActions,
-  HOST,
   isOwnerAction,
-  isRepo,
   labelProblem,
   landingStatuses,
   latestCalls,
@@ -34,6 +32,7 @@ import {
   type RepoState,
   type UndoneEntry,
 } from "./records.ts";
+import { blobUrl, canonicalRepo, forgeTitle, issueUrl, repoSetting } from "./repo-ref.ts";
 import { collapseWhitespace, splitVisionLines } from "./vision.ts";
 
 export type { CallView, PullRequestView } from "./api-types.ts";
@@ -45,7 +44,7 @@ export type { CallView, PullRequestView } from "./api-types.ts";
  * through here. Every owner action is appended to the repo's log under the
  * owner's name at once. On the board it is held for a short window in which
  * the owner can undo it; once the window closes, entail writes it to the
- * owner's case book and acts on GitHub for it (see `src/watch.ts`).
+ * owner's case book and acts on the forge for it (see `src/watch.ts`).
  */
 
 /** How long an action taken on the board can be undone before entail acts on it. */
@@ -63,8 +62,8 @@ export class OwnerError extends Error {
 
 /** The repo as the owner named it, checked and lower-cased the way its log is kept. */
 export function repoName(text: string): string {
-  const repo = text.trim().replace(/^https:\/\/github\.com\//u, "").replace(/\.git$/u, "").replace(/\/$/u, "").toLowerCase();
-  if (!isRepo(repo)) throw new OwnerError(400, `not a repo: ${text} (expected owner/name)`);
+  const repo = canonicalRepo(text);
+  if (repo === null) throw new OwnerError(400, `not a repo: ${text} (expected owner/name, or gitlab:group/name for GitLab)`);
   return repo;
 }
 
@@ -180,7 +179,7 @@ export function repoViews(dataDirectory: string, settings: GlobalSettings, optio
     const checked = statuses.filter((status) => status.status === "confirmed" || status.status === "overridden").length;
     const agreed = statuses.filter((status) => status.status === "confirmed").length;
     const lastVision = entries.findLast((entry): entry is CallEntry | LandingEntry => (entry.type === "call" || entry.type === "landing") && entry.vision !== null)?.vision ?? null;
-    const file = pinsFile(dataDirectory, { host: HOST, path: repo });
+    const file = pinsFile(dataDirectory, repoSetting(repo));
     return [
       {
         ...state,
@@ -190,7 +189,7 @@ export function repoViews(dataDirectory: string, settings: GlobalSettings, optio
         checked,
         agreed,
         suggestConfirmOff: state.confirm && checked >= CONFIRM_OFF_AFTER.checked && agreed / checked >= CONFIRM_OFF_AFTER.agreement,
-        vision: lastVision === null ? null : { commit: lastVision.commit, url: `https://${HOST}/${repo}/blob/${lastVision.commit}/VISION.md` },
+        vision: lastVision === null ? null : { commit: lastVision.commit, url: blobUrl(repo, lastVision.commit, "VISION.md") },
         pins: { file, topics: readPinsNow(file) },
         checkedAt: options.checkedAt?.(repo) ?? null,
         failing: options.failing?.(repo) ?? null,
@@ -237,7 +236,7 @@ export function callView(repo: string, entry: CallEntry, status: CallStatus, ent
         return {
           slug,
           title: past === undefined ? slug : `${past.repo}#${past.issue}`,
-          url: past === undefined ? null : `https://${HOST}/${past.repo}/issues/${past.issue}`,
+          url: past === undefined ? null : issueUrl(past.repo, past.issue),
         };
       }),
     },
@@ -313,7 +312,7 @@ function restsOnView(repo: string, vision: LandingEntry["vision"], restsOn: { vi
     visionLines: restsOn.visionLines.map((text) => ({ text, ...visionLineAt(repo, vision, text) })),
     cases: restsOn.cases.map((slug) => {
       const past = book.find((candidate) => candidate.slug === slug);
-      return { slug, title: past === undefined ? slug : `${past.repo}#${past.issue}`, url: past === undefined ? null : `https://${HOST}/${past.repo}/issues/${past.issue}` };
+      return { slug, title: past === undefined ? slug : `${past.repo}#${past.issue}`, url: past === undefined ? null : issueUrl(past.repo, past.issue) };
     }),
   };
 }
@@ -393,7 +392,7 @@ function visionLineLink(repo: string, entry: CallEntry, text: string): { url: st
 function visionLineAt(repo: string, vision: { commit: string; text: string } | null, text: string): { url: string | null; line: number | null } {
   if (vision === null) return { url: null, line: null };
   const entry = { vision };
-  const base = `https://${HOST}/${repo}/blob/${entry.vision.commit}/VISION.md`;
+  const base = blobUrl(repo, entry.vision.commit, "VISION.md");
   const wanted = collapseWhitespace(text.replace(/^>\s*/u, ""));
   const line = wanted === "" ? undefined : splitVisionLines(entry.vision.text).find((candidate) => candidate.identity.includes(wanted));
   return line === undefined ? { url: base, line: null } : { url: `${base}#L${line.lineNumber}`, line: line.lineNumber };
@@ -544,7 +543,7 @@ function logRow(repo: string, entry: CallEntry, statuses: Map<number, CallStatus
     trail.push({ at: action.at, text: actionWords(action) });
     const undo = undone.get(action.id);
     if (undo !== undefined) {
-      trail.push({ at: undo.at, text: `${undo.by} undid it; nothing was sent to GitHub` });
+      trail.push({ at: undo.at, text: `${undo.by} undid it; nothing was sent to ${forgeTitle(repo)}` });
       continue;
     }
     const rerun = entries.find((other): other is CallEntry => other.type === "call" && other.owner?.action === action.id);
@@ -573,7 +572,7 @@ function logRow(repo: string, entry: CallEntry, statuses: Map<number, CallStatus
     trail.push({ at: started.at, text: started.exit === 0 ? `Started work: ${started.command}` : `The start command failed (${started.error ?? `exit ${started.exit}`}): ${started.command}` });
   }
   const reopened = entries.filter((other) => other.type === "reopened" && entries.some((act) => act.type === "acted" && act.id === other.after && act.issue === entry.issue.number && (act.for === entry.id || isActionOn(entries, act.for, entry.id))));
-  for (const reopen of reopened) trail.push({ at: reopen.at, text: "Reopened on GitHub after entail closed it" });
+  for (const reopen of reopened) trail.push({ at: reopen.at, text: `Reopened on ${forgeTitle(repo)} after entail closed it` });
   trail.sort((a, b) => a.at.localeCompare(b.at));
   return { day: dayOf(entry.at), call, ownerCall, reopened: reopened.length > 0, trail };
 }
@@ -590,7 +589,7 @@ function landingRow(repo: string, entry: LandingEntry, statuses: Map<number, Cal
     trail.push({ at: action.at, text: actionWords(action) });
     const undo = undone.get(action.id);
     if (undo !== undefined) {
-      trail.push({ at: undo.at, text: `${undo.by} undid it; nothing was sent to GitHub` });
+      trail.push({ at: undo.at, text: `${undo.by} undid it; nothing was sent to ${forgeTitle(repo)}` });
       continue;
     }
     const carried = actedFor(action.id);
@@ -1048,9 +1047,9 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
           ].filter((change) => change !== null);
           lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} set ${changes.join(", ")}`);
         }
-        if (entry.type === "undone") lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} undid their action ${entry.action}; nothing was sent to GitHub`);
+        if (entry.type === "undone") lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} undid their action ${entry.action}; nothing was sent to ${forgeTitle(item.repo)}`);
         if (entry.type === "backlog") lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} asked entail to judge the open backlog: ${entry.issues.length === 0 ? "nothing left to judge" : entry.issues.map((issue) => `#${issue}`).join(", ")}`);
-        if (entry.type === "reopened") lines.push(`${at}  ${where(entry.issue)}  reopened on GitHub after entail closed it`);
+        if (entry.type === "reopened") lines.push(`${at}  ${where(entry.issue)}  reopened on ${forgeTitle(item.repo)} after entail closed it`);
         break;
       }
     }

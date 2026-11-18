@@ -182,7 +182,7 @@ export interface LogRow {
   call: CallView;
   /** The call entail ran again on the owner's go, carrying the criteria posted for it. */
   ownerCall: CallView | null;
-  /** Reopened on GitHub after entail closed it. */
+  /** Reopened on the forge after entail closed it. */
   reopened: boolean;
   trail: TrailStep[];
 }
@@ -283,7 +283,7 @@ export interface StatusView {
 
 export interface EnrollResponse {
   repo: RepoView;
-  /** Issues open on GitHub when it was enrolled, which entail judges only when asked. */
+  /** Issues open on the forge when it was enrolled, which entail judges only when asked. */
   openIssues: number;
 }
 

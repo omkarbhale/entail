@@ -115,7 +115,8 @@ export class CliTransport implements Transport {
             GH_PROMPT_DISABLED: "1",
             GH_NO_UPDATE_NOTIFIER: "1",
             GLAB_CHECK_UPDATE: "false",
-            NO_PROMPT: "1",
+            // glab's own name for it; it warns on the older NO_PROMPT.
+            GLAB_NO_PROMPT: "1",
             NO_COLOR: "1",
           },
         },
@@ -129,7 +130,9 @@ export class CliTransport implements Transport {
             resolve(response);
             return;
           }
-          const detail = stderr.trim() || error?.message || "no HTTP response";
+          // Killed for anything but too much output is the timeout ending it.
+          const timedOut = error !== null && error.killed === true && error.code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+          const detail = timedOut ? `no response within ${this.#timeoutMs / 1000} seconds` : stderr.trim() || error?.message || "no HTTP response";
           const loggedOut =
             code !== null && (this.#cli === "gh" ? code === GH_EXIT_AUTH_REQUIRED : GLAB_AUTH_REQUIRED.test(stderr));
           const cliMissing = error !== null && (error as NodeJS.ErrnoException).code === "ENOENT";

@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import type { Call, CallView } from "../api.ts";
-import { ago, callLabel, shortName, sizeLine, sourceLabel, subject } from "../format.ts";
+import { ago, callLabel, forgeName, shortName, sizeLine, sourceLabel, subject } from "../format.ts";
 
 /** The parts every item has, in order: what the ticket was, what entail concluded, why, and what it rests on. */
 
@@ -117,7 +117,7 @@ function Criteria({ item }: { item: CallView }) {
   );
 }
 
-/** What a PR's call adds: the criteria as a checklist, what GitHub says (not the PR), and what the PR does beyond its criteria. */
+/** What a PR's call adds: the criteria as a checklist, what the forge says (not the PR), and what the PR does beyond its criteria. */
 function PullRequestFacts({ item }: { item: CallView }) {
   const pr = item.pr!;
   const met = pr.checklist.filter((check) => check.met).length;
@@ -160,7 +160,7 @@ function PullRequestFacts({ item }: { item: CallView }) {
       )}
       {pr.guard !== null && <p className="small">{pr.guard.detail}</p>}
       <p className="forge">
-        <span className="k">From GitHub, not from the PR</span> {ci} · {pr.facts.touched.vision ? "VISION.md is changed" : "VISION.md is not touched"}
+        <span className="k">From {forgeName(item.repo)}, not from the PR</span> {ci} · {pr.facts.touched.vision ? "VISION.md is changed" : "VISION.md is not touched"}
         {pr.facts.touched.pins.length > 0 ? ` · pinned: ${pr.facts.touched.pins.join(", ")}` : ""}
       </p>
       {pr.beyond.length > 0 && (

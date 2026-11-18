@@ -30,14 +30,15 @@ import {
   waitingResponse,
 } from "./owner.ts";
 import { loggedRepos, readLog, readSettings, repoState, writeSettings, type GlobalSettings } from "./records.ts";
+import { forgeTitle } from "./repo-ref.ts";
 
 /**
  * entail's board and the small JSON API behind it, on the loopback
  * interface. The board is the built single-page app in `dist/board`; the API
  * is the single path through which the owner's answers are recorded, and the
- * browser never talks to GitHub. Everything the API changes is appended to
+ * browser never talks to the forge. Everything the API changes is appended to
  * the repos' logs under the owner's name; an answer is held for
- * {@link HOLD_MS} so it can be undone, and entail acts on GitHub for it when
+ * {@link HOLD_MS} so it can be undone, and entail acts on the forge for it when
  * the window closes.
  *
  *   GET    /api/status                        whether entail is watching, when it last checked, which repos are failing and why, and whether it is drained for an update
@@ -58,13 +59,16 @@ import { loggedRepos, readLog, readSettings, repoState, writeSettings, type Glob
  *   PATCH  /api/repos/:owner/:name            {"confirm"?: bool, "model"?: string|null, "effort"?: string|null}
  *   DELETE /api/repos/:owner/:name            unenrolls
  *   POST   /api/repos/:owner/:name/check      checks the repo now, and answers with what the check did
- *   POST   /api/repos/:owner/:name/backlog    judges the issues open on GitHub that have no call yet
+ *   POST   /api/repos/:owner/:name/backlog    judges the issues open on the forge that have no call yet
  *   GET    /api/settings                      the owner's name, the default model and effort, the notice and start commands (read only here)
  *   PATCH  /api/settings                      {"owner"?: string, "model"?: string, "effort"?: string}
  *
+ * A GitLab project is addressed by its whole name as one encoded segment in
+ * place of `:owner/:name`, such as `/api/repos/gitlab%3Aacme%2Ftally/check`.
+ *
  * A call is on an issue or on a PR: each item carries `kind` ("issue" or
  * "pr") and, on a PR's call, `pr` with the criteria checklist, the facts read
- * from GitHub, what the PR does beyond its criteria sorted needed, harmless or
+ * from the forge, what the PR does beyond its criteria sorted needed, harmless or
  * unwanted, and what entail did on the PR (see `CallView` and
  * `PullRequestView` in owner.ts). In the log, a call item names its kind in
  * `callKind`, and entail's acts on PRs are `pr-acted` items.
@@ -107,7 +111,7 @@ export interface ApiOptions {
   loop?: BoardLoop;
   /** Whether each repo's checks are failing, as the loop in this process saw them. */
   health?: Health;
-  /** What enrolling and the backlog read from GitHub: that the repo can be reached, and its open issues. */
+  /** What enrolling and the backlog read from the forge: that the repo can be reached, and its open issues. */
   forgeFor?: (repo: string) => Pick<Forge, "project" | "openIssueNumbers">;
   events?: EventBus;
   /** The built board's directory; {@link BOARD_DIRECTORY} unless a test says otherwise, null for none. */
@@ -225,7 +229,7 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
       const since = body.since === undefined ? undefined : new Date(String(body.since));
       if (since !== undefined && Number.isNaN(since.getTime())) throw new OwnerError(400, "since is an ISO time");
       if (repoState(repo, readLog(dataDirectory, repo)).enrolled) throw new OwnerError(409, `${repo} is already enrolled`);
-      // Reading the repo checks it exists and the logged-in gh can see it, before anything is recorded.
+      // Reading the repo checks it exists and the logged-in gh or glab can see it, before anything is recorded.
       const openIssues = options.forgeFor === undefined ? 0 : await reach(repo, async () => {
         const forge = options.forgeFor!(repo);
         await forge.project();
@@ -237,10 +241,12 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
     }
     return send(response, 405, { error: `${method} is not allowed on ${path}` });
   }
-  const repo = /^\/api\/repos\/([^/]+)\/([^/]+)(?:\/(check|backlog))?$/u.exec(path);
+  // A GitHub repo is addressed as owner/name; a GitLab project, whose path can
+  // hold subgroups, as its whole name in one encoded segment.
+  const repo = /^\/api\/repos\/(?:(gitlab(?::|%3A)[^/]+)|([^/]+)\/([^/]+))(?:\/(check|backlog))?$/iu.exec(path);
   if (repo !== null) {
-    const name = repoName(`${decodeURIComponent(repo[1]!)}/${decodeURIComponent(repo[2]!)}`);
-    const action = repo[3];
+    const name = repoName(repo[1] !== undefined ? decodeURIComponent(repo[1]) : `${decodeURIComponent(repo[2]!)}/${decodeURIComponent(repo[3]!)}`);
+    const action = repo[4];
     if (action === "check" && method === "POST") {
       if (!repoState(name, readLog(dataDirectory, name)).enrolled) throw new OwnerError(404, `${name} is not enrolled`);
       if (options.loop === undefined) throw new OwnerError(409, "entail is not watching: start it with entail run");
@@ -248,7 +254,7 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
       return send(response, 200, await options.loop.check(name));
     }
     if (action === "backlog" && method === "POST") {
-      if (options.forgeFor === undefined) throw new OwnerError(409, "entail cannot read GitHub from here");
+      if (options.forgeFor === undefined) throw new OwnerError(409, `entail cannot read ${forgeTitle(name)} from here`);
       const open = await reach(name, () => options.forgeFor!(name).openIssueNumbers());
       const issues = askBacklog(dataDirectory, name, await options.owner(), open, now());
       return send(response, 200, changed({ repo: name, issues }));
@@ -295,7 +301,7 @@ async function reach<T>(repo: string, read: () => Promise<T>): Promise<T> {
   try {
     return await read();
   } catch (error) {
-    throw new OwnerError(502, `entail could not read ${repo} on GitHub: ${error instanceof Error ? error.message : String(error)}`);
+    throw new OwnerError(502, `entail could not read ${repo} on ${forgeTitle(repo)}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

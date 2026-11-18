@@ -93,9 +93,9 @@ export function serviceDefinition(inputs: ServiceInputs): ServiceDefinition {
 /**
  * The environment the service runs with, taken from the shell that installs
  * it, since a service manager starts processes with a bare one: `PATH`, so the
- * service finds the same `git`, `gh` and `claude`; and on Linux an absolute
+ * service finds the same `git`, `gh`, `glab` and `claude`; and on Linux an absolute
  * `XDG_DATA_HOME` and `XDG_CONFIG_HOME`, so it uses the same data directory
- * (and lock) as `entail run` by hand, and `gh` the same login; on Windows an
+ * (and lock) as `entail run` by hand, and `gh` and `glab` the same logins; on Windows an
  * absolute `LOCALAPPDATA`, for the same reason. On macOS the data directory
  * depends only on the home directory.
  */

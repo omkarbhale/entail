@@ -1,5 +1,15 @@
 import type { ActionView, CallView, CriterionView, OwnerCallName } from "./api.ts";
 
+/** The forge a repo lives on, as people say it: GitLab for a `gitlab:` name, else GitHub. */
+export function forgeName(repo: string): string {
+  return repo.startsWith("gitlab:") ? "GitLab" : "GitHub";
+}
+
+/** A repo's web page: `owner/name` on github.com, `gitlab:group/name` on gitlab.com. */
+export function repoHref(repo: string): string {
+  return repo.startsWith("gitlab:") ? `https://gitlab.com/${repo.slice("gitlab:".length)}` : `https://github.com/${repo}`;
+}
+
 /** How long ago a time was, in the fewest words: "40s ago", "3 min ago", "2h ago", "2d ago". */
 export function ago(iso: string | null | undefined, now: number = Date.now()): string {
   if (iso === null || iso === undefined) return "";

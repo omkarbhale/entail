@@ -3,7 +3,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, type CheckResponse, type EnrollResponse, type RepoView, type SettingsView } from "../api.ts";
 import { ENROLLED, EnrollForm, Welcome } from "../components/Enroll.tsx";
 import { External, Spinner } from "../components/Verdict.tsx";
-import { ago } from "../format.ts";
+import { ago, forgeName, repoHref } from "../format.ts";
 import { REPOS, SETTINGS, useRepos, useSettings } from "../queries.ts";
 import { useNow, useToast } from "../state.tsx";
 import { LoadFailed, Loading } from "./Waiting.tsx";
@@ -161,7 +161,7 @@ function RepoCard({ repo, settings, showRepo }: { repo: RepoView; settings: Sett
   return (
     <li className={`rcard${fresh !== null ? " newrepo" : ""}`}>
       <div className="rhead">
-        <External href={`https://github.com/${repo.repo}`} className="rname">
+        <External href={repoHref(repo.repo)} className="rname">
           {repo.repo}
         </External>
         <span className="st">
@@ -189,7 +189,7 @@ function RepoCard({ repo, settings, showRepo }: { repo: RepoView; settings: Sett
           Stalled: {stalled.line}
         </p>
       ))}
-      {checkResult !== null && <p className="small muted note" role="status">{checkText(checkResult)}</p>}
+      {checkResult !== null && <p className="small muted note" role="status">{checkText(checkResult, repo.repo)}</p>}
       {fresh !== null && fresh.openIssues > 0 && !repo.backlogAsked && (
         <p className="small note">
           Enrolled. {fresh.openIssues} open issue{fresh.openIssues === 1 ? " is" : "s are"} already there; entail judges new and edited issues from now on.{" "}
@@ -320,17 +320,17 @@ function RepoCard({ repo, settings, showRepo }: { repo: RepoView; settings: Sett
   );
 }
 
-function checkText(outcome: { ok: true; result: CheckResponse } | { ok: false; error: unknown }): string {
+function checkText(outcome: { ok: true; result: CheckResponse } | { ok: false; error: unknown }, repo: string): string {
   if (!outcome.ok) {
     if (outcome.error instanceof ApiError && !outcome.error.network) return `Not checked: ${outcome.error.message}.`;
     return "entail did not answer. Nothing changed; try again.";
   }
   const { result } = outcome;
-  if (result.failed) return "Could not reach GitHub, or a call could not be made. entail tries again on its next pass.";
+  if (result.failed) return `Could not reach ${forgeName(repo)}, or a call could not be made. entail tries again on its next pass.`;
   if (result.judged === 0 && result.posted === 0) return "Checked just now: no new or edited issues.";
   const parts = [];
   if (result.judged > 0) parts.push(`${result.judged} new call${result.judged === 1 ? "" : "s"}`);
-  if (result.posted > 0) parts.push(`${result.posted} post${result.posted === 1 ? "" : "s"} on GitHub`);
+  if (result.posted > 0) parts.push(`${result.posted} post${result.posted === 1 ? "" : "s"} on ${forgeName(repo)}`);
   return `Checked just now: ${parts.join(", ")}.`;
 }
 
@@ -359,10 +359,10 @@ function Notices({ settings }: { settings: SettingsView }) {
       </div>
       <form onSubmit={saveName} className="setting">
         <label htmlFor="owner-name">
-          <b>Your name.</b> entail’s comments open with “Speaking from {settings.owner ?? "your GitHub name"}’s entail”, and your answers are recorded under it.
+          <b>Your name.</b> entail’s comments open with “Speaking from {settings.owner ?? "your GitHub or GitLab name"}’s entail”, and your answers are recorded under it.
         </label>
         <div className="ov-row">
-          <input id="owner-name" className="field" placeholder="the GitHub account gh is logged in as" value={name} onChange={(event) => setName(event.target.value)} autoComplete="off" />
+          <input id="owner-name" className="field" placeholder="the GitHub account gh is logged in as, else the GitLab account glab is" value={name} onChange={(event) => setName(event.target.value)} autoComplete="off" />
           <button className="btn sm" type="submit" disabled={owner.mutation.isPending || name.trim() === "" || name.trim() === (settings.owner ?? "")}>
             Save
           </button>

@@ -5,25 +5,24 @@ import type { ForgeFacts, LandingOwnerCall, OwnerCall } from "./case-book.ts";
 import type { Criterion, IssueCall } from "./judgment.ts";
 import type { LandingCall } from "./landing.ts";
 import { DEFAULT_EFFORT, EFFORTS, type Effort } from "./model-runner.ts";
+import { forgeHost, GITLAB_PREFIX, repoSetting } from "./repo-ref.ts";
 import type { Handoff } from "./starts.ts";
 
 /**
  * What entail decided and what the owner said back, one append-only log per
- * repo: `log/<host>/<owner>/<name>.jsonl` in the data directory, one JSON
+ * repo: `log/<host>/<owner>/<name>.jsonl` in the data directory (a GitLab
+ * project's path keeps its subgroups as directories), one JSON
  * entry per line. Nothing is ever rewritten; everything the board and
  * `entail calls` show (whether a repo is enrolled, its settings, what waits
  * on the owner, what is still to post) is derived from the log.
  *
  * Every entry has an id, a random positive integer. An entry that entail
- * acts on GitHub for carries its id in the hidden marker of the comment it
+ * acts on the forge for carries its id in the hidden marker of the comment it
  * posts, so a restart finds the comment it already posted and never posts it
  * twice.
  */
 
 export const LOG_DIRECTORY = "log";
-
-/** The repos entail serves, all on github.com for now. */
-export const HOST = "github.com";
 
 interface EntryBase {
   id: number;
@@ -194,7 +193,7 @@ export interface PrActedEntry extends EntryBase {
 /**
  * What every owner's action carries besides its words. An action taken on
  * the board is held for a short window (`holdUntil`, ISO) in which the owner
- * can undo it; entail acts on GitHub for it only once the window has closed.
+ * can undo it; entail acts on the forge for it only once the window has closed.
  * An action with no `holdUntil` is acted on at the next pass.
  */
 interface Held {
@@ -231,7 +230,7 @@ export interface AnsweredEntry extends EntryBase, ByOwner, Held {
   answer: string;
 }
 
-/** The owner undid one of their actions while it was held: entail acts on it neither on GitHub nor in the case book. */
+/** The owner undid one of their actions while it was held: entail acts on it neither on the forge nor in the case book. */
 export interface UndoneEntry extends EntryBase, ByOwner {
   type: "undone";
   action: number;
@@ -243,15 +242,15 @@ export interface BacklogEntry extends EntryBase, ByOwner {
   issues: number[];
 }
 
-/** Someone reopened on GitHub an issue entail had closed: recorded, not taken as the owner's word. */
+/** Someone reopened on the forge an issue entail had closed: recorded, not taken as the owner's word. */
 export interface ReopenedEntry extends EntryBase {
   type: "reopened";
   issue: number;
-  /** The acted entry whose close was undone on GitHub. */
+  /** The acted entry whose close was undone on the forge. */
   after: number;
 }
 
-/** entail acted on GitHub for an entry: its comment posted, and the issue closed if it was to be. */
+/** entail acted on the forge for an entry: its comment posted, and the issue closed if it was to be. */
 export interface ActedEntry extends EntryBase {
   type: "acted";
   for: number;
@@ -320,26 +319,15 @@ export type Entry =
 /** An entry as written, before it has an id and a time. */
 export type NewEntry = Entry extends infer E ? (E extends Entry ? Omit<E, "id" | "at"> : never) : never;
 
-/** The log file of a repo, `owner/name`. */
+/** The log file of a repo, `owner/name` or `gitlab:group/name`. */
 export function logFile(dataDirectory: string, repo: string): string {
-  const [owner, name, ...rest] = repo.split("/");
-  if (owner === undefined || name === undefined || rest.length > 0 || !REPO_PART.test(owner) || !REPO_PART.test(name)) {
-    throw new RangeError(`not a repo: ${repo} (expected owner/name)`);
-  }
-  return join(dataDirectory, LOG_DIRECTORY, HOST, owner.toLowerCase(), `${name.toLowerCase()}.jsonl`);
+  const { host, path } = repoSetting(repo);
+  const parts = path.split("/").map((part) => part.toLowerCase());
+  const name = parts.pop()!;
+  return join(dataDirectory, LOG_DIRECTORY, host, ...parts, `${name}.jsonl`);
 }
 
-const REPO_PART = /^(?!\.{1,2}$)[\w.-]+$/u;
-
-/** Whether `text` names a repo as `owner/name`. */
-export function isRepo(text: string): boolean {
-  try {
-    logFile("/", text);
-    return true;
-  } catch {
-    return false;
-  }
-}
+export { isRepo } from "./repo-ref.ts";
 
 /** A fresh entry id: a random positive integer that fits a hidden marker. */
 export function newEntryId(): number {
@@ -400,15 +388,25 @@ export function readLog(dataDirectory: string, repo: string): Entry[] {
   return entries;
 }
 
-/** Every repo that has a log, enrolled or not, as `owner/name`. */
+/** Every repo that has a log, enrolled or not, as `owner/name` or `gitlab:group/name`. */
 export function loggedRepos(dataDirectory: string): string[] {
-  const root = join(dataDirectory, LOG_DIRECTORY, HOST);
+  const github = join(dataDirectory, LOG_DIRECTORY, forgeHost("github"));
   const repos: string[] = [];
-  for (const owner of safeReaddir(root)) {
-    for (const file of safeReaddir(join(root, owner))) {
+  for (const owner of safeReaddir(github)) {
+    for (const file of safeReaddir(join(github, owner))) {
       if (file.endsWith(".jsonl")) repos.push(`${owner}/${file.slice(0, -".jsonl".length)}`);
     }
   }
+  // A GitLab project sits as deep as its subgroups go.
+  const gitlab = join(dataDirectory, LOG_DIRECTORY, forgeHost("gitlab"));
+  const walk = (directory: string, path: string[]): void => {
+    for (const entry of safeReaddir(directory)) {
+      if (entry.endsWith(".jsonl")) {
+        if (path.length > 0) repos.push(`${GITLAB_PREFIX}${[...path, entry.slice(0, -".jsonl".length)].join("/")}`);
+      } else walk(join(directory, entry), [...path, entry]);
+    }
+  };
+  walk(gitlab, []);
   return repos.sort();
 }
 
@@ -426,7 +424,7 @@ export const SETTINGS_FILE = "settings.json";
 
 /** Settings for every repo: the owner's name on comments, the model and effort a repo uses unless it names its own, and where notices go. */
 export interface GlobalSettings {
-  /** The owner's display name, as comments name them; the logged-in GitHub username when unset. */
+  /** The owner's display name, as comments name them; the username the forge CLI is logged in as when unset. */
   owner: string | null;
   model: string;
   effort: Effort;
@@ -581,7 +579,7 @@ export function mentionKey(mention: Pick<Mention, "id" | "updatedAt">): string {
   return `${mention.id}@${Date.parse(mention.updatedAt)}`;
 }
 
-/** An entry entail still has to act on GitHub for, in log order. */
+/** An entry entail still has to act on the forge for, in log order. */
 export type Pending =
   | { kind: "call"; entry: CallEntry }
   | { kind: "confirmed"; action: ConfirmedEntry; call: CallEntry }
@@ -593,7 +591,7 @@ export type Pending =
   | { kind: "rerun"; action: OverriddenEntry | AnsweredEntry; call: CallEntry };
 
 /**
- * What entail has yet to do on GitHub, in log order: calls to post (only an
+ * What entail has yet to do on the forge, in log order: calls to post (only an
  * issue's latest call; one judged again before it was posted is not posted),
  * confirmations to post, owner's calls of no to post and close, owner's goes
  * made differently to post, and owner's calls of go whose judgment has to run
@@ -753,7 +751,7 @@ export function landingStatuses(entries: readonly Entry[]): Map<number, CallStat
   return statuses;
 }
 
-/** A landing call or an owner's action on one that entail still has to act on GitHub for. */
+/** A landing call or an owner's action on one that entail still has to act on the forge for. */
 export type LandingPending =
   | { kind: "landing"; entry: LandingEntry }
   | { kind: "landing-confirmed"; action: ConfirmedEntry; landing: LandingEntry }

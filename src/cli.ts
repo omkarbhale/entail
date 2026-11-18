@@ -59,6 +59,7 @@ import {
 import { pinsFile } from "./pins.ts";
 import { goCallOn, heldActions, loggedRepos, readLog, readSettings, sendBacksPosted, type GlobalSettings } from "./records.ts";
 import { formatReplay, replay, replayLandings } from "./replay.ts";
+import { forgeTitle, GITLAB_PREFIX, isRepo, repoSetting } from "./repo-ref.ts";
 import { installService, isWsl, machineServiceSystem, serviceStatus, uninstallService, type ServiceInputs } from "./service.ts";
 import { machineUpdate, update } from "./update.ts";
 import { mirrorReader, mirrorReaders, runPass, type PassOptions } from "./watch.ts";
@@ -91,6 +92,8 @@ const USAGE = `usage:
 enroll     watch a repo: entail makes the call on each issue filed or edited from now
            (or --since) on, and on each /entail mention. A repo starts in confirm mode,
            where a go or no is posted but nothing is closed or started until you confirm.
+           A repo is owner/repo on GitHub, through gh, or gitlab:group/repo on GitLab
+           (gitlab.com, subgroups included), through glab.
 unenroll   stop watching a repo; its log is kept.
 repos      the enrolled repos with confirm mode, model, effort and what waits on you.
 settings   with a repo, its confirm mode, model and effort ("default" uses the one for
@@ -225,13 +228,27 @@ function landingBook(dataDirectory: string): Promise<LandingCase[]> {
   return readLandingCaseBooks([DEFAULT_CASE_BOOK, join(dataDirectory, OWNER_CASE_BOOK)]);
 }
 
-/** The owner's display name: the setting, else the GitHub account `gh` is logged in as. */
+/**
+ * The owner's display name: the setting, else the GitHub account `gh` is
+ * logged in as, else, for an owner without `gh`, the GitLab account `glab` is
+ * logged in as.
+ */
 async function ownerName(dataDirectory: string): Promise<string> {
   const set = settingsIn(dataDirectory).owner;
   if (set !== null) return set;
-  const actor = await createForge({ forge: "github", host: GITHUB, path: "github/docs" }).currentActor();
-  if (actor === null) throw new Error("gh is not logged in, and no name is set: run gh auth login, or entail settings --owner <your name>");
-  return actor.username;
+  let github: unknown = null;
+  try {
+    const actor = await createForge(repoSetting("github/docs")).currentActor();
+    if (actor !== null) return actor.username;
+  } catch (error) {
+    github = error;
+  }
+  const gitlab = await createForge(repoSetting(`${GITLAB_PREFIX}gitlab-org/gitlab`))
+    .currentActor()
+    .catch(() => null);
+  if (gitlab !== null) return gitlab.username;
+  if (github !== null) throw github;
+  throw new Error("neither gh nor glab is logged in, and no name is set: run gh auth login (or glab auth login), or entail settings --owner <your name>");
 }
 
 function parse<const O extends ParseArgsOptionsConfig>(args: string[], options: O) {
@@ -242,15 +259,15 @@ function parse<const O extends ParseArgsOptionsConfig>(args: string[], options: 
   }
 }
 
-/** Reads `owner/name#number`. */
+/** Reads `owner/name#number`, or `gitlab:group/name#number` on GitLab. `path` is the repo's name. */
 export function parseIssueReference(text: string): { path: string; number: number } {
-  const match = /^([\w.-]+\/[\w.-]+)#(\d+)$/u.exec(text);
+  const match = /^([^#\s]+)#(\d+)$/u.exec(text);
   const number = Number(match?.[2]);
-  if (match === null || !Number.isSafeInteger(number) || number <= 0) throw new UsageError(`not an issue reference: ${text} (expected owner/repo#number)`);
+  if (match === null || !isRepo(match[1]!) || !Number.isSafeInteger(number) || number <= 0) {
+    throw new UsageError(`not an issue reference: ${text} (expected owner/repo#number, or gitlab:group/repo#number)`);
+  }
   return { path: match[1]!, number };
 }
-
-const GITHUB = "github.com";
 
 async function openRepo(setting: ForgeSetting, dataDirectory: string): Promise<{ forge: Forge; mirror: Mirror }> {
   const forge = createForge(setting);
@@ -264,7 +281,7 @@ async function openRepo(setting: ForgeSetting, dataDirectory: string): Promise<{
 }
 
 function oneRepo(positionals: string[], command: string): string {
-  if (positionals.length !== 1) throw new UsageError(`${command} takes one repo, as owner/repo`);
+  if (positionals.length !== 1) throw new UsageError(`${command} takes one repo, as owner/repo or gitlab:group/repo`);
   return repoName(positionals[0]!);
 }
 
@@ -274,8 +291,8 @@ async function enrollCommand(args: string[]): Promise<number> {
   const since = values.since === undefined ? undefined : new Date(values.since);
   if (since !== undefined && Number.isNaN(since.getTime())) throw new UsageError(`--since is a date or time, such as 2026-11-12 or 2026-11-12T09:00:00Z, not ${values.since}`);
   const dataDirectory = ensureDataDirectory();
-  // Reading the repo checks it exists and gh can see it.
-  await createForge({ forge: "github", host: GITHUB, path: repo }).project();
+  // Reading the repo checks it exists and the forge's CLI can see it.
+  await createForge(repoSetting(repo)).project();
   const state = enroll(dataDirectory, repo, await ownerName(dataDirectory), { confirm: values["no-confirm"] !== true, ...(since ? { since } : {}) });
   console.log(`${repo} is enrolled: entail judges issues filed from ${state.since} on, and each /entail mention. Confirm mode is ${state.confirm ? "on" : "off"}.`);
   return 0;
@@ -346,7 +363,7 @@ async function settingsCommand(args: string[]): Promise<number> {
   if (values.start !== undefined) change.start = values.start === "none" ? null : values.start;
   const settings = Object.keys(change).length === 0 ? settingsIn(dataDirectory) : changeSettings(dataDirectory, DEFAULT_MODEL, change);
   console.log(
-    `your name on comments: ${settings.owner ?? "(not set: the GitHub account gh is logged in as)"}\ndefault model: ${settings.model}\ndefault effort: ${settings.effort}\nnotices: ${settings.notice ?? "none"}\nstart work with: ${settings.start ?? "none"}`,
+    `your name on comments: ${settings.owner ?? "(not set: the GitHub account gh is logged in as, else the GitLab account glab is)"}\ndefault model: ${settings.model}\ndefault effort: ${settings.effort}\nnotices: ${settings.notice ?? "none"}\nstart work with: ${settings.start ?? "none"}`,
   );
   return 0;
 }
@@ -376,7 +393,7 @@ async function runCommand(args: string[]): Promise<number> {
     settings: settingsIn(dataDirectory),
     forgeFor: (repo) => {
       let forge = forges.get(repo);
-      if (forge === undefined) forges.set(repo, (forge = createForge({ forge: "github", host: GITHUB, path: repo })));
+      if (forge === undefined) forges.set(repo, (forge = createForge(repoSetting(repo))));
       return forge;
     },
     reader,
@@ -447,7 +464,7 @@ async function runCommand(args: string[]): Promise<number> {
       loop,
       health,
       events: bus,
-      forgeFor: (repo) => createForge({ forge: "github", host: GITHUB, path: repo }),
+      forgeFor: (repo) => createForge(repoSetting(repo)),
       get url() {
         return boardUrl;
       },
@@ -679,7 +696,7 @@ async function judgeCommand(args: string[]): Promise<number> {
   if (positionals.length !== 1) throw new UsageError("judge takes one issue reference");
   const reference = parseIssueReference(positionals[0]!);
   const withSettings = runOptions(values);
-  const setting: ForgeSetting = { forge: "github", host: GITHUB, path: reference.path };
+  const setting: ForgeSetting = repoSetting(reference.path);
   const dataDirectory = ensureDataDirectory();
   const options = withSettings(settingsIn(dataDirectory));
 
@@ -729,7 +746,7 @@ async function landCommand(args: string[]): Promise<number> {
   const dataDirectory = ensureDataDirectory();
   const options = withSettings(settingsIn(dataDirectory));
   const repo = repoName(reference.path);
-  const forge = createForge({ forge: "github", host: GITHUB, path: reference.path });
+  const forge = createForge(repoSetting(repo));
   const pr = await forge.pullRequest(reference.number);
   const entries = readLog(dataDirectory, repo);
 
@@ -740,7 +757,7 @@ async function landCommand(args: string[]): Promise<number> {
   } else {
     const linked = await forge.linkedIssues(reference.number);
     const judged = linked.find((number) => goCallOn(entries, number) !== null);
-    if (judged === undefined && linked.length === 0) throw new Error(`${repo}#${reference.number} closes no issue by GitHub's link data; name one with --issue`);
+    if (judged === undefined && linked.length === 0) throw new Error(`${repo}#${reference.number} closes no issue by ${forgeTitle(repo)}'s link data; name one with --issue`);
     issueNumber = judged ?? linked[0]!;
   }
   const go = goCallOn(entries, issueNumber);
@@ -810,7 +827,7 @@ async function replayCommand(args: string[]): Promise<number> {
   const mirrorOf = (repo: string): Promise<Mirror> => {
     let mirror = mirrors.get(repo);
     if (mirror === undefined) {
-      mirror = openRepo({ forge: "github", host: GITHUB, path: repo }, dataDirectory).then(async ({ mirror: opened }) => {
+      mirror = openRepo(repoSetting(repo), dataDirectory).then(async ({ mirror: opened }) => {
         await opened.updateDefaultBranch();
         return opened;
       });

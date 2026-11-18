@@ -14,7 +14,7 @@ import type { FailingView } from "./api-types.ts";
 /** One step of a pass on a repo that failed. */
 export interface RepoFailure {
   at: string;
-  /** Which step failed, in words: "reading GitHub", "judging #12", "acting on PR #7". */
+  /** Which step failed, in words: "reading the forge", "judging #12", "acting on PR #7". */
   step: string;
   /** The error, on one line. */
   message: string;

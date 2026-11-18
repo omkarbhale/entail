@@ -67,6 +67,7 @@ function call(directory: string, repo: string, issue: number, decided: IssueCall
 test("a repo is named owner/name, from a URL too, and kept in lower case", () => {
   assert.equal(repoName("Acme/Tally"), "acme/tally");
   assert.equal(repoName("https://github.com/acme/tally.git"), "acme/tally");
+  assert.equal(repoName("https://gitlab.com/Acme/Tools/Tally"), "gitlab:acme/tools/tally");
   for (const bad of ["acme", "acme/tally/x", "../x", "acme/..", "a b/c"]) assert.throws(() => repoName(bad), OwnerError, bad);
 });
 

@@ -12,8 +12,9 @@ import { Health } from "../src/health.ts";
 import { LOCK_FILE } from "../src/lock.ts";
 import { appendEntry } from "../src/records.ts";
 
-test("an issue reference is owner/repo#number", () => {
+test("an issue reference is owner/repo#number, or gitlab:group/repo#number", () => {
   assert.deepEqual(parseIssueReference("omkarbhale/entail#179"), { path: "omkarbhale/entail", number: 179 });
+  assert.deepEqual(parseIssueReference("gitlab:acme/tools/tally#12"), { path: "gitlab:acme/tools/tally", number: 12 });
   for (const bad of ["omkarbhale/entail", "entail#3", "a/b#0", "a/b#x", "https://github.com/a/b/issues/3"]) {
     assert.throws(() => parseIssueReference(bad), /not an issue reference/u, bad);
   }

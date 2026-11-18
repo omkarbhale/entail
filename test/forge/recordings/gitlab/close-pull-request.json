@@ -1,0 +1,50 @@
+{
+  "host": "gitlab.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "PUT",
+        "path": "projects/acme%2Ftally/merge_requests/4",
+        "body": {
+          "state_event": "close"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "RateLimit-Limit": "2000",
+          "RateLimit-Remaining": "1988",
+          "RateLimit-Reset": "1794139200"
+        },
+        "body": {
+          "id": 8004,
+          "iid": 4,
+          "project_id": 5001,
+          "title": "Read words from standard input",
+          "description": "Closes #2",
+          "state": "closed",
+          "draft": false,
+          "sha": "4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e",
+          "source_branch": "stdin",
+          "target_branch": "main",
+          "author": {
+            "id": 1002,
+            "username": "reporter",
+            "name": "Reporter",
+            "state": "active",
+            "web_url": "https://gitlab.com/reporter"
+          },
+          "user_notes_count": 0,
+          "detailed_merge_status": "not_open",
+          "has_conflicts": false,
+          "merge_commit_sha": null,
+          "squash_commit_sha": null,
+          "created_at": "2026-11-02T09:00:00.000Z",
+          "updated_at": "2026-11-08T11:00:00.000Z",
+          "web_url": "https://gitlab.com/acme/tally/-/merge_requests/4"
+        }
+      }
+    }
+  ]
+}

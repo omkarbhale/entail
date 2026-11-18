@@ -1,0 +1,97 @@
+{
+  "host": "gitlab.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "projects/acme%2Ftally/merge_requests/4/diffs?per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "RateLimit-Limit": "2000",
+          "RateLimit-Remaining": "1988",
+          "RateLimit-Reset": "1794139200",
+          "X-Next-Page": "2",
+          "X-Page": "1",
+          "X-Per-Page": "100"
+        },
+        "body": [
+          {
+            "diff": "@@ -0,0 +1,40 @@\n+line 0\n+line 1\n+line 2\n+line 3\n+line 4\n+line 5\n+line 6\n+line 7\n+line 8\n+line 9\n+line 10\n+line 11\n+line 12\n+line 13\n+line 14\n+line 15\n+line 16\n+line 17\n+line 18\n+line 19\n+line 20\n+line 21\n+line 22\n+line 23\n+line 24\n+line 25\n+line 26\n+line 27\n+line 28\n+line 29\n+line 30\n+line 31\n+line 32\n+line 33\n+line 34\n+line 35\n+line 36\n+line 37\n+line 38\n+line 39\n",
+            "collapsed": false,
+            "too_large": false,
+            "new_path": "src/stdin.ts",
+            "old_path": "src/stdin.ts",
+            "a_mode": "0",
+            "b_mode": "100644",
+            "new_file": true,
+            "renamed_file": false,
+            "deleted_file": false,
+            "generated_file": false
+          },
+          {
+            "diff": "@@ -1,5 +1,7 @@\n # tally\n-Counts words in files.\n+Counts words in files,\n+or in standard input.\n \n+Run `tally -` to read standard input.\n",
+            "collapsed": false,
+            "too_large": false,
+            "new_path": "README.md",
+            "old_path": "README.md",
+            "a_mode": "100644",
+            "b_mode": "100644",
+            "new_file": false,
+            "renamed_file": false,
+            "deleted_file": false,
+            "generated_file": false
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "projects/acme%2Ftally/merge_requests/4/diffs?per_page=100&page=2"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "RateLimit-Limit": "2000",
+          "RateLimit-Remaining": "1988",
+          "RateLimit-Reset": "1794139200",
+          "X-Next-Page": "",
+          "X-Page": "2",
+          "X-Per-Page": "100"
+        },
+        "body": [
+          {
+            "diff": "",
+            "collapsed": false,
+            "too_large": false,
+            "new_path": "docs/usage.md",
+            "old_path": "docs/old-usage.md",
+            "a_mode": "100644",
+            "b_mode": "100644",
+            "new_file": false,
+            "renamed_file": true,
+            "deleted_file": false,
+            "generated_file": false
+          },
+          {
+            "diff": "@@ -1,12 +0,0 @@\n-old 0\n-old 1\n-old 2\n-old 3\n-old 4\n-old 5\n-old 6\n-old 7\n-old 8\n-old 9\n-old 10\n-old 11\n",
+            "collapsed": false,
+            "too_large": false,
+            "new_path": "src/legacy.ts",
+            "old_path": "src/legacy.ts",
+            "a_mode": "100644",
+            "b_mode": "0",
+            "new_file": false,
+            "renamed_file": false,
+            "deleted_file": true,
+            "generated_file": false
+          }
+        ]
+      }
+    }
+  ]
+}

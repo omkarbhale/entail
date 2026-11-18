@@ -1,12 +1,12 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
 import { api, ApiError, failureText, type ActionView, type CallView, type HeldView, type OwnerCallName } from "../api.ts";
-import { answerChoices, issueKey, overrideChoices, receiptText, refNumber, subject } from "../format.ts";
+import { answerChoices, forgeName, issueKey, overrideChoices, receiptText, refNumber, subject } from "../format.ts";
 import { dropHeldFromCache, holdInCache, WAITING } from "../queries.ts";
 import { useDraft, useToast } from "../state.tsx";
 import { Chip, Spinner } from "./Verdict.tsx";
 
-/** The owner's three answers to a call, each recorded at once and held for ten seconds before entail acts on GitHub. */
+/** The owner's three answers to a call, each recorded at once and held for ten seconds before entail acts on the forge. */
 
 export type OwnerRequest =
   | { kind: "confirm" }
@@ -35,10 +35,10 @@ export function pendingVerb(kind: OwnerRequest["kind"]): string {
   return VERBS[kind];
 }
 
-export function ErrorNote({ error, onDismiss }: { error: unknown; onDismiss: () => void }) {
+export function ErrorNote({ error, repo, onDismiss }: { error: unknown; repo: string; onDismiss: () => void }) {
   return (
     <div className="err" role="alert">
-      {failureText(error)}{" "}
+      {failureText(error, `nothing was recorded and nothing was sent to ${forgeName(repo)}`)}{" "}
       <button type="button" className="link" onClick={onDismiss}>
         OK
       </button>
@@ -117,7 +117,7 @@ export function OverrideForm({ item, act, onCancel }: { item: CallView; act: Ret
           Say why in a line: it goes on the {subject(item)} and into the case book.
         </div>
       )}
-      {act.isError && <ErrorNote error={act.error} onDismiss={() => act.reset()} />}
+      {act.isError && <ErrorNote error={act.error} repo={item.repo} onDismiss={() => act.reset()} />}
     </form>
   );
 }
@@ -175,7 +175,7 @@ export function AnswerForm({ item, act, inputRef }: { item: CallView; act: Retur
           <kbd>a</kbd> answer
         </span>
       </div>
-      {act.isError && <ErrorNote error={act.error} onDismiss={() => act.reset()} />}
+      {act.isError && <ErrorNote error={act.error} repo={item.repo} onDismiss={() => act.reset()} />}
     </form>
   );
 }
@@ -194,7 +194,7 @@ export function Receipt({ held, onUndone, onGone }: { held: HeldView; onUndone?:
     mutationFn: () => api.undo(held.item.id),
     onSuccess: () => {
       client.setQueryData(WAITING, (data: Parameters<typeof dropHeldFromCache>[0]) => dropHeldFromCache(data, held.item.id));
-      toast("Undone. Nothing was sent to GitHub.");
+      toast(`Undone. Nothing was sent to ${forgeName(held.item.repo)}.`);
       onUndone?.(held.action);
       void client.invalidateQueries();
     },

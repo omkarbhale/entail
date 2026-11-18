@@ -223,6 +223,28 @@ test("the log is paged by whole days in the owner's time zone, newest first, and
   assert.equal((await api.call("GET", "/api/log?before=yesterday")).status, 400);
 });
 
+test("the board enrolls a GitLab project, subgroups included, and reaches it by its whole name", async (t) => {
+  const api = await serve(t);
+  const bad = await api.call("POST", "/api/repos", { repo: "gitlab:tally" });
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.error, /gitlab:group\/name/u);
+  const enrolled = await api.call("POST", "/api/repos", { repo: "https://gitlab.com/Acme/Tools/Tally" });
+  assert.equal(enrolled.status, 201);
+  assert.equal(enrolled.body.repo.repo, "gitlab:acme/tools/tally");
+  assert.deepEqual(api.opened.slice(-1), ["gitlab:acme/tools/tally"], "the forge is reached for the GitLab name");
+  assert.ok(enrolled.body.repo.pins.file.endsWith(join("pins", "gitlab.com", "acme", "tools", "tally.md")), enrolled.body.repo.pins.file);
+
+  const path = `/api/repos/${encodeURIComponent("gitlab:acme/tools/tally")}`;
+  assert.equal((await api.call("PATCH", path, { confirm: false })).body.confirm, false);
+  assert.deepEqual((await api.call("POST", `${path}/check`, {})).body.repo, "gitlab:acme/tools/tally");
+  assert.deepEqual((await api.call("POST", `${path}/backlog`, {})).body, { repo: "gitlab:acme/tools/tally", issues: [3, 5, 8] });
+  assert.equal((await api.call("DELETE", path, {})).status, 200);
+  assert.deepEqual(
+    readLog(api.dataDirectory, "gitlab:acme/tools/tally").map((entry) => entry.type),
+    ["enrolled", "settings", "backlog", "unenrolled"],
+  );
+});
+
 test("check now runs a pass for the repo, and the backlog asks entail to judge the issues open on GitHub", async (t) => {
   const api = await serve(t);
   assert.equal((await api.call("POST", "/api/repos/acme/tally/check", {})).status, 404);
