@@ -36,6 +36,7 @@ A PR merges when it solves its ticket's problem, meets its criteria and leaves t
 Every call settled automatically is logged with its reason, so it can be audited later.
 Choices a model does not notice it is making cannot be caught reliably, so entail makes them visible and attributable afterwards instead of claiming to prevent them.
 entail also checks merged work against the current vision on a schedule and files a ticket for any drift it finds, which then goes through the same intake as any other.
+When the owner asks, entail also suggests work from the vision and the product as it stands, filed as ordinary tickets that go through the same intake.
 entail's judging is measured against a case book of real tickets and the owner's own calls on them.
 A change to how entail judges is checked by replaying that book before it lands, so a fix for one case does not quietly break another.
 Autonomy grows as the vision covers more and trust is earned.

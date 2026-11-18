@@ -141,3 +141,15 @@ test("a dry run prints the label it would put on and writes none", async (t) => 
   assert.match(h.printed.join("\n"), /would post on acme\/tally#14 and close it, labelled entail:no:/u);
   assert.deepEqual(h.forge.labelWrites, []);
 });
+
+test("a suggestion entail filed goes through intake like any new issue and keeps its entail:suggested label beside the call's", async (t) => {
+  const h = harness(t, { confirm: false });
+  h.forge.file(12, "Count words in PDFs", "Suggested by Omkar's entail from the vision and the product as they stand.\n\n<!-- entail suggestion 77.0 -->");
+  h.forge.issues.get(12)!.labels = ["entail:suggested"];
+  h.forge.edit(12, {});
+  h.script(12, verdict({ call: "no", reason: "Not better." }));
+  await h.pass();
+  assert.deepEqual(h.forge.labelsOn(12), ["entail:suggested", "entail:no"]);
+  assert.deepEqual(h.forge.labelWrites, ["+entail:no #12"], "nothing is taken off");
+  assert.deepEqual(h.forge.closed, [12]);
+});

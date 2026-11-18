@@ -202,6 +202,22 @@ export class GitLabForge implements Forge {
     return raw.map((issue) => this.#field(issue, "iid", "number", "issue")).sort((a, b) => a - b);
   }
 
+  async openIssues(): Promise<Issue[]> {
+    return this.#listIssues({ state: "opened" });
+  }
+
+  async labelledIssues(label: string): Promise<Issue[]> {
+    assertEntailLabel(label);
+    return this.#listIssues({ state: "all", labels: label });
+  }
+
+  /** The issues the list answers with for `filter`, oldest first. */
+  async #listIssues(filter: Record<string, string>): Promise<Issue[]> {
+    const params = new URLSearchParams({ ...filter, order_by: "created_at", sort: "asc", per_page: String(PAGE_SIZE) });
+    const raw = await this.#readPages(`${this.#projectRef}/issues`, params, () => false);
+    return raw.map((issue) => this.#issue(issue));
+  }
+
   /**
    * GitLab moves an issue by creating it afresh in the new project, with a
    * system note on it saying where it was moved from.
@@ -470,6 +486,12 @@ export class GitLabForge implements Forge {
     const note = await this.#sendJson("POST", path, { body });
     const id = this.#field(note, "id", "number", path);
     return { id, url: this.#noteUrl(target, number, id) };
+  }
+
+  async createIssue(title: string, body: string, labels: readonly string[]): Promise<Issue> {
+    for (const label of labels) assertEntailLabel(label);
+    for (const label of labels) await this.#ensureLabel(label);
+    return this.#issue(await this.#sendJson("POST", `${this.#projectRef}/issues`, { title, description: body, labels: labels.join(",") }));
   }
 
   async addLabel(issueNumber: number, label: string): Promise<void> {

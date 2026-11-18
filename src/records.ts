@@ -297,6 +297,62 @@ export interface StartedEntry extends EntryBase {
   error?: string;
 }
 
+/** One piece of work a suggestion run found worth filing, as the issue it is filed as. */
+export interface Suggestion {
+  title: string;
+  /** The issue's text, problem first and then what should change. */
+  body: string;
+  /** Whether it fits one PR, or is larger and goes through intake as an oversized ticket. */
+  size: "one PR" | "larger than one PR";
+  /** The vision lines it rests on, quoted; empty when it rests on the product alone. */
+  visionLines: string[];
+}
+
+/** Something a suggestion run considered and did not suggest, with why. */
+export interface LeftOut {
+  item: string;
+  reason: string;
+}
+
+/**
+ * The owner asked entail to suggest work for the repo, and the run made
+ * these suggestions. Each is filed as an issue labelled `entail:suggested`
+ * whose body carries this entry's id and the suggestion's index in a hidden
+ * marker, so a restart never files one twice.
+ */
+export interface SuggestedEntry extends EntryBase, ByOwner {
+  type: "suggested";
+  /** The default branch's commit the repo was read at. */
+  sha: string;
+  visionCommit: string | null;
+  suggestions: Suggestion[];
+  leftOut: LeftOut[];
+  model: string;
+  effort: Effort;
+  promptVersion: string;
+  costUsd: number | null;
+}
+
+/** One suggestion of a run filed as an issue: found already filed, or filed now. */
+export interface SuggestionFiledEntry extends EntryBase {
+  type: "suggestion-filed";
+  /** The suggested entry. */
+  for: number;
+  /** The suggestion's index in it. */
+  index: number;
+  issue: { number: number; url: string };
+  /** Whether the issue was found already filed, by its marker, rather than filed now. */
+  already: boolean;
+}
+
+/** A suggestion run the owner asked for gave no suggestions: the model run failed. Nothing was filed. */
+export interface SuggestFailedEntry extends EntryBase, ByOwner {
+  type: "suggest-failed";
+  model: string;
+  effort: Effort;
+  reason: string;
+}
+
 export type OwnerAction = ConfirmedEntry | OverriddenEntry | AnsweredEntry;
 
 export type Entry =
@@ -314,7 +370,10 @@ export type Entry =
   | LandingEntry
   | LandingFailedEntry
   | PrActedEntry
-  | StartedEntry;
+  | StartedEntry
+  | SuggestedEntry
+  | SuggestionFiledEntry
+  | SuggestFailedEntry;
 
 /** An entry as written, before it has an id and a time. */
 export type NewEntry = Entry extends infer E ? (E extends Entry ? Omit<E, "id" | "at"> : never) : never;

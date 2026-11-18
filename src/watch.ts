@@ -61,6 +61,7 @@ import {
   workStarted,
 } from "./records.ts";
 import { handoffFor, runStart } from "./starts.ts";
+import { SUGGESTED_LABEL, type SuggestReader } from "./suggest.ts";
 import { readVision } from "./vision.ts";
 
 /**
@@ -594,7 +595,8 @@ async function act(
 async function putLabel(forge: WatchForge, issue: number, label: string, carried: readonly string[], cannotLabel: () => Promise<string | null>): Promise<LabelChange> {
   const removed: string[] = [];
   const already = carried.includes(label);
-  const others = carried.filter((other) => other !== label && other.startsWith(ENTAIL_LABEL_PREFIX) && isEntailLabel(other));
+  // `entail:suggested` says where the issue came from, not what was called on it, so it stays.
+  const others = carried.filter((other) => other !== label && other !== SUGGESTED_LABEL && other.startsWith(ENTAIL_LABEL_PREFIX) && isEntailLabel(other));
   if (already && others.length === 0) return { label, already, removed };
   const cannot = await cannotLabel();
   if (cannot !== null) return { label, already: false, removed, failed: cannot };
@@ -955,10 +957,19 @@ export function mirrorReader(dataDirectory: string): RepoReader {
  * against the default branch's head and checks it out until the judgment is
  * done.
  */
-export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prReader: PullRequestReader } {
+export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prReader: PullRequestReader; suggestReader: SuggestReader } {
   const mirrors = new Map<string, Promise<Mirror>>();
   const lastCommit = new Map<string, string>();
-  const mirrorOf = (repo: string, forge: WatchForge): Promise<Mirror> => {
+  /** The default branch commits a suggestion run is reading, with how many runs read each: their checkouts stay until released. */
+  const held = new Map<string, number>();
+  /** One default branch update at a time per repo, since a suggestion run reads beside the pass. */
+  const updates = new Map<string, Promise<unknown>>();
+  const updateDefaultBranch = (repo: string, mirror: Mirror) => {
+    const update = (updates.get(repo) ?? Promise.resolve()).catch(() => {}).then(() => mirror.updateDefaultBranch());
+    updates.set(repo, update);
+    return update;
+  };
+  const mirrorOf = (repo: string, forge: Pick<WatchForge, "project" | "setting">): Promise<Mirror> => {
     let opening = mirrors.get(repo);
     if (opening === undefined) {
       opening = forge.project().then((project) =>
@@ -980,9 +991,9 @@ export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prRe
   };
   const reader: RepoReader = async (repo, forge) => {
     const mirror = await mirrorOf(repo, forge);
-    const head = await mirror.updateDefaultBranch();
+    const head = await updateDefaultBranch(repo, mirror);
     const previous = lastCommit.get(repo);
-    if (previous !== undefined && previous !== head.commit) await mirror.removeCheckout(previous);
+    if (previous !== undefined && previous !== head.commit && !held.has(previous)) await mirror.removeCheckout(previous);
     const checkout = await mirror.checkout(head.commit);
     lastCommit.set(repo, head.commit);
     return {
@@ -994,7 +1005,7 @@ export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prRe
   };
   const prReader: PullRequestReader = async (repo, forge, pr, head) => {
     const mirror = await mirrorOf(repo, forge);
-    const base = await mirror.updateDefaultBranch();
+    const base = await updateDefaultBranch(repo, mirror);
     const fetched = await mirror.fetchPullRequestHead(pr, head);
     if (fetched.commit !== head) throw new Error(`the pull request's head moved to ${fetched.commit} while it was read`);
     const diff = await mirror.pullRequestDiff(base.commit, head);
@@ -1018,5 +1029,30 @@ export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prRe
       },
     };
   };
-  return { reader, prReader };
+  const suggestReader: SuggestReader = async (repo, forge) => {
+    const mirror = await mirrorOf(repo, forge);
+    const head = await updateDefaultBranch(repo, mirror);
+    held.set(head.commit, (held.get(head.commit) ?? 0) + 1);
+    let released = false;
+    const release = async () => {
+      if (released) return;
+      released = true;
+      const left = (held.get(head.commit) ?? 1) - 1;
+      if (left > 0) held.set(head.commit, left);
+      else held.delete(head.commit);
+      // The issue reader's own checkout is its to remove.
+      if (left <= 0 && ![...lastCommit.values()].includes(head.commit)) await mirror.removeCheckout(head.commit);
+    };
+    try {
+      const checkout = await mirror.checkout(head.commit);
+      const tree = (await mirror.git.run(["ls-tree", "-r", "--name-only", "-z", head.commit, "--"])).stdout.toString("utf8").split("\0").filter((path) => path !== "");
+      const readmePath = tree.filter((path) => /^readme(\.[\w-]+)?$/iu.test(path)).sort((a, b) => Number(/\.md$/iu.test(b)) - Number(/\.md$/iu.test(a)))[0];
+      const readme = readmePath === undefined ? null : { path: readmePath, text: (await mirror.git.run(["show", `${head.commit}:${readmePath}`, "--"])).stdout.toString("utf8") };
+      return { checkout: checkout.directory, sha: checkout.commit, vision: await visionAt(mirror, head.commit), readme, tree, release };
+    } catch (error) {
+      await release();
+      throw error;
+    }
+  };
+  return { reader, prReader, suggestReader };
 }

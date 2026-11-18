@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
-import { api, ApiError, type CheckResponse, type EnrollResponse, type RepoView, type SettingsView } from "../api.ts";
+import { api, ApiError, type CheckResponse, type EnrollResponse, type RepoView, type SettingsView, type SuggestingView } from "../api.ts";
 import { ENROLLED, EnrollForm, Welcome } from "../components/Enroll.tsx";
 import { External, Spinner } from "../components/Verdict.tsx";
 import { ago, forgeName, repoHref } from "../format.ts";
@@ -250,6 +250,7 @@ function RepoCard({ repo, settings, showRepo }: { repo: RepoView; settings: Sett
           <Saved pending={model.mutation.isPending} saved={model.saved} />
         </span>
       </div>
+      <SuggestWork repo={repo} now={now} showLog={() => showRepo(repo.repo, "log")} />
       <div className="rrow">
         <span className="lbl">Vision</span>
         <span className="val small">
@@ -318,6 +319,95 @@ function RepoCard({ repo, settings, showRepo }: { repo: RepoView; settings: Sett
       )}
     </li>
   );
+}
+
+/**
+ * Suggest work: a run that reads the vision and the product and files what it
+ * finds worth doing as issues labelled entail:suggested, with the model and
+ * effort picked here. One run per repo at a time; it puts nothing on the board.
+ */
+function SuggestWork({ repo, now, showLog }: { repo: RepoView; now: number; showLog: () => void }) {
+  const client = useQueryClient();
+  const [model, setModel] = useState(repo.uses.model);
+  const [effort, setEffort] = useState<string>(repo.uses.effort);
+  const suggest = useMutation({
+    mutationFn: () => api.suggest(repo.repo, { model, effort }),
+    onSuccess: () => void client.invalidateQueries(),
+  });
+  const running = repo.suggesting?.state === "running";
+  return (
+    <div className="rrow">
+      <span className="lbl">Suggest work</span>
+      <span className="val small">
+        <span className="val">
+          <select aria-label={`Model to suggest work for ${repo.repo} with`} value={model} onChange={(event) => setModel(event.target.value)} disabled={running || suggest.isPending}>
+            {options(MODELS, model).map((one) => (
+              <option key={one}>{one}</option>
+            ))}
+          </select>
+          <select aria-label={`Effort to suggest work for ${repo.repo} with`} value={effort} onChange={(event) => setEffort(event.target.value)} disabled={running || suggest.isPending}>
+            {EFFORTS.map((one) => (
+              <option key={one}>{one}</option>
+            ))}
+          </select>
+          <button type="button" className="btn sm" onClick={() => suggest.mutate()} disabled={running || suggest.isPending}>
+            {running || suggest.isPending ? (
+              <>
+                <Spinner />
+                Suggesting…
+              </>
+            ) : (
+              "Suggest work"
+            )}
+          </button>
+        </span>
+        {suggest.isError ? (
+          <span className="bad" role="status">
+            Not started: {suggest.error instanceof ApiError && !suggest.error.network ? suggest.error.message : "entail did not answer; try again"}.
+          </span>
+        ) : (
+          repo.suggesting !== null && <SuggestingLine suggesting={repo.suggesting} now={now} showLog={showLog} />
+        )}
+        <span className="muted">
+          Reads the vision and the product as they stand and files what it finds worth doing as issues labelled <code>entail:suggested</code>; each then gets the usual call. A big product can take a while.
+        </span>
+      </span>
+    </div>
+  );
+}
+
+function SuggestingLine({ suggesting, now, showLog }: { suggesting: SuggestingView; now: number; showLog: () => void }) {
+  const log = (
+    <a href="#/log" onClick={(event) => (event.preventDefault(), showLog())}>
+      See the run in the log
+    </a>
+  );
+  switch (suggesting.state) {
+    case "running":
+      return (
+        <span role="status">
+          {suggesting.resuming ? "Filing what an earlier run left unfiled…" : `Suggesting, started ${ago(suggesting.since, now)} with ${suggesting.model} at ${suggesting.effort} effort…`}
+        </span>
+      );
+    case "done":
+      return (
+        <span role="status">
+          Last run {ago(suggesting.at, now)}:{" "}
+          {suggesting.suggested === 0
+            ? "nothing found worth filing. "
+            : suggesting.filed === suggesting.suggested
+              ? `${suggesting.suggested} suggestion${suggesting.suggested === 1 ? "" : "s"}, all filed as issues. `
+              : `${suggesting.suggested} suggestions, ${suggesting.filed} filed as issues so far; the rest are filed on the next run or when entail restarts. `}
+          {log}, with what it left out.
+        </span>
+      );
+    case "failed":
+      return (
+        <span role="status" className="bad">
+          Last run {ago(suggesting.at, now)} failed: {suggesting.reason}
+        </span>
+      );
+  }
 }
 
 function checkText(outcome: { ok: true; result: CheckResponse } | { ok: false; error: unknown }, repo: string): string {

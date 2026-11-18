@@ -44,7 +44,7 @@ The [user guide](docs/guide.md) is the reference:
 - [Running](docs/guide.md#running) and [updating](docs/guide.md#updating) the service
 - [Watching](docs/guide.md#watching), [acting on the call](docs/guide.md#acting-on-the-call) and its labels, [landing a PR](docs/guide.md#landing-a-pr)
 - [Confirm mode](docs/guide.md#confirm-mode) and [the board](docs/guide.md#the-board), with its keys and pages
-- [Notices](docs/guide.md#notices), including failing and stalled repos, and [starting work](docs/guide.md#starting-work) with the handoff JSON
+- [Notices](docs/guide.md#notices), including failing and stalled repos, and [starting work](docs/guide.md#starting-work) with the handoff JSON, and [suggesting work](docs/guide.md#suggesting-work)
 - [The board's API](docs/guide.md#the-boards-api)
 - [What entail keeps](docs/guide.md#what-entail-keeps), with the data directory per platform
 - [The call on an issue](docs/guide.md#the-call-on-an-issue) and [the case book and replay](docs/guide.md#the-case-book-and-replay)

@@ -28,10 +28,13 @@ test("a usage error exits 2 without reaching a forge or a model", async (t) => {
   assert.equal(await main(["judge", "a/b#1", "--effort", "huge"]), 2);
   assert.equal(await main(["replay", "--concurrency", "0"]), 2);
   assert.equal(await main(["replay", "extra"]), 2);
+  assert.equal(await main(["suggest"]), 2);
+  assert.equal(await main(["suggest", "a/b", "--effort", "huge"]), 2);
   assert.equal(await main(["frobnicate"]), 2);
   assert.equal(await main([]), 2);
   assert.equal(await main(["--help"]), 0);
   assert.match(errors[1]!, /--effort must be one of low, medium, high, xhigh, max/u);
+  assert.match(errors[5]!, /--effort must be one of/u);
 });
 
 test("the owner's commands check their arguments before touching anything", async (t) => {

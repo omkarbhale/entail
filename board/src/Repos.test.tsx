@@ -157,4 +157,40 @@ describe("Repos", () => {
     expect(screen.getAllByText(/entail settings --start '<command>'/u)).toBeTruthy();
     expect(api.sent(/PATCH \/api\/settings/u)).toHaveLength(0);
   });
+  it("suggests work with the model and effort picked, shows the run in flight, and says when one is already running", async () => {
+    const api = fakeApi({ repos: [aRepo({ uses: { model: "claude-sonnet-5-5", effort: "high" } })] });
+    api.route((method, path, body) => {
+      if (method === "POST" && path === "/api/repos/omkarbhale/entail/suggest") {
+        api.state.repos = [aRepo({ suggesting: { state: "running", since: new Date().toISOString(), model: body.model, effort: body.effort, resuming: false } })];
+        return { status: 202, body: { repo: "omkarbhale/entail", since: new Date().toISOString(), ...body } };
+      }
+      return undefined;
+    });
+    renderBoard("#/repos");
+    const model = (await screen.findByRole("combobox", { name: "Model to suggest work for omkarbhale/entail with" })) as HTMLSelectElement;
+    expect(model.value).toBe("claude-sonnet-5-5");
+    expect((screen.getByRole("combobox", { name: "Effort to suggest work for omkarbhale/entail with" }) as HTMLSelectElement).value).toBe("high");
+    await userEvent.selectOptions(model, "claude-opus-5-5");
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Effort to suggest work for omkarbhale/entail with" }), "max");
+    await userEvent.click(screen.getByRole("button", { name: "Suggest work" }));
+    expect(await screen.findByText(/Suggesting, started just now with claude-opus-5-5 at max effort…/u)).toBeTruthy();
+    expect(api.sent(/POST \/api\/repos\/omkarbhale\/entail\/suggest/u)[0]!.body).toEqual({ model: "claude-opus-5-5", effort: "max" });
+    expect((screen.getByRole("button", { name: "Suggesting…" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows how the last run ended, and the refusal when a run is already going", async () => {
+    const api = fakeApi({ repos: [aRepo({ suggesting: { state: "done", at: new Date().toISOString(), run: 9, suggested: 3, filed: 3 } })] });
+    api.fail(/suggest/u, { status: 409, body: { error: "entail is already suggesting work for omkarbhale/entail; wait for that run to finish" } });
+    renderBoard("#/repos");
+    expect(await screen.findByText(/Last run just now: 3 suggestions, all filed as issues\./u)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "See the run in the log" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Suggest work" }));
+    expect(await screen.findByText(/Not started: entail is already suggesting work for omkarbhale\/entail; wait for that run to finish\./u)).toBeTruthy();
+  });
+
+  it("says why the last run failed", async () => {
+    fakeApi({ repos: [aRepo({ suggesting: { state: "failed", at: new Date().toISOString(), reason: "the run gave no suggestions (timeout): ended after 60 minutes" } })] });
+    renderBoard("#/repos");
+    expect(await screen.findByText(/Last run just now failed: the run gave no suggestions \(timeout\)/u)).toBeTruthy();
+  });
 });

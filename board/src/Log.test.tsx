@@ -40,6 +40,7 @@ describe("Log", () => {
           ],
         }),
       ],
+      suggestions: [],
       next: null,
       counts,
     };
@@ -73,8 +74,8 @@ describe("Log", () => {
     const api = fakeApi({
       log: (query) =>
         query.get("before") === null
-          ? { rows: [aRow(recent, { day: dayOf(0) })], next: dayOf(0), counts }
-          : { rows: [aRow(old, { day: dayOf(9) })], next: null, counts },
+          ? { rows: [aRow(recent, { day: dayOf(0) })], suggestions: [], next: dayOf(0), counts }
+          : { rows: [aRow(old, { day: dayOf(9) })], suggestions: [], next: null, counts },
     });
     renderBoard("#/log");
     expect(await screen.findByText("Recent")).toBeTruthy();
@@ -94,7 +95,7 @@ describe("Log", () => {
 
   it("overrides a call entail acted on at once from its row, with the same one-line form and Undo", async () => {
     const auto = aCall({ id: 31, status: "auto", confirmMode: false, judgedAt: at(0), issue: { number: 7, title: "Read flags from ~/.tallyrc", url: "u", author: "r" } });
-    const api = fakeApi({ log: () => ({ rows: [aRow(auto, { day: dayOf(0) })], next: null, counts }) });
+    const api = fakeApi({ log: () => ({ rows: [aRow(auto, { day: dayOf(0) })], suggestions: [], next: null, counts }) });
     api.route((method, path, body) =>
       method === "POST" && path === "/api/calls/31/override"
         ? { status: 200, body: { id: 99, type: "overridden", at: new Date().toISOString(), by: "Omkar", call: 31, to: body.call, reason: body.reason, holdUntil: new Date(Date.now() + 10_000).toISOString() } }
@@ -115,7 +116,7 @@ describe("Log", () => {
     fakeApi({
       log: (query) => {
         filters.push(query.get("filter"));
-        return { rows: [aRow(merged, { day: dayOf(0), trail: [{ at: at(0), text: "Judged PR #1008: merge · claude-opus-5-5, low" }] })], next: null, counts: { ...counts, prs: 1 } };
+        return { rows: [aRow(merged, { day: dayOf(0), trail: [{ at: at(0), text: "Judged PR #1008: merge · claude-opus-5-5, low" }] })], suggestions: [], next: null, counts: { ...counts, prs: 1 } };
       },
     });
     renderBoard("#/log");
@@ -137,5 +138,41 @@ describe("Log", () => {
     api.fail(/GET \/api\/log/u, "network", false);
     renderBoard("#/log");
     expect(await screen.findByRole("heading", { name: "entail did not answer." })).toBeTruthy();
+  });
+  it("shows a suggestion run under its day, with the issues it filed and what it left out", async () => {
+    fakeApi({
+      log: () => ({
+        rows: [],
+        suggestions: [
+          {
+            id: 77,
+            repo: "omkarbhale/entail",
+            day: dayOf(0),
+            at: at(0, 11),
+            by: "Omkar",
+            model: "claude-opus-5-5",
+            effort: "max",
+            costUsd: 2.5,
+            sha: "c".repeat(40),
+            suggestions: [
+              { title: "Count words in PDFs", size: "one PR", visionLines: [], issue: { number: 210, url: "https://github.com/omkarbhale/entail/issues/210" } },
+              { title: "A plugin system", size: "larger than one PR", visionLines: [], issue: null },
+            ],
+            leftOut: [{ item: "Cloud sync", reason: "turned down before" }],
+            failed: null,
+          },
+        ],
+        next: null,
+        counts: { all: 0, waiting: 0, overridden: 0, questions: 0, prs: 0 },
+      }),
+    });
+    renderBoard("#/log");
+    const summary = await screen.findByText("2 suggestions, 1 filed as issues labelled entail:suggested; 1 left out.");
+    await userEvent.click(summary);
+    expect(screen.getByRole("link", { name: "#210 ↗" })).toBeTruthy();
+    expect(screen.getByText(/· larger than one PR/u)).toBeTruthy();
+    expect(screen.getByText("· not filed yet")).toBeTruthy();
+    expect(screen.getByText("Cloud sync")).toBeTruthy();
+    expect(screen.getByText("· turned down before")).toBeTruthy();
   });
 });

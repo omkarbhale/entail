@@ -61,6 +61,7 @@ import { goCallOn, heldActions, loggedRepos, readLog, readSettings, sendBacksPos
 import { formatReplay, replay, replayLandings } from "./replay.ts";
 import { forgeTitle, GITLAB_PREFIX, isRepo, repoSetting } from "./repo-ref.ts";
 import { installService, isWsl, machineServiceSystem, serviceStatus, uninstallService, type ServiceInputs } from "./service.ts";
+import { fileUnfiled, formatSuggestions, runSuggestions, SUGGEST_TIMEOUT_MS, SuggestionRuns } from "./suggest.ts";
 import { machineUpdate, update } from "./update.ts";
 import { mirrorReader, mirrorReaders, runPass, type PassOptions } from "./watch.ts";
 
@@ -88,6 +89,7 @@ const USAGE = `usage:
   entail judge <owner/repo>#<n> [--model <model>] [--effort <level>] [--json]
   entail land <owner/repo>#<pr> [--issue <n>] [--model <model>] [--effort <level>] [--json]
   entail replay [--model <model>] [--effort <level>] [--cases <dir>] [--concurrency <n>] [--json]
+  entail suggest <owner/repo> [--model <model>] [--effort <level>] [--json]
 
 enroll     watch a repo: entail makes the call on each issue filed or edited from now
            (or --since) on, and on each /entail mention. A repo starts in confirm mode,
@@ -135,6 +137,10 @@ land       make the landing call on one PR at its head and print it, against the
 replay     run every case in the case book through its judgment (issue cases through
            the call on an issue, landing cases through the call on a PR) and print
            agreement with the owner's calls, disagreements first.
+suggest    suggest work for an enrolled repo from its vision and the product as it stands
+           (the board's Suggest work does the same): file each suggestion as an issue
+           labelled entail:suggested, which then gets the usual call like any issue, and
+           print what it considered and left out. A run may take up to ${SUGGEST_TIMEOUT_MS / 60_000} minutes.
 
 --model    the model to run (default: the setting, ${DEFAULT_MODEL} unless changed)
 --effort   ${EFFORTS.join(", ")} (default: the setting, ${DEFAULT_EFFORT} unless changed; for
@@ -183,6 +189,8 @@ export async function main(argv: string[]): Promise<number> {
         return await landCommand(rest);
       case "replay":
         return await replayCommand(rest);
+      case "suggest":
+        return await suggestCommand(rest);
       case undefined:
       case "help":
       case "--help":
@@ -384,7 +392,7 @@ async function runCommand(args: string[]): Promise<number> {
   const forges = new Map<string, Forge>();
   const seen = new Map<string, ChangeDeduplicator>();
   const cursors = new CursorStore(dataDirectory);
-  const { reader, prReader } = mirrorReaders(dataDirectory);
+  const { reader, prReader, suggestReader } = mirrorReaders(dataDirectory);
   const runner = new ClaudeRunner();
   const stop = new AbortController();
   const passOptions = async (): Promise<PassOptions> => ({
@@ -429,6 +437,28 @@ async function runCommand(args: string[]): Promise<number> {
       onResult: (result) => (result.ok ? log.info("notice", { line: result.line }) : log.warn("notice-failed", { line: result.line, error: result.error })),
     });
     const health = new Health();
+    const suggestRunner = new ClaudeRunner({ timeoutMs: SUGGEST_TIMEOUT_MS });
+    const forgeOf = (repo: string) => createForge(repoSetting(repo));
+    const suggestions = new SuggestionRuns({
+      events: bus,
+      log,
+      run: async (repo, choice, signal) =>
+        runSuggestions({
+          dataDirectory,
+          repo,
+          by: await ownerName(dataDirectory),
+          forge: forgeOf(repo),
+          read: suggestReader,
+          runner: suggestRunner,
+          book: () => caseBook(dataDirectory),
+          ...choice,
+          signal,
+          log,
+        }),
+      resume: (repo) => fileUnfiled(dataDirectory, repo, forgeOf(repo)),
+    });
+    // What a run recorded but did not file before entail stopped is filed now.
+    for (const view of repoViews(dataDirectory, settingsIn(dataDirectory))) suggestions.resume(view.repo);
     const loop = new Loop({
       intervalMs: interval * 1000,
       bus,
@@ -464,6 +494,7 @@ async function runCommand(args: string[]): Promise<number> {
       loop,
       health,
       events: bus,
+      suggestions,
       forgeFor: (repo) => createForge(repoSetting(repo)),
       get url() {
         return boardUrl;
@@ -479,6 +510,8 @@ async function runCommand(args: string[]): Promise<number> {
     try {
       await loop.run(stop.signal);
     } finally {
+      suggestions.stop(stop.signal.reason);
+      await suggestions.settled();
       stopWatching();
       server.closeAllConnections();
       server.close();
@@ -872,6 +905,33 @@ async function replayCommand(args: string[]): Promise<number> {
     console.log(`${options.model} at ${options.effort} effort, about $${cost.toFixed(2)}`);
   }
   return [...results, ...landed].every((result) => result.agrees === true) ? 0 : 1;
+}
+
+async function suggestCommand(args: string[]): Promise<number> {
+  const { values, positionals } = parse(args, RUN_OPTIONS);
+  const repo = oneRepo(positionals, "suggest");
+  if (values.effort !== undefined && !(EFFORTS as readonly string[]).includes(values.effort)) throw new UsageError(`--effort must be one of ${EFFORTS.join(", ")}`);
+  const dataDirectory = ensureDataDirectory();
+  const view = repoViews(dataDirectory, settingsIn(dataDirectory)).find((one) => one.repo === repo);
+  if (view === undefined) throw new Error(`${repo} is not enrolled: enroll it first with entail enroll ${repo}`);
+  const choice = { model: values.model ?? view.uses.model, effort: (values.effort as Effort | undefined) ?? view.uses.effort };
+  if (!values.json) console.error(`Suggesting work for ${repo} with ${choice.model} at ${choice.effort} effort; this can take a while on a big product...`);
+  const outcome = await runSuggestions({
+    dataDirectory,
+    repo,
+    by: await ownerName(dataDirectory),
+    forge: createForge(repoSetting(repo)),
+    read: mirrorReaders(dataDirectory).suggestReader,
+    runner: new ClaudeRunner({ timeoutMs: SUGGEST_TIMEOUT_MS }),
+    book: () => caseBook(dataDirectory),
+    ...choice,
+  });
+  if (values.json) console.log(JSON.stringify(outcome, null, 2));
+  else if (outcome.ok) {
+    console.log(formatSuggestions(outcome.run, outcome.filed));
+    console.log(`\n${runLine(outcome.facts, choice)}; each filed issue gets entail's usual call on its next pass`);
+  } else console.error(`entail: ${outcome.failed.reason}`);
+  return outcome.ok ? 0 : 1;
 }
 
 /** When the earliest owner's action still in its undo window comes due, across the enrolled repos. */

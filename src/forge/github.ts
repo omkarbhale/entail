@@ -251,6 +251,37 @@ export class GitHubForge implements Forge {
     return numbers.sort((a, b) => a - b);
   }
 
+  async openIssues(): Promise<Issue[]> {
+    return this.#listIssues({ state: "open" });
+  }
+
+  async labelledIssues(label: string): Promise<Issue[]> {
+    assertEntailLabel(label);
+    return this.#listIssues({ state: "all", labels: label });
+  }
+
+  /** The issues the list answers with for `filter`, oldest first, without the pull requests it also carries. */
+  async #listIssues(filter: Record<string, string>): Promise<Issue[]> {
+    const params = new URLSearchParams({ ...filter, sort: "created", direction: "asc", per_page: String(PAGE_SIZE) });
+    let path = `repos/${this.setting.path}/issues?${params}`;
+    const issues: Issue[] = [];
+    for (;;) {
+      const page = await this.#get(path, {});
+      this.#ensureOk(page, path, "GET");
+      const body = parseJson(page, this.setting.host, path, "GET");
+      if (!Array.isArray(body)) throw this.#malformed(page.status, path, "expected a list");
+      for (const raw of body) {
+        // The issues list also carries pull requests.
+        if (isObject(raw) && "pull_request" in raw) continue;
+        issues.push(this.#issue(raw));
+      }
+      const next = nextPagePath(page.headers.link);
+      if (next === null) break;
+      path = next;
+    }
+    return issues;
+  }
+
   async transferredIn(issueNumber: number): Promise<boolean> {
     const repository = await this.#graphqlRepository(TRANSFERRED_QUERY, pathNumber(issueNumber), null);
     const items = graphqlField(graphqlField(repository, "issue"), "timelineItems");
@@ -611,6 +642,13 @@ export class GitHubForge implements Forge {
 
 
   // Writes
+
+  async createIssue(title: string, body: string, labels: readonly string[]): Promise<Issue> {
+    for (const label of labels) assertEntailLabel(label);
+    for (const label of labels) await this.#ensureLabel(label);
+    const path = `repos/${this.setting.path}/issues`;
+    return this.#issue(await this.#sendJson("POST", path, { title, body, labels: [...labels] }));
+  }
 
   /** Issues and PRs share GitHub's issue comments, so both post there. */
   async postComment(_target: ForgeTarget, number: number, body: string): Promise<PostedComment> {

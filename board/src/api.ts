@@ -9,6 +9,7 @@ import type {
   RepoView,
   SettingsView,
   StatusView,
+  SuggestResponse,
   WaitingResponse,
 } from "../../src/api-types.ts";
 
@@ -82,6 +83,7 @@ export const api = {
   changeRepo: (repo: string, change: { confirm?: boolean; model?: string | null; effort?: string | null }) => request<unknown>("PATCH", `/api/repos/${repoPath(repo)}`, change),
   check: (repo: string) => request<CheckResponse>("POST", `/api/repos/${repoPath(repo)}/check`, {}),
   backlog: (repo: string) => request<{ repo: string; issues: number[] }>("POST", `/api/repos/${repoPath(repo)}/backlog`, {}),
+  suggest: (repo: string, choice: { model: string; effort: string }) => request<SuggestResponse>("POST", `/api/repos/${repoPath(repo)}/suggest`, choice),
   changeSettings: (change: Partial<SettingsView>) => request<SettingsView>("PATCH", "/api/settings", change),
 };
 

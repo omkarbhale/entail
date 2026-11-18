@@ -47,6 +47,8 @@ function world(
     status?: Partial<RunningStatus> | null;
     drainSupported?: boolean;
     passPolls?: number;
+  /** How many status reads report a suggestion run in flight. */
+  suggestPolls?: number;
     service?: "active" | "none";
     serviceCli?: string;
     commandLine?: string;
@@ -73,6 +75,7 @@ function world(
     drainSupported: setup.drainSupported ?? true,
   };
   let polls = 0;
+  let suggestReads = 0;
   const abort = new AbortController();
   const system: ServiceSystem = {
     exec(file, args) {
@@ -108,7 +111,8 @@ function world(
         if (state.holder === null || state.status === null) return null;
         if (state.checking && ++polls >= (setup.passPolls ?? 0)) state.checking = false;
         if (setup.abortAfterPolls !== undefined && polls >= setup.abortAfterPolls) abort.abort();
-        return { checking: state.checking, draining: state.draining, pid: state.holder.pid, cli: join(checkout, "dist", "cli.js"), ...state.status };
+        const suggesting = suggestReads++ < (setup.suggestPolls ?? 0) ? ["acme/tally"] : [];
+        return { checking: state.checking, draining: state.draining, suggesting, pid: state.holder.pid, cli: join(checkout, "dist", "cli.js"), ...state.status };
       },
       async drain() {
         calls.push("POST /api/drain");
@@ -211,6 +215,14 @@ test("the service is drained, waits out the pass in flight, then is restarted th
   assert.deepEqual(order, [...BUILD, "POST /api/drain", RESTART]);
   assert.ok(running.printed.some((line) => /Waiting for the pass in flight to finish/u.test(line)));
   assert.match(running.printed.at(-1)!, /The entail service runs bbbbbbb now \(was aaaaaaa\); the board: http:\/\/127\.0\.0\.1:4380\//u);
+});
+
+test("a suggestion run in flight is waited out too before the restart", async (t) => {
+  const checkout = checkoutOf(t);
+  const running = world(t, checkout, { suggestPolls: 3 });
+  assert.equal((await update(running.options)).restarted, "service");
+  assert.ok(running.printed.some((line) => /Waiting for the suggestion run in flight for acme\/tally to finish/u.test(line)));
+  assert.equal(running.calls.filter((call) => call === RESTART).length, 1);
 });
 
 test("entail run by hand is drained and stopped, not restarted, and the owner is told to start it again", async (t) => {

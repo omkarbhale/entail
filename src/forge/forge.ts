@@ -357,6 +357,12 @@ export interface Forge {
   /** The numbers of the repo's open issues. */
   openIssueNumbers(): Promise<number[]>;
 
+  /** The repo's open issues, oldest first. */
+  openIssues(): Promise<Issue[]>;
+
+  /** Every issue in the repo carrying `label`, open or closed, oldest first. */
+  labelledIssues(label: string): Promise<Issue[]>;
+
   /**
    * What changed in the repo's issues, PRs and their comments since `cursor`,
    * or everything when `cursor` is null. A PR's description, head or state
@@ -380,6 +386,12 @@ export interface Forge {
   issue(issueNumber: number): Promise<Issue | null>;
 
   // The writes. Every comment passes the comment rules before it is posted.
+
+  /**
+   * Files a new issue with `title` and `body` exactly as given, carrying the
+   * `entail:` labels named, each created in the repo first if it is missing.
+   */
+  createIssue(title: string, body: string, labels: readonly string[]): Promise<Issue>;
 
   /** Posts a comment on an issue or PR, exactly as given. */
   postComment(target: ForgeTarget, number: number, body: string): Promise<PostedComment>;
