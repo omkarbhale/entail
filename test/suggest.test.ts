@@ -101,13 +101,24 @@ test("the prompt carries the vision, the README, the tree, the open issues and t
   assert.match(bare, /\[…100 more paths; list them in the checkout\]/u);
 });
 
-test("a suggestion with an open issue's title is left out as already filed, and one with no title is no usable answer", () => {
+test("a suggestion with an open issue's title is left out as already filed, and one with no title is left out too", () => {
   const read = readAnswer({ ...ANSWER, suggestions: [...ANSWER.suggestions, { title: " count WORDS in footnotes ", body: "x", size: "one PR", vision_lines: [] }] }, [{ number: 4, title: "Count words in footnotes" }]);
-  assert.ok(read.ok);
-  assert.deepEqual(read.value.suggestions.map((one) => one.title), ["Count words in PDFs", "A plugin system for formats"]);
-  assert.deepEqual(read.value.leftOut.at(-1), { item: "count WORDS in footnotes", reason: "already filed as #4" });
+  assert.deepEqual(read.suggestions.map((one) => one.title), ["Count words in PDFs", "A plugin system for formats"]);
+  assert.deepEqual(read.leftOut.at(-1), { item: "count WORDS in footnotes", reason: "already filed as #4" });
   const blank = readAnswer({ ...ANSWER, suggestions: [{ title: " ", body: "x", size: "one PR", vision_lines: [] }] }, []);
-  assert.deepEqual(blank, { ok: false, problem: "suggestion 1 has no title" });
+  assert.deepEqual(blank.suggestions, []);
+  assert.deepEqual(blank.leftOut.at(-1), { item: "suggestion 1", reason: "it has no title" });
+  const bodiless = readAnswer({ ...ANSWER, suggestions: [...ANSWER.suggestions, { title: "No body", body: " ", size: "one PR", vision_lines: [] }] }, []);
+  assert.equal(bodiless.suggestions.length, 2, "the valid suggestions are kept");
+  assert.deepEqual(bodiless.leftOut.at(-1), { item: "No body", reason: "it has no body" });
+});
+
+test("a closed suggestion is listed as closed in the prompt, and its title is never filed again", () => {
+  const issues = [{ number: 12, title: "Count words in PDFs", closed: true }];
+  assert.match(suggestPrompt(inputs({ openIssues: issues })), /- #12 \(closed\): Count words in PDFs/u);
+  const read = readAnswer(ANSWER, issues);
+  assert.deepEqual(read.suggestions.map((one) => one.title), ["A plugin system for formats"]);
+  assert.deepEqual(read.leftOut.at(-1), { item: "Count words in PDFs", reason: "already filed as #12" });
 });
 
 test("a filed suggestion says whose entail suggested it, never starts a line with a slash, and ends with its run's marker", () => {

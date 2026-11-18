@@ -88,8 +88,8 @@ export interface SuggestInputs {
   readme: { path: string; text: string } | null;
   /** Every path in the default branch's tree. */
   tree: string[];
-  /** The issues open now, so nothing already filed is suggested again. */
-  openIssues: { number: number; title: string }[];
+  /** The issues open now and the suggestions filed before and since closed, so nothing already filed is suggested again. */
+  openIssues: { number: number; title: string; closed?: boolean }[];
   /** The owner's past calls on this repo's issues, as precedent for their taste. */
   precedents: Case[];
   /** A read-only checkout of the default branch for the run to read, and its commit. */
@@ -113,7 +113,7 @@ export function suggestPrompt(inputs: SuggestInputs): string {
       ? "(the tree is empty)"
       : `${shown.join("\n")}${inputs.tree.length > shown.length ? `\n[…${inputs.tree.length - shown.length} more paths; list them in the checkout]` : ""}`;
   const open =
-    inputs.openIssues.length === 0 ? "No issues are open." : inputs.openIssues.map((issue) => `- #${issue.number}: ${issue.title}`).join("\n");
+    inputs.openIssues.length === 0 ? "No issues are open." : inputs.openIssues.map((issue) => `- #${issue.number}${issue.closed === true ? " (closed)" : ""}: ${issue.title}`).join("\n");
   const precedents = inputs.precedents.length === 0 ? "There are no past calls on this repo yet." : inputs.precedents.map(precedent).join("\n\n");
 
   return `You are suggesting, for the owner of ${inputs.repo}, what should happen next in the product.
@@ -204,17 +204,20 @@ export interface Suggestions {
 }
 
 /**
- * Reads the model's answer. A suggestion with no title or no body is not a
- * usable answer; one whose title is an open issue's is moved to what was left
- * out, since it is filed already.
+ * Reads the model's answer. A suggestion with no title or no body, or whose
+ * title is an issue's already filed, open or closed, is moved to what was left
+ * out.
  */
-export function readAnswer(answer: SuggestAnswer, openIssues: readonly { number: number; title: string }[]): { ok: true; value: Suggestions } | { ok: false; problem: string } {
+export function readAnswer(answer: SuggestAnswer, openIssues: readonly { number: number; title: string }[]): Suggestions {
   const open = new Map(openIssues.map((issue) => [normalTitle(issue.title), issue.number]));
   const suggestions: Suggestion[] = [];
   const leftOut: LeftOut[] = answer.left_out.map((one) => ({ item: one.item.trim(), reason: one.reason.trim() }));
   for (const [index, one] of answer.suggestions.entries()) {
     const title = one.title.trim().replace(/\s+/gu, " ");
-    if (title === "" || one.body.trim() === "") return { ok: false, problem: `suggestion ${index + 1} has no ${title === "" ? "title" : "body"}` };
+    if (title === "" || one.body.trim() === "") {
+      leftOut.push({ item: title === "" ? `suggestion ${index + 1}` : title, reason: `it has no ${title === "" ? "title" : "body"}` });
+      continue;
+    }
     const filed = open.get(normalTitle(title));
     if (filed !== undefined) {
       leftOut.push({ item: title, reason: `already filed as #${filed}` });
@@ -222,7 +225,7 @@ export function readAnswer(answer: SuggestAnswer, openIssues: readonly { number:
     }
     suggestions.push({ title: title.slice(0, TITLE_LIMIT), body: one.body.trim(), size: one.size, visionLines: one.vision_lines.map((line) => line.trim()).filter((line) => line !== "") });
   }
-  return { ok: true, value: { suggestions, leftOut } };
+  return { suggestions, leftOut };
 }
 
 function normalTitle(title: string): string {
@@ -244,9 +247,7 @@ export async function suggest(runner: ModelRunner, inputs: SuggestInputs, option
     runOptions,
   );
   if (!result.ok) return result;
-  const read = readAnswer(result.output, inputs.openIssues);
-  if (!read.ok) return { ok: false, failure: { kind: "no-structured-output", message: read.problem }, facts: result.facts };
-  return { ok: true, value: read.value, facts: result.facts };
+  return { ok: true, value: readAnswer(result.output, inputs.openIssues), facts: result.facts };
 }
 
 // Filing.
@@ -381,7 +382,8 @@ export async function runSuggestions(options: SuggestionRunOptions): Promise<Sug
     await fileUnfiled(dataDirectory, repo, forge, now);
     options.signal?.throwIfAborted();
     reading = await options.read(repo, forge);
-    const open = (await forge.openIssues()).map((issue) => ({ number: issue.number, title: issue.title }));
+    const open: { number: number; title: string; closed?: boolean }[] = (await forge.openIssues()).map((issue) => ({ number: issue.number, title: issue.title }));
+    for (const issue of await forge.labelledIssues(SUGGESTED_LABEL)) if (issue.state === "closed") open.push({ number: issue.number, title: issue.title, closed: true });
     const precedents = suggestPrecedents(await options.book(), repo);
     result = await suggest(
       options.runner,
