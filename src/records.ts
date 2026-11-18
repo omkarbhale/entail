@@ -205,11 +205,22 @@ export interface PullRequestRef {
   author: string;
 }
 
-/** entail follows a PR: the forge says it closes an issue entail called go on. */
+/**
+ * entail follows a PR: the forge says it closes an issue whose go has acted,
+ * or, with `issue` null, no cleared ticket is behind it and it is judged on
+ * the vision alone. A PR followed with no ticket is followed again with its
+ * issue once a go on an issue it is linked to acts.
+ */
 export interface FollowedEntry extends EntryBase {
   type: "followed";
   pr: PullRequestRef;
-  issue: number;
+  issue: number | null;
+  /**
+   * With no issue: the issues the forge linked the PR to when it was followed,
+   * none of them with a go that acted. A go acting on one of them has the PR
+   * followed again with that issue. Missing on entries logged before it was kept.
+   */
+  linked?: number[];
 }
 
 /** entail stopped following a PR: it was merged or closed, by entail or anyone else. */
@@ -234,9 +245,11 @@ export const JUDGMENT_ATTEMPTS = 3;
 export interface LandingEntry extends EntryBase {
   type: "landing";
   pr: PullRequestRef;
-  issue: { number: number; title: string; url: string };
-  /** The call on the issue whose criteria the PR was judged against. */
-  issueCall: number;
+  /** The issue the PR closes, whose go it was judged against; null when no cleared ticket is behind it and it was judged on the vision alone. */
+  issue: { number: number; title: string; url: string } | null;
+  /** The call on the issue whose criteria the PR was judged against; null with no issue. */
+  issueCall: number | null;
+  /** The issue as judged; empty with no issue. */
   issueText: string;
   /** The PR's title and description as judged: its author's words. */
   prText: string;
@@ -245,7 +258,9 @@ export interface LandingEntry extends EntryBase {
   /** The default branch's commit the diff was taken against. */
   base: string;
   vision: { commit: string; text: string } | null;
-  /** The criteria the issue's go set, which the PR was judged against. */
+  /** With no issue: the issues the forge linked the PR to, and where each stood, as the judgment read them. */
+  linked?: { number: number; standing: string }[];
+  /** The criteria the issue's go set, which the PR was judged against; none with no issue. */
   criteria: Criterion[];
   /** CI and the changed files, read from the forge at the head. */
   facts: ForgeFacts;
@@ -254,7 +269,7 @@ export interface LandingEntry extends EntryBase {
   call: LandingCall;
   /** How many send-backs entail had posted on the PR before this call. */
   sendBacks: number;
-  /** A send-back past the limit: the PR is closed with the reason instead. */
+  /** A send-back past the limit: the PR is closed with the reason instead. Never set on a PR with no issue, which has no ticket to cancel. */
   cancel: boolean;
   confirm: boolean;
   model: string;
@@ -847,9 +862,9 @@ export function criteriaOf(call: IssueCall): Criterion[] {
  */
 export function linkCriterion(issue: number): { criterion: string; source: "entail"; basis: string } {
   return {
-    criterion: `Link the PR to this issue so GitHub lists it under the PR's Development section, for example with \`Closes #${issue}\` in the PR description; entail does not pick up a PR that is not linked.`,
+    criterion: `Link the PR to this issue so GitHub lists it under the PR's Development section, for example with \`Closes #${issue}\` in the PR description; a PR that is not linked is judged on the vision alone, without this issue's criteria.`,
     source: "entail",
-    basis: "entail follows a PR only when GitHub's own link data says it closes an issue entail called go on.",
+    basis: "entail judges a PR against an issue's criteria only when GitHub's own link data says it closes that issue.",
   };
 }
 
@@ -913,6 +928,21 @@ export function goCallOn(entries: readonly Entry[], issue: number): CallEntry | 
   if (call === undefined) return null;
   const effective = call.owner?.call ?? call.call.call;
   return effective === "go" ? call : null;
+}
+
+/**
+ * The go on an issue that has acted: {@link goCallOn}'s go, unless it still
+ * waits for the owner to confirm it, or the owner's confirmation is still in
+ * its undo window. Only a cleared go puts a PR's criteria behind it; a PR
+ * linked to an issue whose go still waits is judged on the vision alone
+ * until the go acts.
+ */
+export function clearedGoOn(entries: readonly Entry[], issue: number, now: Date = new Date()): CallEntry | null {
+  const go = goCallOn(entries, issue);
+  if (go === null) return null;
+  const status = callStatuses(entries).get(go.id);
+  if (status === undefined || status.status === "waiting") return null;
+  return "action" in status && isHeld(status.action, now) ? null : go;
 }
 
 /** Each landing call in a log with where it stands with the owner, oldest first. */

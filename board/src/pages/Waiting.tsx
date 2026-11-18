@@ -201,7 +201,7 @@ function Card(props: {
     >
       <Meta item={item} now={now} />
       <h3 className="title">
-        <External href={item.pr?.url ?? item.issue.url}>{item.pr?.title ?? item.issue.title}</External>
+        <External href={item.pr?.url ?? item.issue?.url ?? ""}>{item.pr?.title ?? item.issue?.title}</External>
       </h3>
       <Request text={item.body} />
       <Verdict item={item} />

@@ -169,7 +169,7 @@ export function aQuestion(overrides: Partial<CallView> = {}): CallView {
 /** A call on a PR that closes an issue, with a checklist, GitHub's facts and a sorted beyond list. */
 export function aPullRequestCall(overrides: Partial<CallView> = {}): CallView {
   const base = aCall({ call: "merge", reason: "It does what the issue asked and nothing unwanted.", criteria: [], ...overrides });
-  const number = base.issue.number + 1000;
+  const number = base.issue!.number + 1000;
   return {
     ...base,
     kind: "pr",
@@ -177,7 +177,7 @@ export function aPullRequestCall(overrides: Partial<CallView> = {}): CallView {
     body: "Counts words by whitespace.",
     pr: {
       number,
-      title: `Fix for ${base.issue.number}`,
+      title: `Fix for ${base.issue!.number}`,
       url: `https://github.com/omkarbhale/entail/pull/${number}`,
       author: "builder",
       head: "abc1234def",

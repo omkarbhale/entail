@@ -130,6 +130,27 @@ test("every landing case is judged at its PR's head, against its own criteria, v
   assert.deepEqual(inputs.sendBacks, []);
 });
 
+test("a landing case with no issue and no criteria is replayed on the vision alone, with its PR's words for finding precedents", async () => {
+  const book = await readLandingCaseBook(DEFAULT_CASE_BOOK);
+  const ticketless: LandingCase = { ...book[0]!, slug: "acme-tally-pr-20", repo: "acme/tally", pr: 20, issue: null, issueText: "", criteria: [], call: "send-back" };
+  const all = [...book, ticketless];
+  const inputs = landingCaseInputs(ticketless, all, { checkout: "/c", diff: "" });
+  assert.equal(inputs.issue, null);
+  assert.deepEqual(inputs.criteria, []);
+  const runner = new ScriptedRunner().script(LANDING_KIND, "acme/tally#20", {
+    output: { ...landing(ticketless, "send-back"), solves: { solved: false, evidence: "It leaves the product no better." }, rests_on: { vision_lines: ["A line of the vision."], cases: [] } },
+  });
+  for (const past of book) runner.script(LANDING_KIND, `${past.repo}#${past.pr}`, { output: landing(past, past.call) });
+  const results = await replayLandings(runner, all, landingReading);
+  assert.deepEqual(results.map((result) => result.agrees), all.map(() => true));
+  const request = runner.requests.find((made) => made.ticket === "acme/tally#20")!;
+  assert.equal(request.promptVersion, "pr-call-vision-1");
+  assert.match(request.prompt, /no cleared ticket behind it/u);
+  // Its precedents read it as a PR with no ticket behind it.
+  const other = runner.requests.find((made) => made.ticket === `${book[0]!.repo}#${book[0]!.pr}`)!;
+  assert.match(other.prompt, /### Case acme-tally-pr-20: the owner's call was send-back\n\nacme\/tally PR #20, with no cleared ticket behind it/u);
+});
+
 test("the replay report names each case's kind, disagreements first, with what entail would have changed", async () => {
   const issues = await readCaseBook(DEFAULT_CASE_BOOK);
   const landings = await readLandingCaseBook(DEFAULT_CASE_BOOK);

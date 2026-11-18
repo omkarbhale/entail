@@ -68,7 +68,7 @@ test("an edit is judged again, a comment is not, and a no in confirm mode waits 
 
   // Only the latest call waits on the owner; the first one was judged again.
   assert.deepEqual(
-    waitingItems(h.dataDirectory, []).map((item) => [item.issue.number, item.call]),
+    waitingItems(h.dataDirectory, []).map((item) => [item.issue!.number, item.call]),
     [[12, "no"]],
   );
 });
@@ -296,7 +296,7 @@ test("an override to go stands even when the judgment run again on it disagrees"
   await overrideCall(h.dataDirectory, latestCallOn(h.dataDirectory, REPO, 14), OWNER, "go", "Scripts need it.");
   await h.pass();
   const body = h.forge.posted[1]!.body;
-  assert.match(body, /\*\*Go\*\*, by Omkar, overriding entail's call on the board\.\n\nScripts need it\.\n\nWhat the PR must do beyond solving the issue:\n\n- Link the PR to this issue so GitHub lists it under the PR's Development section, for example with `Closes #14` in the PR description; entail does not pick up a PR that is not linked\.\n\n<!-- entail ticket/u);
+  assert.match(body, /\*\*Go\*\*, by Omkar, overriding entail's call on the board\.\n\nScripts need it\.\n\nWhat the PR must do beyond solving the issue:\n\n- Link the PR to this issue so GitHub lists it under the PR's Development section, for example with `Closes #14` in the PR description; a PR that is not linked is judged on the vision alone, without this issue's criteria\.\n\n<!-- entail ticket/u);
   assert.deepEqual(h.forge.reopened, [14], "the issue entail closed is open again");
 });
 

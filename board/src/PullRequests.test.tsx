@@ -17,6 +17,18 @@ describe("a PR's card", () => {
     expect(screen.getByRole("button", { name: "Confirm · merge #1174" })).toBeTruthy();
   });
 
+  it("says no ticket where the issue would be for a PR with no cleared ticket behind it, and lists what it does", async () => {
+    const item = { ...aPullRequestCall({ id: 36 }), issue: null, criteria: [] };
+    item.pr = { ...item.pr!, checklist: [] };
+    fakeApi({ waiting: { items: [item], held: [], actedAlone: empty } });
+    renderBoard();
+    expect(await screen.findByRole("heading", { level: 3, name: "Fix for 136" })).toBeTruthy();
+    expect(screen.getByText("no ticket")).toBeTruthy();
+    expect(screen.queryByText("closes", { exact: false })).toBeNull();
+    expect(screen.getByText("What it does · 0 needed · 1 harmless · 1 unwanted")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Confirm · merge #1136" })).toBeTruthy();
+  });
+
   it("shows the criteria as a met and unmet checklist with the evidence, and counts them", async () => {
     fakeApi({ waiting: { items: [aPullRequestCall({ id: 32 })], held: [], actedAlone: empty } });
     renderBoard();

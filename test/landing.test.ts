@@ -12,6 +12,8 @@ import {
   routeLanding,
   touched,
   underPin,
+  VISION_ONLY_LANDING_SCHEMA,
+  VISION_ONLY_PROMPT_VERSION,
   type LandingAnswer,
   type LandingInputs,
 } from "../src/landing.ts";
@@ -235,4 +237,73 @@ test("the judgment is one run of its own kind at the PR's head, parsed and route
   const failed = await judgeLanding(failing, inputs());
   assert.ok(!failed.ok);
   assert.equal(failed.failure.kind, "no-structured-output");
+});
+
+test("with no cleared ticket behind the PR, the prompt judges it on the vision alone: no issue, no criteria, what it does sorted against the vision", () => {
+  const prompt = landingPrompt(
+    inputs({
+      issue: null,
+      criteria: [],
+      linked: [{ number: 3, standing: "entail's go on it waits for the owner to confirm it." }],
+    }),
+  );
+  assert.match(prompt, /a pull request with no cleared ticket behind it/u);
+  assert.match(prompt, /There is no issue and there are no criteria to check\./u);
+  assert.match(prompt, /does this PR leave the product better, judged on the vision and the product alone\?/u);
+  assert.match(prompt, /2\. \*\*The criteria\.\*\* There are none\. Answer with an empty criteria list\./u);
+  assert.match(prompt, /3\. \*\*What the PR does\.\*\* List what the PR does/u);
+  assert.match(prompt, /Send back when it leaves the product no better, CI is not green, or something it does is unwanted/u);
+  assert.match(prompt, /Every call rests on the vision: name in `rests_on` each vision line it relies on/u);
+  assert.match(prompt, /tally counts words offline\./u, "the vision is given");
+  assert.match(prompt, /- How totals are rounded/u, "the pins are given");
+  assert.match(prompt, /## Issues it is linked to[\s\S]*- acme\/tally#3: entail's go on it waits for the owner to confirm it\./u);
+  assert.match(prompt, /CI: green\./u);
+  assert.match(prompt, /<pr>\n# Read standard input/u);
+  assert.doesNotMatch(prompt, /## The issue/u);
+  assert.doesNotMatch(prompt, /## The criteria entail set/u);
+  assert.doesNotMatch(prompt, /\$\{/u, "no template left unfilled");
+
+  // The linked prompt stays as it was: a PR with an issue never reads the vision-only words.
+  assert.doesNotMatch(landingPrompt(inputs()), /no cleared ticket/u);
+});
+
+test("a ticketless merge or send-back that cites no vision line is no call, while an ask or a ticketed merge needs none", async () => {
+  const bare = answer({ criteria: [], rests_on: { vision_lines: [], cases: [] } });
+  const sendBack = answer({ call: "send-back", criteria: [], solves: { solved: false, evidence: "" }, needs_to_change: ["Drop it."], rests_on: { vision_lines: [" "], cases: [] } });
+  const ask = answer({ call: "ask", criteria: [], question: { question: "Drop it?", why: "It is a product call." } });
+  const runner = new ScriptedRunner().script(LANDING_KIND, "acme/tally#4", { output: bare });
+  assert.equal((await judgeLanding(runner, inputs({ issue: null, criteria: [] }))).ok, false);
+  const given = { criteria: [], facts: green, touched: { vision: false, pins: [] }, ticketless: true };
+  assert.equal(routeLanding(bare, given).ok, false);
+  assert.equal(routeLanding(sendBack, given).ok, false);
+  assert.ok(routeLanding(ask, given).ok);
+  assert.ok(routeLanding(bare, { ...given, ticketless: false }).ok);
+});
+
+test("the vision-only judgment runs with its own prompt version and schema, and routes like any landing call", async () => {
+  const better = answer({ criteria: [], reason: "It leaves tally better.", beyond: [{ change: "Reads stdin.", sort: "needed", why: "The vision says it counts words." }], rests_on: { vision_lines: ["tally counts words offline."], cases: [] } });
+  assert.deepEqual(checkAgainst(VISION_ONLY_LANDING_SCHEMA, better), []);
+  const runner = new ScriptedRunner().script(LANDING_KIND, "acme/tally#4", { output: better });
+  const judgment = await judgeLanding(runner, inputs({ issue: null, criteria: [] }));
+  assert.ok(judgment.ok);
+  assert.equal(judgment.call.call, "merge");
+  assert.deepEqual(judgment.call.restsOn.visionLines, ["tally counts words offline."]);
+  const [request] = runner.requests;
+  assert.equal(request!.promptVersion, VISION_ONLY_PROMPT_VERSION);
+  assert.equal(request!.schema, VISION_ONLY_LANDING_SCHEMA);
+  assert.match(formatLandingCall(judgment.call, true), /Leaves the product better: yes\.[\s\S]*What the PR does:\n {2}- \[needed\] Reads stdin\./u);
+
+  // Something unwanted, or the product left no better, can only send it back.
+  const worse = answer({ call: "merge", criteria: [], solves: { solved: false, evidence: "Nothing improves." } });
+  assert.equal(routeLanding(worse, { criteria: [], facts: green, touched: { vision: false, pins: [] } }).ok, false);
+  // CI not green turns a merge into a send-back, as for any PR.
+  const red: ForgeFacts = { ...green, checks: [{ name: "test", status: "failed", reported: true, url: null }] };
+  const routed = routeLanding(better, { criteria: [], facts: red, touched: { vision: false, pins: [] } });
+  assert.ok(routed.ok);
+  assert.equal(routed.call.call, "send-back");
+  assert.equal(routed.call.guard?.rule, "ci");
+  // VISION.md changed: only the owner lets it merge.
+  const vision = routeLanding(better, { criteria: [], facts: green, touched: { vision: true, pins: [] } });
+  assert.ok(vision.ok);
+  assert.equal(vision.call.call, "ask");
 });
