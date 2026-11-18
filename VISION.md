@@ -65,5 +65,7 @@ Every verdict persists with its reason.
 entail works with or without firstmate; without it quality may drop and firstmate's own features are missing, but everything entail does stays possible.
 Personal use and local-first operation are acceptable.
 
+Every feature works the same on each forge entail supports, unless that cannot be done technically or the feature is a small quality-of-life addition for a single forge.
+
 A change aligns when it brings entail's call on a ticket or a PR closer to the one the owner would make: accepting what makes the product better, closing what does not with its reason, merging a PR that solves its ticket's problem and leaves the product better, and asking the owner only when entail cannot tell or the change is large or hard to undo, with what the ticket was, what happened, and why it was raised.
 A change should be resisted when it lets entail accept a ticket that would not make the product better or that plainly goes against a vision line, close a ticket without its reason, merge a PR that does not solve its ticket's problem, or ask the owner about a small, easily undone call it could make itself; when it changes how entail judges without replaying the case book; or when it records anyone's words as the owner's, grows the vision with rulings that are not general statements, settles a call without citing the vision passage or past answers it relies on, or without logging the reason, moves a question or its answer into chat, makes entail depend on firstmate, or puts work-management traffic on the board.
