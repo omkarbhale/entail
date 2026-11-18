@@ -140,7 +140,8 @@ export async function update(options: UpdateOptions): Promise<UpdateResult> {
 
   if (how === "by-hand") {
     machine.stop(running.pid);
-    await waitFor(system, () => system.runningCopy()?.pid !== running.pid, options.startWaitMs ?? START_WAIT_MS);
+    const stopped = await waitFor(system, () => system.runningCopy()?.pid !== running.pid, options.startWaitMs ?? START_WAIT_MS);
+    if (!stopped) throw new UpdateError(`entail (pid ${running.pid}) was asked to stop but is still running the code it started with: stop it yourself, then start it on ${after}: node dist/cli.js run`);
     print(`entail was running by hand (pid ${running.pid}): it finished the work in flight and was stopped, since the update cannot restart it in its terminal. Start it again on ${after}: node dist/cli.js run`);
     return { before, after, restarted: "by-hand" };
   }

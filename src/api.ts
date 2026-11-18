@@ -1,3 +1,4 @@
+import { DrainingError } from "./loop.ts";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, join, normalize, sep } from "node:path";
@@ -130,6 +131,7 @@ export function createApi(options: ApiOptions): Server {
     handle(options, request, response).catch((error: unknown) => {
       if (response.headersSent) return response.end();
       if (error instanceof OwnerError) send(response, error.status, { error: error.message });
+      else if (error instanceof DrainingError) send(response, 409, { error: "entail is stopping for an update; check again once it has restarted" });
       else send(response, 500, { error: error instanceof Error ? error.message : String(error) });
     });
   });
