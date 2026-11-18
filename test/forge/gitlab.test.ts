@@ -527,3 +527,39 @@ test("a blocker's state is read from its issue in any project on the host, and a
   assert.equal(await forge.issueState("acme/tally", 77), null);
   assert.equal(await forge.issueState("no-namespace", 1), null);
 });
+
+test("the open issues and the issues carrying an entail: label are read in full, oldest first", async (t) => {
+  const order = "order_by=created_at&sort=asc&per_page=100";
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: `${PROJECT}/issues?state=opened&${order}` }, response: list([issue(3, "2026-11-01T10:00:00Z", 0)], "2") },
+    { request: { method: "GET", path: `${PROJECT}/issues?state=opened&${order}&page=2` }, response: list([issue(5, "2026-11-02T10:00:00Z", 0)]) },
+    {
+      request: { method: "GET", path: `${PROJECT}/issues?state=all&labels=entail%3Asuggested&${order}` },
+      response: list([issue(7, "2026-11-03T10:00:00Z", 0, { state: "closed", labels: ["entail:suggested", "entail:no"] })]),
+    },
+  ]);
+  assert.deepEqual((await forge.openIssues()).map((one) => one.number), [3, 5]);
+  const labelled = await forge.labelledIssues("entail:suggested");
+  assert.deepEqual(labelled.map((one) => [one.number, one.state, one.labels]), [[7, "closed", ["entail:suggested", "entail:no"]]]);
+  await assert.rejects(forge.labelledIssues("bug"), /entail writes only its own labels/);
+});
+
+test("a new issue is filed with its entail: labels, each created in the project first when missing", async (t) => {
+  const { forge, transport } = forgeOn(t, [
+    { request: { method: "GET", path: `${PROJECT}/labels/entail%3Asuggested` }, response: { status: 404, body: { message: "404 Label Not Found" } } },
+    {
+      request: { method: "POST", path: `${PROJECT}/labels`, body: { name: "entail:suggested", color: "#5319e7", description: "Set by entail: see its latest comment on the issue" } },
+      response: { status: 201, body: { name: "entail:suggested" } },
+    },
+    {
+      request: { method: "POST", path: `${PROJECT}/issues`, body: { title: "Count words in PDFs", description: "Why.\n\n<!-- entail suggestion 7.0 -->", labels: "entail:suggested" } },
+      response: { status: 201, body: issue(12, "2026-11-04T10:00:00Z", 0, { title: "Count words in PDFs", labels: ["entail:suggested"] }) },
+    },
+  ]);
+  const filed = await forge.createIssue("Count words in PDFs", "Why.\n\n<!-- entail suggestion 7.0 -->", ["entail:suggested"]);
+  assert.equal(filed.number, 12);
+  assert.equal(filed.url, `https://${SELF_HOSTED}/acme/tally/-/issues/12`);
+  assert.deepEqual(filed.labels, ["entail:suggested"]);
+  await assert.rejects(forge.createIssue("x", "y", ["bug"]), /entail writes only its own labels/);
+  assert.equal(transport.requests.length, 3);
+});
