@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 import type { FailingView } from "./api-types.ts";
-import { BOARD_DIRECTORY, changeSettings, createApi } from "./api.ts";
+import { backupView, BOARD_DIRECTORY, changeSettings, createApi } from "./api.ts";
+import { backUp, checkRemote, restore, shownRemote, type BackupOutcome } from "./backup.ts";
 import {
   DEFAULT_CASE_BOOK,
   landingPrecedentsFor,
@@ -75,7 +76,9 @@ const USAGE = `usage:
   entail enroll <owner/repo> [--no-confirm] [--since <time>]
   entail unenroll <owner/repo>
   entail repos [--all] [--json]
-  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--owner <name>] [--notice <command>|none] [--start <command>|none]
+  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--owner <name>] [--notice <command>|none] [--start <command>|none] [--backup <git remote url>|none]
+  entail backup status
+  entail restore <git remote url>
   entail run [--once] [--dry-run] [--interval <seconds>] [--port <n>]
   entail service install|uninstall|status
   entail update [--port <n>]
@@ -103,7 +106,15 @@ settings   with a repo, its confirm mode, model and effort ("default" uses the o
            notice command entail runs with one line and a link when something starts
            waiting on you, and the start command entail runs when a go acts, with the
            issue, the reason and the criteria as JSON on its standard input (see examples/
-           in entail's checkout; "none" sets neither).
+           in entail's checkout; "none" sets neither), and the git remote entail backs its
+           records up to ("none", the default, backs nothing up).
+backup     status: the backup remote, when it last took a push, and whether backup is
+           stuck because the remote moved on. After each pass entail commits its log, your
+           case book, the settings and the pins in its data directory and pushes them there
+           with your own git; a remote that has moved on is never merged or overwritten.
+restore    on a new machine, before entail has run there: clone a backup remote into the
+           empty data directory, bringing back the log, case book, settings and pins. It
+           refuses a data directory that holds anything.
 run        poll every enrolled repo, make each call once per edit, post it, and serve the
            board on http://127.0.0.1:${DEFAULT_PORT}/ (--port names another). Each PR that closes
            an issue entail said go on is judged at each new head once CI has finished:
@@ -165,6 +176,10 @@ export async function main(argv: string[]): Promise<number> {
         return reposCommand(rest);
       case "settings":
         return await settingsCommand(rest);
+      case "backup":
+        return await backupCommand(rest);
+      case "restore":
+        return await restoreCommand(rest);
       case "run":
         return await runCommand(rest);
       case "service":
@@ -342,11 +357,14 @@ async function settingsCommand(args: string[]): Promise<number> {
     owner: { type: "string" },
     notice: { type: "string" },
     start: { type: "string" },
+    backup: { type: "string" },
   });
   if (positionals.length > 1) throw new UsageError("settings takes at most one repo");
   const dataDirectory = ensureDataDirectory();
   if (positionals.length === 1) {
-    if (values.owner !== undefined || values.notice !== undefined || values.start !== undefined) throw new UsageError("--owner, --notice and --start are settings for every repo; leave the repo out");
+    if (values.owner !== undefined || values.notice !== undefined || values.start !== undefined || values.backup !== undefined) {
+      throw new UsageError("--owner, --notice, --start and --backup are settings for every repo; leave the repo out");
+    }
     const change: Record<string, unknown> = {};
     if (values.confirm !== undefined) {
       if (values.confirm !== "on" && values.confirm !== "off") throw new UsageError("--confirm is on or off");
@@ -369,9 +387,78 @@ async function settingsCommand(args: string[]): Promise<number> {
   for (const key of ["owner", "model", "effort"] as const) if (values[key] !== undefined) change[key] = values[key];
   if (values.notice !== undefined) change.notice = values.notice === "none" ? null : values.notice;
   if (values.start !== undefined) change.start = values.start === "none" ? null : values.start;
+  if (values.backup !== undefined) {
+    if (values.backup !== "none" && checkRemote(values.backup) === null) throw new UsageError("--backup is a git remote URL, or none");
+    change.backup = values.backup === "none" ? null : values.backup;
+  }
   const settings = Object.keys(change).length === 0 ? settingsIn(dataDirectory) : changeSettings(dataDirectory, DEFAULT_MODEL, change);
   console.log(
-    `your name on comments: ${settings.owner ?? "(not set: the GitHub account gh is logged in as, else the GitLab account glab is)"}\ndefault model: ${settings.model}\ndefault effort: ${settings.effort}\nnotices: ${settings.notice ?? "none"}\nstart work with: ${settings.start ?? "none"}`,
+    `your name on comments: ${settings.owner ?? "(not set: the GitHub account gh is logged in as, else the GitLab account glab is)"}\ndefault model: ${settings.model}\ndefault effort: ${settings.effort}\nnotices: ${settings.notice ?? "none"}\nstart work with: ${settings.start ?? "none"}\nbackup: ${settings.backup ? shownRemote(settings.backup) : "none"}`,
+  );
+  if (values.backup !== undefined && settings.backup) {
+    const holder = readLock(dataDirectory);
+    if (holder !== null && holderIsRunning(holder)) {
+      console.log("The running entail backs up to it after its next pass: entail backup status shows how it went.");
+    } else {
+      console.log(backupOutcomeLine(await backUp(dataDirectory, settings.backup, { log: new OperationalLog(dataDirectory, { echo: null }) }), settings.backup));
+    }
+  }
+  return 0;
+}
+
+/** One backup's outcome, for the owner. */
+function backupOutcomeLine(outcome: BackupOutcome, remote: string): string {
+  switch (outcome.kind) {
+    case "off":
+      return "Backup is off.";
+    case "unchanged":
+      return `Backed up: ${shownRemote(remote)} already has every record.`;
+    case "pushed":
+      return `Backed up the records to ${shownRemote(remote)} (${outcome.commit.slice(0, 12)}).`;
+    case "stuck":
+      return `Backup is stuck: ${outcome.reason}.`;
+    case "failed":
+      return `Backup did not go through: ${outcome.reason}. entail tries again after its next pass.`;
+  }
+}
+
+/** Where the backup stands, in one line: off, when the remote last took a push, or why it did not. */
+function backupLine(dataDirectory: string, settings: GlobalSettings, now: Date): string {
+  const view = backupView(dataDirectory, settings.backup ?? null);
+  if (view.remote === null) return "Backup: none (entail settings --backup <git remote url> turns it on).";
+  const pushed = view.pushedAt === null ? "has not taken a push yet" : `last took a push ${ago(view.pushedAt, now)}`;
+  if (view.problem === null) return `Backup: ${view.remote}, ${pushed}.`;
+  return `Backup: ${view.remote}, ${pushed}; ${view.problem.kind === "stuck" ? "stuck" : "failing"} since ${ago(view.problem.since, now)}: ${view.problem.reason}.`;
+}
+
+async function backupCommand(args: string[]): Promise<number> {
+  const { positionals } = parse(args, {});
+  if (positionals.length !== 1 || positionals[0] !== "status") throw new UsageError("backup takes status");
+  const dataDirectory = ensureDataDirectory();
+  const settings = settingsIn(dataDirectory);
+  console.log(backupLine(dataDirectory, settings, new Date()));
+  return backupView(dataDirectory, settings.backup ?? null).problem?.kind === "stuck" ? 1 : 0;
+}
+
+async function restoreCommand(args: string[]): Promise<number> {
+  const { positionals } = parse(args, {});
+  if (positionals.length !== 1) throw new UsageError("restore takes one git remote URL");
+  const remote = checkRemote(positionals[0]!);
+  if (remote === null) throw new UsageError("restore takes a git remote URL");
+  const dataDirectory = ensureDataDirectory();
+  const report = await restore(dataDirectory, remote);
+  const entries = report.repos.reduce((sum, repo) => sum + repo.entries, 0);
+  console.log(`Restored entail's records from ${shownRemote(remote)} into ${dataDirectory}, as of ${report.committedAt} (${report.commit.slice(0, 12)}):`);
+  console.log(`  the log of ${report.repos.length} repo${report.repos.length === 1 ? "" : "s"}, ${entries} entr${entries === 1 ? "y" : "ies"}${report.repos.length === 0 ? "" : `: ${report.repos.map((repo) => `${repo.repo} (${repo.entries})`).join(", ")}`}`);
+  console.log(`  ${report.cases} case${report.cases === 1 ? "" : "s"} in your case book`);
+  console.log(`  pins for ${report.pins} repo${report.pins === 1 ? "" : "s"}`);
+  console.log(`  ${report.settings ? "the settings" : "no settings (the defaults apply)"}`);
+  const restoredBackup = settingsIn(dataDirectory).backup ?? null;
+  if (restoredBackup !== null) changeSettings(dataDirectory, DEFAULT_MODEL, { backup: null });
+  console.log(
+    restoredBackup === null
+      ? "Backup is off here: entail settings --backup <git remote url> turns it on."
+      : "Backup is off here, so this copy will not push to the remote until you run entail settings --backup <git remote url>: one machine writes, a restored one only restores.",
   );
   return 0;
 }
@@ -421,6 +508,11 @@ async function runCommand(args: string[]): Promise<number> {
     if (single) {
       if (dryRun) console.log("dry run: nothing is posted, closed, merged or recorded\n");
       const report = await runPass(await passOptions());
+      if (!dryRun) {
+        const backup = settingsIn(dataDirectory).backup ?? null;
+        const outcome = await backUp(dataDirectory, backup, { log });
+        if (backup !== null && outcome.kind !== "unchanged") console.log(backupOutcomeLine(outcome, backup));
+      }
       console.log(`\n${report.repos} repos, ${report.judged} calls made, ${report.posted} ${dryRun ? "posts it would make" : "posts"}${report.failed.length > 0 ? `; not finished: ${report.failed.join(", ")}` : ""}`);
       return report.failed.length > 0 ? 1 : 0;
     }
@@ -480,6 +572,8 @@ async function runCommand(args: string[]): Promise<number> {
         await notifier.check(waitingItems(dataDirectory, await caseBook(dataDirectory)));
         await notifier.health(health.repos(), new Date());
         await notifier.stalled(repoViews(dataDirectory, settingsIn(dataDirectory)).flatMap((view) => view.stalled.map((stalled) => ({ repo: view.repo, stalled }))));
+        // Last, so a push that waits on the network never holds up a notice.
+        await backUp(dataDirectory, settingsIn(dataDirectory).backup ?? null, { log });
       },
       onError: (error) => {
         log.error("pass-error", { error: error instanceof Error ? error.message : String(error) });
@@ -648,6 +742,7 @@ async function statusCommand(args: string[]): Promise<number> {
     `\n${waiting.length === 0 ? "Nothing waits on you." : `Waiting on you: ${[questions > 0 ? `${questions} question${questions === 1 ? "" : "s"}` : "", waiting.length - questions > 0 ? `${waiting.length - questions} call${waiting.length - questions === 1 ? "" : "s"} to confirm` : ""].filter((part) => part !== "").join(" and ")}${running === null ? "" : ` at ${url}#/waiting`}.`}`,
   );
   console.log(`Notices: ${settings.notice ?? "none"}. Start work with: ${settings.start ?? "none"}.`);
+  console.log(backupLine(dataDirectory, settings, now));
   return 0;
 }
 

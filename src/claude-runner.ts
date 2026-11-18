@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
+import { dirname } from "node:path";
 import { checkoutCommit } from "./mirror.ts";
 import {
   acceptOutput,
@@ -91,6 +92,9 @@ export class ClaudeRunner implements ModelRunner {
       const windows = process.platform === "win32" ? windowsCommand(this.#command, claudeArguments(request), process.env) : null;
       const child = spawn(windows?.file ?? this.#command, windows?.args ?? claudeArguments(request), {
         cwd: request.checkout,
+        // A checkout is no repository of its own, and the data directory around it may be the
+        // backup's (src/backup.ts): git run for the model stops at the checkout rather than finding that one.
+        env: { ...process.env, GIT_CEILING_DIRECTORIES: dirname(request.checkout) },
         stdio: ["pipe", "pipe", "pipe"],
         ...(windows === null ? {} : { windowsVerbatimArguments: windows.verbatim, windowsHide: true }),
       });

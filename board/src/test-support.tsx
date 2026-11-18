@@ -21,7 +21,7 @@ export function fakeApi(initial: Partial<FakeState> = {}) {
   const state: FakeState = {
     waiting: { items: [], held: [], actedAlone: { count: 0, repos: [] } },
     repos: [aRepo()],
-    settings: { owner: "Omkar", model: "claude-opus-5-5", effort: "low", notice: null, start: null },
+    settings: { owner: "Omkar", model: "claude-opus-5-5", effort: "low", notice: null, start: null, backup: { remote: null, pushedAt: null, problem: null } },
     status: { watching: true, repos: 1, checkedAt: new Date(Date.now() - 40_000).toISOString(), checking: false, draining: false, suggesting: [], pid: 4242, cli: null, failing: [], stalled: [], url: "http://127.0.0.1:4380/" },
     log: () => ({ rows: [], suggestions: [], next: null, counts: { all: 0, waiting: 0, overridden: 0, questions: 0, prs: 0 } }),
     ...initial,

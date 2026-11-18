@@ -3,7 +3,8 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CheckResponse, EnrollResponse, FailingView, LogFilter, SettingsView, StatusView, SuggestResponse } from "./api-types.ts";
+import type { BackupView, CheckResponse, EnrollResponse, FailingView, LogFilter, SettingsView, StatusView, SuggestResponse } from "./api-types.ts";
+import { checkRemote, readBackupState, shownRemote } from "./backup.ts";
 import type { Case } from "./case-book.ts";
 import type { EventBus } from "./events.ts";
 import type { Forge } from "./forge/forge.ts";
@@ -64,7 +65,7 @@ import { forgeTitle } from "./repo-ref.ts";
  *   POST   /api/repos/:owner/:name/backlog    judges the issues open on the forge that have no call yet
  *   POST   /api/repos/:owner/:name/suggest    {"model"?: string, "effort"?: string}: starts a run that suggests work from the vision and the product,
  *                                             filing each suggestion as an issue labelled entail:suggested; 202 with the run, 409 while one runs for the repo
- *   GET    /api/settings                      the owner's name, the default model and effort, the notice and start commands (read only here)
+ *   GET    /api/settings                      the owner's name, the default model and effort, the notice and start commands and the backup remote with how its last push went (read only here)
  *   PATCH  /api/settings                      {"owner"?: string, "model"?: string, "effort"?: string}
  *
  * A GitLab project is addressed by its whole name as one encoded segment in
@@ -293,12 +294,13 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
   }
 
   if (path === "/api/settings") {
-    if (method === "GET") return send(response, 200, settingsView(settings()));
+    if (method === "GET") return send(response, 200, settingsView(settings(), dataDirectory));
     if (method === "PATCH") {
       const change = await readJson(request);
       if ("notice" in change) throw new OwnerError(400, "the notice command is set from the command line, not here: entail settings --notice '<command>' (or --notice none)");
       if ("start" in change) throw new OwnerError(400, "the start command is set from the command line, not here: entail settings --start '<command>' (or --start none)");
-      return send(response, 200, changed(settingsView(changeSettings(dataDirectory, options.defaultModel, change))));
+      if ("backup" in change) throw new OwnerError(400, "the backup remote is set from the command line, not here: entail settings --backup <git remote url> (or --backup none)");
+      return send(response, 200, changed(settingsView(changeSettings(dataDirectory, options.defaultModel, change), dataDirectory)));
     }
     return send(response, 405, { error: `${method} is not allowed on ${path}` });
   }
@@ -352,8 +354,16 @@ function status(options: ApiOptions): StatusView {
   };
 }
 
-function settingsView(settings: GlobalSettings): SettingsView {
-  return { owner: settings.owner, model: settings.model, effort: settings.effort, notice: settings.notice ?? null, start: settings.start ?? null };
+function settingsView(settings: GlobalSettings, dataDirectory: string): SettingsView {
+  return { owner: settings.owner, model: settings.model, effort: settings.effort, notice: settings.notice ?? null, start: settings.start ?? null, backup: backupView(dataDirectory, settings.backup ?? null) };
+}
+
+/** The backup as the board shows it: the remote, with any password in its URL hidden, and how its last push went. */
+export function backupView(dataDirectory: string, remote: string | null): BackupView {
+  if (remote === null) return { remote: null, pushedAt: null, problem: null };
+  const state = readBackupState(dataDirectory);
+  const current = state.remote === remote;
+  return { remote: shownRemote(remote), pushedAt: current ? state.pushedAt : null, problem: current ? state.problem : null };
 }
 
 /** Server-sent events: one `data:` line of JSON per event, and a comment every 25 s so the connection stays open. */
@@ -373,7 +383,7 @@ function events(options: ApiOptions, request: IncomingMessage, response: ServerR
 export function changeSettings(dataDirectory: string, defaultModel: string, change: Record<string, unknown>): GlobalSettings {
   const settings = readSettings(dataDirectory, { model: defaultModel });
   for (const key of Object.keys(change)) {
-    if (!["owner", "model", "effort", "notice", "start"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
+    if (!["owner", "model", "effort", "notice", "start", "backup"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
   }
   if (change.owner !== undefined) {
     if (typeof change.owner !== "string" || change.owner.trim() === "" || /[\r\n]/u.test(change.owner)) throw new OwnerError(400, "owner is the owner's name, on one line");
@@ -394,6 +404,11 @@ export function changeSettings(dataDirectory: string, defaultModel: string, chan
   if (change.start !== undefined) {
     if (change.start !== null && (typeof change.start !== "string" || /[\r\n]/u.test(change.start))) throw new OwnerError(400, "start is a command on one line, or null to start nothing");
     settings.start = change.start === null || change.start.trim() === "" ? null : change.start.trim();
+  }
+  if (change.backup !== undefined) {
+    const remote = typeof change.backup === "string" ? checkRemote(change.backup) : null;
+    if (change.backup !== null && remote === null) throw new OwnerError(400, "backup is a git remote URL on one line, or null to back nothing up");
+    settings.backup = remote;
   }
   writeSettings(dataDirectory, settings);
   return settings;

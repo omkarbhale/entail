@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { createApi, type ApiOptions, type BoardLoop } from "../src/api.ts";
+import { changeSettings, createApi, type ApiOptions, type BoardLoop } from "../src/api.ts";
 import type { BoardEvent } from "../src/api-types.ts";
 import { OWNER_CASE_BOOK, readCaseBook } from "../src/case-book.ts";
 import { EventBus } from "../src/events.ts";
@@ -344,12 +344,14 @@ test("an update drains entail through the API: no new pass, check now refused, a
   assert.equal((await noLoop.call("POST", "/api/drain", {})).status, 409);
 });
 
-test("the settings for every repo are read and changed, the notice and start commands only read", async (t) => {
+test("the settings for every repo are read and changed, the notice and start commands and the backup remote only read", async (t) => {
   const api = await serve(t);
-  assert.deepEqual((await api.call("GET", "/api/settings")).body, { owner: null, model: "claude-opus-5-5", effort: "high", notice: null, start: null });
+  const noBackup = { remote: null, pushedAt: null, problem: null };
+  assert.deepEqual((await api.call("GET", "/api/settings")).body, { owner: null, model: "claude-opus-5-5", effort: "high", notice: null, start: null, backup: noBackup });
   const changed = await api.call("PATCH", "/api/settings", { owner: "Omkar", effort: "medium" });
-  assert.deepEqual(changed.body, { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null });
-  assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null });
+  assert.deepEqual(changed.body, { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null, backup: noBackup });
+  const stored = { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null, backup: null };
+  assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), stored);
   assert.equal((await api.call("PATCH", "/api/settings", { owner: "two\nlines" })).status, 400);
   const refused = await api.call("PATCH", "/api/settings", { owner: "Other", notice: "touch /tmp/x" });
   assert.equal(refused.status, 400);
@@ -357,7 +359,15 @@ test("the settings for every repo are read and changed, the notice and start com
   const noStart = await api.call("PATCH", "/api/settings", { start: "touch /tmp/x" });
   assert.equal(noStart.status, 400);
   assert.match(String(noStart.body.error), /entail settings --start/u);
-  assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null });
+  const noRemote = await api.call("PATCH", "/api/settings", { backup: "git@example.com:me/records.git" });
+  assert.equal(noRemote.status, 400);
+  assert.match(String(noRemote.body.error), /entail settings --backup/u);
+  assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), stored);
+
+  // Set from the command line, the remote is shown with its password hidden, and how its last push went.
+  changeSettings(api.dataDirectory, "claude-opus-5-5", { backup: "https://me:s3cret@example.com/me/records.git" });
+  assert.deepEqual((await api.call("GET", "/api/settings")).body.backup, { remote: "https://***:***@example.com/me/records.git", pushedAt: null, problem: null });
+  assert.throws(() => changeSettings(api.dataDirectory, "claude-opus-5-5", { backup: "-oProxyCommand=x" }), /backup is a git remote URL/u);
 });
 
 test("the board hears every change live, over server-sent events", async (t) => {

@@ -327,6 +327,18 @@ export interface SettingsView {
   notice: string | null;
   /** The command run when a go acts, with the handoff on its standard input; set only from the command line. */
   start: string | null;
+  /** Where the records are backed up, set only from the command line. */
+  backup: BackupView;
+}
+
+/** The backup of the records to a git remote, as it last went. */
+export interface BackupView {
+  /** The remote, with any password in its URL hidden; null when nothing is backed up. */
+  remote: string | null;
+  /** ISO time of the last push the remote took. */
+  pushedAt: string | null;
+  /** Why the last push did not get through: `stuck` when the remote moved on and entail stopped pushing, `failed` when it is tried again after the next pass. */
+  problem: { kind: "stuck" | "failed"; since: string; reason: string } | null;
 }
 
 export interface StatusView {

@@ -46,7 +46,7 @@ The [user guide](docs/guide.md) is the reference:
 - [Confirm mode](docs/guide.md#confirm-mode) and [the board](docs/guide.md#the-board), with its keys and pages
 - [Notices](docs/guide.md#notices), including failing and stalled repos, and [starting work](docs/guide.md#starting-work) with the handoff JSON, and [suggesting work](docs/guide.md#suggesting-work)
 - [The board's API](docs/guide.md#the-boards-api)
-- [What entail keeps](docs/guide.md#what-entail-keeps), with the data directory per platform
+- [What entail keeps](docs/guide.md#what-entail-keeps), with the data directory per platform, and [backing up](docs/guide.md#backing-up) the records to a git remote
 - [The call on an issue](docs/guide.md#the-call-on-an-issue) and [the case book and replay](docs/guide.md#the-case-book-and-replay)
 
 ## Development

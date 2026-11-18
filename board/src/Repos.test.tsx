@@ -164,6 +164,20 @@ describe("Repos", () => {
     expect(screen.getAllByText(/entail settings --start '<command>'/u)).toBeTruthy();
     expect(api.sent(/PATCH \/api\/settings/u)).toHaveLength(0);
   });
+
+  it("shows the backup remote read only, and says when backup is stuck and why", async () => {
+    const api = fakeApi();
+    const since = new Date(Date.now() - 5 * 60_000).toISOString();
+    api.state.settings = {
+      ...api.state.settings,
+      backup: { remote: "git@example.com:me/records.git", pushedAt: since, problem: { kind: "stuck", since, reason: "git@example.com:me/records.git has moved on since entail last pushed (fetch first)" } },
+    };
+    renderBoard("#/repos");
+    expect((await screen.findAllByText("git@example.com:me/records.git", { selector: "code" })).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Backup stuck since .*: git@example\.com:me\/records\.git has moved on since entail last pushed/u).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/entail settings --backup <git remote url>/u)).toBeTruthy();
+    expect(api.sent(/PATCH \/api\/settings/u)).toHaveLength(0);
+  });
   it("suggests work with the model and effort picked, shows the run in flight, and says when one is already running", async () => {
     const api = fakeApi({ repos: [aRepo({ uses: { model: "claude-sonnet-5-5", effort: "high" } })] });
     api.route((method, path, body) => {

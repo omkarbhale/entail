@@ -14,6 +14,7 @@ node dist/cli.js open                          # the board, on http://127.0.0.1:
 node dist/cli.js status                        # running or not, each repo's last check and confirm mode (and, while its checks fail, since when and why), what waits
 node dist/cli.js settings --notice '<command>' # optional: told in one line when something starts waiting
 node dist/cli.js settings --start '<command>'  # optional: a go hands its issue to this command to start the work
+node dist/cli.js settings --backup <git remote> # optional: push the records to a git remote after each pass
 ```
 
 From there the owner files issues and answers on the board; nothing else needs a terminal. The rest is there when wanted:
@@ -28,6 +29,8 @@ node dist/cli.js calls owner/repo              # the log: every call and every a
 node dist/cli.js judge owner/repo#123          # the call on one issue, printed; it posts nothing
 node dist/cli.js land owner/repo#124           # the call on one PR at its head, printed; it posts and merges nothing
 node dist/cli.js replay                        # the case book through both judgments, agreement with the owner
+node dist/cli.js backup status                 # the backup remote, its last push, and whether backup is stuck
+node dist/cli.js restore <git remote>          # on a new machine: bring the records back from the backup remote
 ```
 
 `node dist/cli.js help` lists every command and option.
@@ -90,11 +93,21 @@ The board reads and writes through a small JSON API on the same address, the sin
 
 ## What entail keeps
 
-Everything lives in entail's data directory (`~/.local/share/entail` on Linux, `~/Library/Application Support/entail` on macOS, `%LOCALAPPDATA%\entail` on Windows): one append-only log per repo in `log/github.com/<owner>/<name>.jsonl` (`log/gitlab.com/<group>/.../<name>.jsonl` for a GitLab project) holding every enrollment, setting, call on an issue or a PR (with what it read), owner's action, post and merge, from which everything shown is derived; the owner's case book in `cases/`; pins in `pins/<host>/<owner>/<name>.md`, one topic per line; which waiting items the owner was last told about, and which repos they were told are failing, in `notices.json`; the lock held by the running copy in `entail.lock`; and the settings, mirrors, cursors and operational log.
+Everything lives in entail's data directory (`~/.local/share/entail` on Linux, `~/Library/Application Support/entail` on macOS, `%LOCALAPPDATA%\entail` on Windows): one append-only log per repo in `log/github.com/<owner>/<name>.jsonl` (`log/gitlab.com/<group>/.../<name>.jsonl` for a GitLab project) holding every enrollment, setting, call on an issue or a PR (with what it read), owner's action, post and merge, from which everything shown is derived; the owner's case book in `cases/`; pins in `pins/<host>/<owner>/<name>.md`, one topic per line; which waiting items the owner was last told about, and which repos they were told are failing, in `notices.json`; the lock held by the running copy in `entail.lock`; and the settings, mirrors, cursors and operational log. With a backup remote set, the directory is also a git repository holding the records; see [backing up](#backing-up).
 
 ## The call on an issue
 
 `judge` reads the issue and its comments, the repo's `VISION.md` and the repo itself at its default branch, the owner's pins for the repo, and the most relevant past cases, and answers go (with the criteria the PR must meet), no (with the reason) or ask (with the one question). A change that is large or hard to undo is always ask. An issue that states a problem and no solution gets a solution chosen by entail, stated in its criteria as a reading ("Read as: ..."); it is asked only when the change is large or hard to undo or the possible solutions would give users noticeably different results. The prompt is in `src/judgment.ts`.
+
+## Backing up
+
+entail's records (each repo's log, your case book, the settings and the pins) live only in its data directory, so losing that folder would lose every call, every confirmation and every case. To keep a copy elsewhere, name a git remote: `entail settings --backup <git remote url>`, such as a private repository on GitHub or GitLab (`git@github.com:you/entail-records.git`), a bare repository on another machine, or anything else your `git` can push to. Backup is off until you do, and nothing is pushed anywhere before that; `--backup none` turns it off again. entail pushes with your own `git` and whatever credentials it already uses for that remote (an SSH key, a credential helper, or a token you write into the URL yourself, which entail hides wherever it shows the remote); it holds no token of its own. The remote is set only from the command line; the board's Repos page shows it, read only, with when it last took a push.
+
+With a remote set, the data directory is also a git repository (`.git` inside it; no file moves). After each pass, and so after each of your confirmations and answers acts, entail commits whatever changed among the records with a one-line message and pushes it to the remote's `main` branch. A `.gitignore` entail writes keeps everything else on this machine: the lock, the mirrors and checkouts, the cursors, `notices.json` and the operational log are never committed. Setting the remote while entail is not running pushes at once; a running entail pushes after its next pass. A push that cannot get through (the network, credentials, a remote not created yet) is recorded in the operational log and tried again after the next pass.
+
+One machine writes to the remote; any other only restores from it. If the remote has moved on since entail last pushed, as when a second machine pushed to it or it was changed by hand, entail neither merges nor overwrites it: it keeps committing locally, stops pushing, writes `backup-stuck` with the reason to the operational log, and says so in `entail status`, `entail backup status` (which then exits 1) and on the board's Repos page. Sort the remote out by hand in the data directory with `git`, for example by pushing this machine's history over it with `git push --force origin main` once you are sure it is the one to keep, or by resetting the remote to the commit entail last pushed; entail resumes on the first push that fast-forwards the remote.
+
+To restore on a new machine, install entail and, before it has run there, run `entail restore <git remote url>`. It clones the remote into the empty data directory, so the log, the case book, the settings and the pins come back where entail reads them, and prints what it restored. It refuses a data directory that holds anything. Restore clears the backup remote in the restored settings, so the restored copy does not push until you run `entail settings --backup <git remote url>`: one machine writes, a restored one only restores. Not part of this: several machines writing to one remote, scheduled backups, and encrypting the remote.
 
 ## The case book and replay
 
