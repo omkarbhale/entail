@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { answerCall, confirmCall, formatLog, latestCallOn, logItems, logPage, overrideCall } from "../src/owner.ts";
-import { appendEntry, readLog, type ActedEntry, type StartedEntry } from "../src/records.ts";
+import { appendEntry, linkCriterion, readLog, type ActedEntry, type StartedEntry } from "../src/records.ts";
 import { runStart, type Handoff } from "../src/starts.ts";
 import { harness, OWNER, REPO, SHA, verdict } from "./watch-fixture.ts";
 
@@ -26,6 +26,8 @@ function recorder(exit = 0): { handoffs: { command: string; handoff: Handoff }[]
 const started = (dataDirectory: string): StartedEntry[] => readLog(dataDirectory, REPO).filter((entry): entry is StartedEntry => entry.type === "started");
 
 const CRITERION = { source: "reading" as const, criterion: "Footnote words count toward the total.", basis: "The total is what users see." };
+/** The line every go carries after its own criteria: link the PR so GitHub records it as closing the issue. */
+const LINK = linkCriterion(12);
 
 test("with confirm mode off a go starts work at once, with the handoff on standard input, and only once", async (t) => {
   const h = harness(t, { confirm: false, settings: { start: "my-executor --queue" } });
@@ -35,6 +37,8 @@ test("with confirm mode off a go starts work at once, with the handoff on standa
 
   await h.pass({ startWork: start.startWork });
   assert.equal(h.forge.posted.length, 1, "the go is posted first");
+  assert.match(h.forge.posted[0]!.body, /What the PR must do beyond solving the issue:\n\n- Footnote words count toward the total\.\n- Link the PR to this issue so GitHub lists it under the PR's Development section, for example with `Closes #12` in the PR description; entail does not pick up a PR that is not linked\./u);
+  assert.equal(LINK.source, "entail");
   assert.equal(start.handoffs.length, 1);
   const call = readLog(h.dataDirectory, REPO).find((entry) => entry.type === "call")!;
   assert.deepEqual(start.handoffs[0], {
@@ -46,7 +50,7 @@ test("with confirm mode off a go starts work at once, with the handoff on standa
       call: call.id,
       by: "entail",
       reason: "Counting words in more places makes tally more useful.",
-      criteria: [CRITERION],
+      criteria: [CRITERION, LINK],
     },
   });
   const [entry] = started(h.dataDirectory);
@@ -106,7 +110,7 @@ test("in confirm mode a go starts work only once the owner confirms it", async (
   assert.equal(start.handoffs.length, 1);
   assert.equal(start.handoffs[0]!.handoff.by, "owner");
   assert.equal(start.handoffs[0]!.handoff.call, confirmed.id);
-  assert.deepEqual(start.handoffs[0]!.handoff.criteria, [CRITERION]);
+  assert.deepEqual(start.handoffs[0]!.handoff.criteria, [CRITERION, LINK]);
   const row = logPage(h.dataDirectory, []).rows.find((candidate) => candidate.call.issue.number === 12)!;
   assert.ok(row.trail.some((step) => step.text === "Started work: my-executor"), "the start shows on the call's trail");
 });
@@ -134,7 +138,7 @@ test("a go made differently starts work with the owner's line as the criterion",
   assert.equal(start.handoffs.length, 1);
   const { handoff } = start.handoffs[0]!;
   assert.equal(handoff.by, "owner");
-  assert.deepEqual(handoff.criteria, [{ criterion: "Count footnotes separately, after the body.", source: "owner", basis: "the owner's go, made differently, word for word" }]);
+  assert.deepEqual(handoff.criteria, [{ criterion: "Count footnotes separately, after the body.", source: "owner", basis: "the owner's go, made differently, word for word" }, LINK]);
 });
 
 test("the owner's go answer starts work once the judgment has run again on it", async (t) => {

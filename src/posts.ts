@@ -1,6 +1,6 @@
 import type { Criterion, IssueCall } from "./judgment.ts";
 import type { LandingCall } from "./landing.ts";
-import { criteriaOf, type LandingPending, type Pending } from "./records.ts";
+import { criteriaOf, linkCriterion, type LandingPending, type Pending } from "./records.ts";
 
 /**
  * What entail posts on an issue for each thing it acts on, as the text that
@@ -44,11 +44,11 @@ export function postFor(pending: Pending, owner: string): Post | null {
         // The judgment ran again on the owner's go: the call posted is the owner's.
         const head = entry.owner.kind === "override" ? `**Go**, by ${owner}, overriding entail's call on the board.` : `**Go**, on ${owner}'s answer on the board.`;
         const reason = entry.owner.kind === "answer" && entry.call.call === "go" ? entry.call.reason : entry.owner.words;
-        const criteria = entry.call.call === "no" ? [] : entry.call.criteria;
-        return { issue, markerFor: entry.id, text: join(head, escape(reason), criteriaText(criteria)), close: false, reopen: entry.owner.call === "go", label: `entail:${entry.owner.call}` };
+        const criteria = entry.owner.call === "go" ? criteriaText(criteriaOf(entry.call), issue) : "";
+        return { issue, markerFor: entry.id, text: join(head, escape(reason), criteria), close: false, reopen: entry.owner.call === "go", label: `entail:${entry.owner.call}` };
       }
       const waits = entry.confirm && entry.call.call !== "ask";
-      return { issue, markerFor: entry.id, text: callText(entry.call, entry.confirm, owner), close: entry.call.call === "no" && !entry.confirm, reopen: false, label: waits ? null : `entail:${entry.call.call}` };
+      return { issue, markerFor: entry.id, text: callText(entry.call, entry.confirm, owner, issue), close: entry.call.call === "no" && !entry.confirm, reopen: false, label: waits ? null : `entail:${entry.call.call}` };
     }
     case "confirmed": {
       const { call, action } = pending;
@@ -75,7 +75,7 @@ export function postFor(pending: Pending, owner: string): Post | null {
       return {
         issue: call.issue.number,
         markerFor: action.id,
-        text: join(head, `What the PR must do beyond solving the issue, in ${owner}'s words:\n\n- ${escape(action.reason).replace(/\n+/gu, " ")}`),
+        text: join(head, `What the PR must do beyond solving the issue, in ${owner}'s words:\n\n- ${escape(action.reason).replace(/\n+/gu, " ")}\n- ${escape(linkCriterion(call.issue.number).criterion)}`),
         close: false,
         reopen: true,
         label: "entail:go",
@@ -90,7 +90,7 @@ export function postFor(pending: Pending, owner: string): Post | null {
  * against the vision is closed quoting the line; the board and the log carry
  * what every call rests on.
  */
-export function callText(call: IssueCall, confirm: boolean, owner: string): string {
+export function callText(call: IssueCall, confirm: boolean, owner: string, issue: number): string {
   if (call.call === "ask") {
     return `A question about this issue is waiting for ${owner} on entail's board. Nothing happens here until it is answered.`;
   }
@@ -100,7 +100,7 @@ export function callText(call: IssueCall, confirm: boolean, owner: string): stri
     return join(head, visionLinesText(call.restsOn.visionLines), tail);
   }
   const tail = confirm ? `This call waits for ${owner} to confirm it on entail's board; nothing starts until then.` : "";
-  return join(head, criteriaText(criteriaOf(call)), tail);
+  return join(head, criteriaText(criteriaOf(call), issue), tail);
 }
 
 function visionLinesText(lines: readonly string[]): string {
@@ -108,9 +108,10 @@ function visionLinesText(lines: readonly string[]): string {
   return `It rests on the vision:\n\n${lines.map((line) => `> ${line.replace(/^>\s*/u, "").trim()}`).join("\n>\n")}`;
 }
 
-function criteriaText(criteria: readonly Criterion[]): string {
-  if (criteria.length === 0) return "";
-  return `What the PR must do beyond solving the issue:\n\n${criteria.map((criterion) => `- ${escape(criterion.criterion).replace(/\n+/gu, " ")}`).join("\n")}`;
+/** A go's criteria as posted: the model's, then the line on linking the PR, which every go carries. */
+function criteriaText(criteria: readonly Criterion[], issue: number): string {
+  const lines = [...criteria, linkCriterion(issue)].map((criterion) => `- ${escape(criterion.criterion).replace(/\n+/gu, " ")}`);
+  return `What the PR must do beyond solving the issue:\n\n${lines.join("\n")}`;
 }
 
 function join(...parts: string[]): string {

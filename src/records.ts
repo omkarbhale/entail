@@ -654,6 +654,20 @@ export function criteriaOf(call: IssueCall): Criterion[] {
   return call.call === "no" ? [] : call.criteria;
 }
 
+/**
+ * The criterion every go carries as posted and handed off, after the model's:
+ * link the PR so the forge records it as closing the issue. entail follows a
+ * PR only through the forge's own link data, never the PR's claim. It is a
+ * rendering rule, not stored in the log, and never given to the landing call.
+ */
+export function linkCriterion(issue: number): { criterion: string; source: "entail"; basis: string } {
+  return {
+    criterion: `Link the PR to this issue so GitHub lists it under the PR's Development section, for example with \`Closes #${issue}\` in the PR description; entail does not pick up a PR that is not linked.`,
+    source: "entail",
+    basis: "entail follows a PR only when GitHub's own link data says it closes an issue entail called go on.",
+  };
+}
+
 // PRs.
 
 /** After this many send-backs of one PR, the next call that would send it back cancels it. */

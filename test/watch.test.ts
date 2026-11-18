@@ -296,7 +296,7 @@ test("an override to go stands even when the judgment run again on it disagrees"
   await overrideCall(h.dataDirectory, latestCallOn(h.dataDirectory, REPO, 14), OWNER, "go", "Scripts need it.");
   await h.pass();
   const body = h.forge.posted[1]!.body;
-  assert.match(body, /\*\*Go\*\*, by Omkar, overriding entail's call on the board\.\n\nScripts need it\.\n\n<!-- entail ticket/u);
+  assert.match(body, /\*\*Go\*\*, by Omkar, overriding entail's call on the board\.\n\nScripts need it\.\n\nWhat the PR must do beyond solving the issue:\n\n- Link the PR to this issue so GitHub lists it under the PR's Development section, for example with `Closes #14` in the PR description; entail does not pick up a PR that is not linked\.\n\n<!-- entail ticket/u);
   assert.deepEqual(h.forge.reopened, [14], "the issue entail closed is open again");
 });
 
