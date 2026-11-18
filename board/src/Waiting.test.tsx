@@ -40,6 +40,19 @@ describe("Waiting", () => {
     expect(document.title).toBe("entail");
   });
 
+  it("says at the top, and on the repo's card, while a repo's checks are failing and why", async () => {
+    const since = new Date(Date.now() - 12 * 60_000).toISOString();
+    const failing = { since, at: since, step: "the pass", message: "gh: not logged in", resetAt: null, reason: "the pass: gh: not logged in" };
+    const api = fakeApi({ repos: [aRepo({ failing })], waiting: { items: [], held: [], actedAlone: { count: 0, repos: [] } } });
+    api.state.status = { ...api.state.status, failing: [{ repo: "omkarbhale/entail", failing }] };
+    const { unmount } = renderBoard();
+    expect((await screen.findByRole("alert")).textContent).toMatch(/entail is making no calls on omkarbhale\/entail: failing since 12 min ago: the pass: gh: not logged in/u);
+    expect(await screen.findByText(/· 1 failing/u)).toBeTruthy();
+    unmount();
+    renderBoard("#/repos");
+    expect(await screen.findByText("Failing since 12 min ago: the pass: gh: not logged in")).toBeTruthy();
+  });
+
   it("confirms in place: the button says what it is doing, the card becomes a receipt with Undo, and Undo brings it back", async () => {
     const item = aCall({ id: 7, issue: { number: 174, title: "Make the board glittery", url: "u", author: "r" } });
     const api = fakeApi({ waiting: { items: [item], held: [], actedAlone: { count: 0, repos: [] } } });

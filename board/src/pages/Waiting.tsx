@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CallView, HeldView } from "../api.ts";
+import type { CallView, HeldView, RepoView } from "../api.ts";
 import { AnswerForm, ErrorNote, OverrideForm, pendingVerb, Receipt, useAct } from "../components/Actions.tsx";
 import { Welcome } from "../components/Enroll.tsx";
 import { Meta, Request, Spinner, Verdict, External } from "../components/Verdict.tsx";
@@ -70,7 +70,14 @@ export function WaitingPage({ repo }: { repo: string | null }) {
   if (repos.isPending || waiting.isPending) return <Loading />;
   if (repos.isError || waiting.isError) return <LoadFailed retry={() => void Promise.all([repos.refetch(), waiting.refetch()])} />;
   if (repos.data.length === 0) return <Welcome />;
-  if (items.length === 0 && held.length === 0) return <AllClear repo={repo} now={now} />;
+  const failing = <FailingNote repos={repos.data} now={now} />;
+  if (items.length === 0 && held.length === 0)
+    return (
+      <>
+        {failing}
+        <AllClear repo={repo} now={now} />
+      </>
+    );
 
   const repoCount = new Set(items.map((item) => item.repo)).size;
   const parts = [];
@@ -108,6 +115,7 @@ export function WaitingPage({ repo }: { repo: string | null }) {
 
   return (
     <>
+      {failing}
       <div className="page-head">
         <h1>{items.length === 0 ? "Nothing else is waiting on you" : `${items.length} waiting on you`}</h1>
         {parts.length > 0 && (
@@ -233,6 +241,31 @@ function Card(props: {
         </>
       )}
     </article>
+  );
+}
+
+/** Lines while any enrolled repo's checks are failing (entail makes no calls there) or a PR's landing is stalled. */
+function FailingNote({ repos, now }: { repos: readonly RepoView[]; now: number }) {
+  const failing = repos.filter((repo) => repo.failing !== null);
+  const stalled = repos.flatMap((repo) => repo.stalled.map((item) => ({ repo: repo.repo, line: item.line })));
+  if (failing.length === 0 && stalled.length === 0) return null;
+  const first = failing[0];
+  return (
+    <>
+      {first !== undefined && (
+        <p className="err" role="alert">
+          {failing.length === 1
+            ? `entail is making no calls on ${first.repo}: failing since ${ago(first.failing!.since, now)}: ${first.failing!.reason}`
+            : `entail is making no calls on ${failing.length} repos: ${failing.map((repo) => repo.repo).join(", ")} are failing.`}{" "}
+          <a href="#/repos">Repos</a>
+        </p>
+      )}
+      {stalled.map((item) => (
+        <p key={`${item.repo}-${item.line}`} className="err" role="alert">
+          {item.repo} stalled: {item.line} <a href="#/repos">Repos</a>
+        </p>
+      ))}
+    </>
   );
 }
 

@@ -8,6 +8,7 @@ import { test, type TestContext } from "node:test";
 import { createApi } from "../src/api.ts";
 import { main, parseIssueReference } from "../src/cli.ts";
 import { resolveDataDirectory } from "../src/data-directory.ts";
+import { Health } from "../src/health.ts";
 import { LOCK_FILE } from "../src/lock.ts";
 import { appendEntry } from "../src/records.ts";
 
@@ -197,6 +198,33 @@ test("status reads when each repo was last checked from the running copy's board
   assert.match(screen, new RegExp(`\\nThe board: http://127\\.0\\.0\\.1:${port}/\\n`, "u"));
   assert.match(screen, /\nacme\/tally {2}confirm on {3}checked 2 min ago {2}0 waiting\n/u);
   assert.match(screen, /\nNothing waits on you\.\n/u);
+});
+
+test("status says a repo is failing, since when and why, after when it was last checked", async (t) => {
+  const { dataDirectory, out } = scratchHome(t);
+  appendEntry(dataDirectory, "acme/tally", { type: "enrolled", by: "Omkar", since: "2026-11-12T09:00:00.000Z", confirm: true });
+  writeFileSync(join(dataDirectory, LOCK_FILE), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+  const checked = new Date(Date.now() - 120_000).toISOString();
+  const health = new Health();
+  health.checked("acme/tally", { at: new Date(Date.now() - 12 * 60_000).toISOString(), step: "the pass", message: "gh: not logged in" }, checked);
+  health.checked("acme/tally", { at: checked, step: "the pass", message: "gh: not logged in" }, checked);
+  const server = createApi({
+    dataDirectory,
+    owner: async () => "Omkar",
+    defaultModel: "claude-opus-5-5",
+    book: async () => [],
+    board: null,
+    health,
+    loop: { check: async () => ({ repo: "", at: "", judged: 0, posted: 0, failed: true }), schedule: () => {}, wake: () => {}, checkedAt: () => checked, lastPassAt: checked, checking: false },
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  assert.equal(await main(["status", "--port", String((server.address() as AddressInfo).port)]), 0);
+  assert.match(out.join("\n"), /\nacme\/tally {2}confirm on {3}checked 2 min ago, failing since 12 min ago: the pass: gh: not logged in {2}0 waiting\n/u);
 });
 
 test("open refuses when entail is not running, since there is no board to open", async (t) => {

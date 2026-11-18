@@ -219,10 +219,37 @@ export interface RepoView {
   pins: { file: string; topics: string[] };
   /** When the repo was last checked for changes, or null when not yet in this run. */
   checkedAt: string | null;
+  /** While its last check failed and none has succeeded since: since when, and why. */
+  failing: FailingView | null;
+  /** The PRs whose landing judgment gave no call every time it was tried at their head; a new push is judged again. */
+  stalled: StalledView[];
   /** Whether the owner already asked for the open backlog to be judged. */
   backlogAsked: boolean;
   /** Why the latest `entail:` label entail tried to put on an issue here did not go on, or null when it did or none was tried. */
   cannotLabel: string | null;
+}
+
+/** A repo entail has stopped making calls on: its checks fail. */
+export interface FailingView {
+  /** The first failed check of this run of failures. */
+  since: string;
+  /** The last failure: when, at which step, the error, and for a usage or rate limit when it resets. */
+  at: string;
+  step: string;
+  message: string;
+  resetAt: string | null;
+  /** The last failure on one line, for the owner to read. */
+  reason: string;
+}
+
+/** A PR entail stopped judging at its head after repeated judgments without an answer. */
+export interface StalledView {
+  pr: number;
+  head: string;
+  attempts: number;
+  reason: string;
+  /** For the owner to read: "PR #124 judged 3 times without an answer: <reason>; judged again on the next push". */
+  line: string;
 }
 
 export interface SettingsView {
@@ -240,6 +267,10 @@ export interface StatusView {
   repos: number;
   checkedAt: string | null;
   checking: boolean;
+  /** The enrolled repos whose checks are failing now, with why. */
+  failing: { repo: string; failing: FailingView }[];
+  /** The stalled PRs of the enrolled repos. */
+  stalled: { repo: string; stalled: StalledView }[];
   /** Where the board is served, for notices. */
   url: string | null;
 }
