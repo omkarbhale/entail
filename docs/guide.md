@@ -86,7 +86,7 @@ Everything lives in entail's data directory (`~/.local/share/entail` on Linux, `
 
 ## The call on an issue
 
-`judge` reads the issue and its comments, the repo's `VISION.md` and the repo itself at its default branch, the owner's pins for the repo, and the most relevant past cases, and answers go (with the criteria the PR must meet), no (with the reason) or ask (with the one question). A change that is large or hard to undo is always ask. The prompt is in `src/judgment.ts`.
+`judge` reads the issue and its comments, the repo's `VISION.md` and the repo itself at its default branch, the owner's pins for the repo, and the most relevant past cases, and answers go (with the criteria the PR must meet), no (with the reason) or ask (with the one question). A change that is large or hard to undo is always ask. An issue that states a problem and no solution gets a solution chosen by entail, stated in its criteria as a reading ("Read as: ..."); it is asked only when the change is large or hard to undo or the possible solutions would give users noticeably different results. The prompt is in `src/judgment.ts`.
 
 ## The case book and replay
 
