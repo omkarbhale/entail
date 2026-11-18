@@ -5,7 +5,7 @@ import { LogPage } from "./pages/Log.tsx";
 import { ReposPage } from "./pages/Repos.tsx";
 import { WaitingPage } from "./pages/Waiting.tsx";
 import { useLiveUpdates, useRepos, useStatus, useWaiting, type LiveState } from "./queries.ts";
-import { BoardState, useNow, type Drafts } from "./state.tsx";
+import { BoardState, useNow, useTheme, type Drafts } from "./state.tsx";
 
 /**
  * entail's board: three pages on hash routes (#/waiting, #/log, #/repos),
@@ -60,6 +60,16 @@ function savedRepo(): string | null {
   } catch {
     return null;
   }
+}
+
+function ThemeToggle() {
+  const [theme, toggle] = useTheme();
+  const next = theme === "dark" ? "light" : "dark";
+  return (
+    <button type="button" className="theme" onClick={toggle} aria-label={`Switch to ${next} theme`} title={`Switch to ${next} theme`}>
+      <span aria-hidden="true">{next === "light" ? "☀" : "☾"}</span>
+    </button>
+  );
 }
 
 function Board() {
@@ -136,6 +146,7 @@ function Board() {
               </>
             )}
             <Sync live={live} />
+            <ThemeToggle />
           </div>
           <Progress />
         </div>
