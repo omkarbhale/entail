@@ -138,7 +138,7 @@ test("a landing case with no issue and no criteria is replayed on the vision alo
   assert.equal(inputs.issue, null);
   assert.deepEqual(inputs.criteria, []);
   const runner = new ScriptedRunner().script(LANDING_KIND, "acme/tally#20", {
-    output: { ...landing(ticketless, "send-back"), solves: { solved: false, evidence: "It leaves the product no better." } },
+    output: { ...landing(ticketless, "send-back"), solves: { solved: false, evidence: "It leaves the product no better." }, rests_on: { vision_lines: ["A line of the vision."], cases: [] } },
   });
   for (const past of book) runner.script(LANDING_KIND, `${past.repo}#${past.pr}`, { output: landing(past, past.call) });
   const results = await replayLandings(runner, all, landingReading);
