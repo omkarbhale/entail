@@ -85,6 +85,10 @@ await cdp("Page.addScriptToEvaluateOnNewDocument", { source: `localStorage.setIt
 for (const page of ["waiting", "log", "repos"]) {
   await cdp("Page.navigate", { url: `${board}#/${page}` });
   await sleep(2500);
+  await cdp("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+  const { result: size } = await cdp("Runtime.evaluate", { returnByValue: true, expression: "Math.ceil(document.documentElement.scrollHeight)" });
+  await cdp("Emulation.setDeviceMetricsOverride", { width: 1280, height: Math.max(800, size.value), deviceScaleFactor: 1, mobile: false });
+  await sleep(500);
   const { data: png } = await cdp("Page.captureScreenshot", { format: "png" });
   writeFileSync(join(out, `${page}.png`), Buffer.from(png, "base64"));
   console.log(`wrote ${join(out, `${page}.png`)}`);
