@@ -1,0 +1,82 @@
+{
+  "host": "gitlab.example.org",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "version"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "max-age=0, private, must-revalidate",
+          "X-Gitlab-Meta": "{\"correlation_id\":\"01JC0000000000000000000001\",\"version\":\"1\"}"
+        },
+        "body": {
+          "version": "16.11.10",
+          "revision": "6e2ee6ac2e1",
+          "kas": {
+            "enabled": false,
+            "externalUrl": null,
+            "version": null
+          },
+          "enterprise": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "user"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "max-age=0, private, must-revalidate"
+        },
+        "body": {
+          "id": 7,
+          "username": "owner",
+          "name": "Owner",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://gitlab.example.org/uploads/-/system/user/avatar/7/avatar.png",
+          "web_url": "https://gitlab.example.org/owner",
+          "is_admin": true,
+          "bot": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "projects/platform%2Ftools%2Ftally"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "max-age=0, private, must-revalidate"
+        },
+        "body": {
+          "id": 42,
+          "name": "tally",
+          "path": "tally",
+          "path_with_namespace": "platform/tools/tally",
+          "default_branch": "trunk",
+          "visibility": "internal",
+          "web_url": "https://gitlab.example.org/platform/tools/tally",
+          "namespace": {
+            "id": 12,
+            "name": "tools",
+            "path": "tools",
+            "kind": "group",
+            "full_path": "platform/tools"
+          }
+        }
+      }
+    }
+  ]
+}

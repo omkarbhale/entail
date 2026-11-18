@@ -137,9 +137,9 @@ async function mergeBooks<C extends { slug: string }>(directories: readonly stri
   return [...bySlug.values()].sort((a, b) => a.slug.localeCompare(b.slug));
 }
 
-/** The slug of the case for an issue: `owner-name-number`. */
+/** The slug of the case for an issue: `owner-name-number`, or `gitlab-group-name-number` for a GitLab project. */
 export function caseSlug(repo: string, issue: number): string {
-  return `${repo.replace("/", "-")}-${issue}`.toLowerCase();
+  return `${slugOf(repo)}-${issue}`.toLowerCase();
 }
 
 /**
@@ -327,7 +327,12 @@ export interface LandingCase {
 
 /** The slug of the landing case for a PR: `owner-name-pr-number`. */
 export function landingCaseSlug(repo: string, pr: number): string {
-  return `${repo.replace("/", "-")}-pr-${pr}`.toLowerCase();
+  return `${slugOf(repo)}-pr-${pr}`.toLowerCase();
+}
+
+/** A repo's name as one path segment: every `/`, and a GitLab name's `:`, becomes `-`. */
+function slugOf(repo: string): string {
+  return repo.replace(/[/:]/gu, "-");
 }
 
 /** A PR as pr.md holds it and the landing judgment quotes it: the author's title and description. */

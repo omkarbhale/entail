@@ -150,8 +150,11 @@ export interface PullRequestPost {
 /** What came of a merge entail tried: merged at the judged head, or why not. */
 export type MergeResult = { merged: true; sha: string; commit: string | null } | { merged: false; refusal: string };
 
-/** The post for a landing call or the owner's action on one. */
-export function pullRequestPostFor(pending: LandingPending, owner: string): PullRequestPost {
+/**
+ * The post for a landing call or the owner's action on one. `pullRequest` is what the
+ * forge calls a PR: "pull request" on GitHub, "merge request" on GitLab.
+ */
+export function pullRequestPostFor(pending: LandingPending, owner: string, pullRequest = "pull request"): PullRequestPost {
   switch (pending.kind) {
     case "landing": {
       const { entry } = pending;
@@ -166,12 +169,12 @@ export function pullRequestPostFor(pending: LandingPending, owner: string): Pull
       if (call.call === "send-back") {
         const cancelling = entry.cancel
           ? entry.confirm
-            ? `entail has sent this ${PR} back ${entry.sendBacks} times before. It closes unmerged once ${owner} confirms this call on entail's board.`
-            : `entail has sent this ${PR} back ${entry.sendBacks} times before. Closing it unmerged.`
+            ? `entail has sent this ${pullRequest} back ${entry.sendBacks} times before. It closes unmerged once ${owner} confirms this call on entail's board.`
+            : `entail has sent this ${pullRequest} back ${entry.sendBacks} times before. Closing it unmerged.`
           : "entail judges it again on its next push.";
         return { ...base, merge: false, close: entry.cancel && !entry.confirm, sentBack: true, text: () => join(`**Send back.** ${escape(call.reason)}`, needsText(call.needsToChange), checklistText(call), cancelling) };
       }
-      return { ...base, merge: false, close: false, sentBack: false, text: () => `A question about this ${PR} is waiting for ${owner} on entail's board. Nothing is merged until it is answered.` };
+      return { ...base, merge: false, close: false, sentBack: false, text: () => `A question about this ${pullRequest} is waiting for ${owner} on entail's board. Nothing is merged until it is answered.` };
     }
     case "landing-confirmed": {
       const { landing, action } = pending;
@@ -183,7 +186,7 @@ export function pullRequestPostFor(pending: LandingPending, owner: string): Pull
         ...base,
         merge: false,
         close: landing.cancel,
-        text: () => (landing.cancel ? `${owner} confirmed this call on the board: send back, and close the ${PR} unmerged. Closing it.` : `${owner} confirmed this call on the board: send back.`),
+        text: () => (landing.cancel ? `${owner} confirmed this call on the board: send back, and close the ${pullRequest} unmerged. Closing it.` : `${owner} confirmed this call on the board: send back.`),
       };
     }
     case "landing-owner": {
@@ -196,8 +199,6 @@ export function pullRequestPostFor(pending: LandingPending, owner: string): Pull
     }
   }
 }
-
-const PR = "pull request";
 
 function mergeText(merge: MergeResult | null, head: string): string {
   if (merge === null) return `Merging at \`${head}\`.`;

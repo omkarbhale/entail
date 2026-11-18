@@ -6,7 +6,7 @@ import type { PassReport } from "./watch.ts";
  * What `entail run` keeps going: a pass over every enrolled repo on an
  * interval, a pass for one repo when the owner asks to check it now, and an
  * act-only pass the moment an owner's undo window closes, so a confirmation
- * reaches GitHub ten seconds after it was given rather than at the next poll.
+ * reaches the forge ten seconds after it was given rather than at the next poll.
  * Passes never overlap: each waits for the one before it.
  *
  * Before an update restarts it, the loop is drained: it starts no new pass
@@ -27,7 +27,7 @@ export class DrainingError extends Error {
 export interface PassRequest {
   /** Only these repos; every enrolled repo when left out. */
   only?: string[];
-  /** Read nothing new from GitHub: only act on what is due. */
+  /** Read nothing new from the forge: only act on what is due. */
   actOnly?: boolean;
 }
 

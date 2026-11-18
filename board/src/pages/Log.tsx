@@ -3,7 +3,7 @@ import { useState } from "react";
 import { api, type ActionView, type CallView, type HeldView, type LogFilter, type LogRow } from "../api.ts";
 import { OverrideForm, Receipt, useAct } from "../components/Actions.tsx";
 import { Chip, External, Request, Spinner, Verdict } from "../components/Verdict.tsx";
-import { clock, dayLabel, overrideChoices, refNumber, shortName, timeZone } from "../format.ts";
+import { clock, forgeName, dayLabel, overrideChoices, refNumber, shortName, timeZone } from "../format.ts";
 import { useRepos, useWaiting } from "../queries.ts";
 import { LoadFailed, Loading } from "./Waiting.tsx";
 
@@ -150,7 +150,7 @@ function Status({ row }: { row: LogRow }) {
         </>
       );
     case "auto":
-      return <span className="st">{row.reopened ? "Acted at once · reopened on GitHub" : "Acted at once"}</span>;
+      return <span className="st">{row.reopened ? `Acted at once · reopened on ${forgeName(call.repo)}` : "Acted at once"}</span>;
     case "superseded":
       return <span className="st">{call.pr === null ? "Replaced after an edit" : "Replaced after a push"}</span>;
     case "closed":
@@ -259,7 +259,7 @@ function Detail({ row }: { row: LogRow }) {
       </ul>
       <div className="actions">
         <External href={call.pr?.url ?? call.issue.url} className="btn sm">
-          Open {call.pr === null ? "issue" : "PR"} on GitHub ↗
+          Open {call.pr === null ? "issue" : "PR"} on {forgeName(call.repo)} ↗
         </External>
         {call.status === "waiting" && (
           <a className="btn sm" href="#/waiting">

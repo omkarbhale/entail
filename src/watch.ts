@@ -31,7 +31,6 @@ import {
   appendEntry,
   followedPullRequests,
   goCallOn,
-  HOST,
   judgedMentions,
   latestCalls,
   latestLandings,
@@ -68,7 +67,7 @@ import { readVision } from "./vision.ts";
  * One pass over the enrolled repos: read what changed on each since the last
  * pass, make the call once on each new or edited issue and on each `/entail`
  * mention, run the judgment again where the owner answered go, and act on
- * GitHub for everything not yet acted on: post each call, close on a no
+ * the forge for everything not yet acted on: post each call, close on a no
  * (unless the repo is in confirm mode), and post what the owner decided on
  * the board.
  *
@@ -101,6 +100,7 @@ import { readVision } from "./vision.ts";
 export type WatchForge = Pick<
   Forge,
   | "setting"
+  | "wording"
   | "project"
   | "changesSince"
   | "issue"
@@ -142,7 +142,7 @@ export interface PullRequestReading {
   diff: string;
   /** ISO time the head commit was made. */
   committedAt: string;
-  /** Whether the head holds workflow files under `.github/workflows`. */
+  /** Whether the head defines CI for its forge: workflows under `.github/workflows` on GitHub, `.gitlab-ci.yml` on GitLab. */
   definesCI: boolean;
   /** VISION.md on the default branch. */
   vision: { text: string; commit: string } | null;
@@ -409,9 +409,9 @@ function backlogIssues(entries: readonly Entry[]): number[] {
 }
 
 /**
- * Records an issue someone reopened on GitHub after entail closed it. It is
- * kept in the log as what happened, not as the owner's word: GitHub does not
- * say here who reopened it.
+ * Records an issue someone reopened on the forge after entail closed it. It
+ * is kept in the log as what happened, not as the owner's word: the forge
+ * does not say here who reopened it.
  */
 function noteReopened(issue: Issue, entries: readonly Entry[], record: (entry: NewEntry) => Entry): void {
   if (issue.state !== "open") return;
@@ -540,7 +540,7 @@ function ownerComment(owner: OwnerRun): { author: string; createdAt: string; bod
 }
 
 /**
- * Acts on GitHub for one entry: posts its comment unless a comment carrying
+ * Acts on the forge for one entry: posts its comment unless a comment carrying
  * its marker is already there, closes the issue if it is to be closed, puts
  * on its `entail:` label, and records that it acted, with what came of the
  * label. Returns whether it acted.
@@ -828,7 +828,7 @@ async function actOnPullRequest(
 ): Promise<boolean> {
   const { repo } = state;
   const landing = pending.kind === "landing" ? pending.entry : pending.landing;
-  const post = pullRequestPostFor(pending, options.owner);
+  const post = pullRequestPostFor(pending, options.owner, forge.wording.pullRequest);
   const name = `${repo}#${post.pr}`;
   const productQuestion = post.close && landing.call.productCall && landing.call.question !== null;
   if (options.dryRun) {
@@ -918,7 +918,7 @@ async function mergeAtHead(options: PassOptions, forge: WatchForge, landing: Lan
     const merged = await forge.pullRequestState(number);
     return { merged: true, sha: merged.headSha, commit: merged.mergeCommitSha };
   }
-  if (live.state === "closed") return { merged: false, refusal: "the pull request is closed" };
+  if (live.state === "closed") return { merged: false, refusal: `the ${forge.wording.pullRequest} is closed` };
   if (live.headSha !== landing.head) return { merged: false, refusal: `its head moved to \`${live.headSha}\` since it was judged` };
   const report = await forge.checks(number, landing.head, []);
   if (!ciGreen(report)) return { merged: false, refusal: `CI is not green at the judged head: ${ciProblems(report).join("; ")}` };
@@ -962,7 +962,11 @@ export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prRe
     let opening = mirrors.get(repo);
     if (opening === undefined) {
       opening = forge.project().then((project) =>
-        Mirror.open({ dataDirectory, key: { forge: "github", host: HOST, projectId: project.id }, remote: forgeRemote("github", HOST, repo) }),
+        Mirror.open({
+          dataDirectory,
+          key: { forge: forge.setting.forge, host: forge.setting.host, projectId: project.id },
+          remote: forgeRemote(forge.setting.forge, forge.setting.host, forge.setting.path),
+        }),
       );
       mirrors.set(repo, opening);
       opening.catch(() => mirrors.delete(repo));
@@ -985,7 +989,7 @@ export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prRe
       checkout: checkout.directory,
       sha: checkout.commit,
       vision: await visionAt(mirror, head.commit),
-      pins: await readPins(dataDirectory, { host: HOST, path: repo }),
+      pins: await readPins(dataDirectory, forge.setting),
     };
   };
   const prReader: PullRequestReader = async (repo, forge, pr, head) => {
@@ -996,7 +1000,8 @@ export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prRe
     const diff = await mirror.pullRequestDiff(base.commit, head);
     const checkout = await mirror.checkout(head);
     const committedAt = (await mirror.git.run(["show", "-s", "--format=%cI", head, "--"])).stdout.toString("utf8").trim();
-    const definesCI = (await mirror.git.run(["cat-file", "-e", `${head}:.github/workflows`], { okExitCodes: [1, 128] })).exitCode === 0;
+    const ciPath = forge.setting.forge === "gitlab" ? ".gitlab-ci.yml" : ".github/workflows";
+    const definesCI = (await mirror.git.run(["cat-file", "-e", `${head}:${ciPath}`], { okExitCodes: [1, 128] })).exitCode === 0;
     return {
       checkout: checkout.directory,
       head,
@@ -1005,7 +1010,7 @@ export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prRe
       committedAt,
       definesCI,
       vision: await visionAt(mirror, base.commit),
-      pins: await readPins(dataDirectory, { host: HOST, path: repo }),
+      pins: await readPins(dataDirectory, forge.setting),
       // The default branch's own checkout is the issue reader's to remove.
       release: async () => {
         if ([...lastCommit.values()].includes(head)) return;

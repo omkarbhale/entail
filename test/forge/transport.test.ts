@@ -176,11 +176,11 @@ test("no response for another reason fails, not as logged out", async (t) => {
   );
 });
 
-test("a call that outlives its timeout fails even if it printed a status line", async (t) => {
-  const cli = fakeCli(t, OK, 0, "", 5);
+test("a call that outlives its timeout fails even if it printed a status line, and says it timed out", async (t) => {
+  const cli = fakeCli(t, OK, 0, "a warning the CLI printed", 5);
   await assert.rejects(
     new CliTransport("gh", { executable: cli.path, timeoutMs: 200 }).request({ host: "github.com", method: "GET", path: "user" }),
-    TransportError,
+    (error: unknown) => error instanceof TransportError && /no response within 0\.2 seconds/u.test(error.message),
   );
 });
 

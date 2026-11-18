@@ -30,6 +30,8 @@ import { ScriptedRunner } from "../src/scripted-runner.ts";
 import { runPass, type PassOptions, type PassReport, type WatchForge } from "../src/watch.ts";
 
 export const REPO = "acme/tally";
+/** The same project on GitLab, as entail names it. */
+export const GITLAB_REPO = "gitlab:acme/tally";
 export const OWNER = "Omkar";
 export const VISION = "# Vision\n\ntally counts words offline.\nNew features are opt-in.\n";
 export const SHA = "a".repeat(40);
@@ -44,10 +46,17 @@ export const OWNER_ACCOUNT = person(1001, "omkarbhale");
 /**
  * A forge in memory that reports changes the way GitHub does: everything
  * after the cursor, an issue again whenever it is updated (a comment on it
- * included), and entail's own comments among them.
+ * included), and entail's own comments among them. Made for GitLab, it is
+ * gitlab.com's `acme/tally`, with GitLab's words, links and merge rule: the
+ * project's own merge method, so it names none.
  */
 export class FakeForge implements WatchForge {
-  readonly setting = { forge: "github", host: "github.com", path: REPO } as const;
+  readonly kind: "github" | "gitlab";
+  readonly setting: WatchForge["setting"];
+  readonly wording: WatchForge["wording"];
+  /** The repo as entail names it. */
+  readonly repo: string;
+  readonly #web: string;
   readonly issues = new Map<number, Issue>();
   readonly commentsOn = new Map<number, ForgeComment[]>();
   readonly posted: { issue: number; body: string; id: number }[] = [];
@@ -78,6 +87,15 @@ export class FakeForge implements WatchForge {
   /** Each label write, in order: `+entail:go #12` adds, `-entail:ask #12` removes. */
   readonly labelWrites: string[] = [];
 
+  constructor(kind: "github" | "gitlab" = "github") {
+    this.kind = kind;
+    const host = kind === "github" ? "github.com" : "gitlab.com";
+    this.setting = { forge: kind, host, path: REPO };
+    this.wording = { pullRequest: kind === "github" ? "pull request" : "merge request" };
+    this.repo = kind === "github" ? REPO : GITLAB_REPO;
+    this.#web = `https://${host}/${REPO}${kind === "github" ? "" : "/-"}`;
+  }
+
   tick(): string {
     this.#clock += 60_000;
     return new Date(this.#clock).toISOString();
@@ -96,7 +114,7 @@ export class FakeForge implements WatchForge {
       labels: [],
       createdAt: options.createdAt ?? at,
       updatedAt: at,
-      url: `https://github.com/${REPO}/issues/${number}`,
+      url: `${this.#web}/issues/${number}`,
     };
     this.issues.set(number, issue);
     this.#changes.push({ kind: "issue", id: issue.id, updatedAt: at, issue: { ...issue } });
@@ -112,7 +130,7 @@ export class FakeForge implements WatchForge {
   comment(number: number, body: string, author: Actor = REPORTER): IssueComment {
     const at = this.tick();
     const id = this.#nextId++;
-    const comment: IssueComment = { id, issueNumber: number, body, author, createdAt: at, updatedAt: at, url: `https://github.com/${REPO}/issues/${number}#issuecomment-${id}` };
+    const comment: IssueComment = { id, issueNumber: number, body, author, createdAt: at, updatedAt: at, url: this.kind === "github" ? `${this.#web}/issues/${number}#issuecomment-${id}` : `${this.#web}/issues/${number}#note_${id}` };
     this.commentsOn.set(number, [...(this.commentsOn.get(number) ?? []), { id, body, author, createdAt: at, url: comment.url }]);
     this.#changes.push({ kind: "issue-comment", id, updatedAt: at, comment });
     const issue = this.issues.get(number);
@@ -140,7 +158,7 @@ export class FakeForge implements WatchForge {
       author: REPORTER,
       createdAt: at,
       updatedAt: at,
-      url: `https://github.com/${REPO}/pull/${number}`,
+      url: `${this.#web}/${this.kind === "github" ? "pull" : "merge_requests"}/${number}`,
     };
     this.pulls.set(number, pull);
     this.links.set(number, options.closes ?? []);
@@ -184,9 +202,9 @@ export class FakeForge implements WatchForge {
     return [...(this.filesOf.get(number) ?? [])];
   }
 
-  async mergeMethods(): Promise<MergeMethod[]> {
+  async mergeMethods(): Promise<MergeMethod[] | null> {
     this.#check();
-    return [...this.methods];
+    return this.kind === "github" ? [...this.methods] : null;
   }
 
   async merge(number: number, sha: string, method?: MergeMethod): Promise<MergeOutcome> {
@@ -217,7 +235,7 @@ export class FakeForge implements WatchForge {
 
   async project(): Promise<Project> {
     this.#check();
-    return { forge: "github", host: "github.com", id: 77, path: REPO, defaultBranch: "main" };
+    return { forge: this.kind, host: this.setting.host, id: 77, path: REPO, defaultBranch: "main" };
   }
 
   async changesSince(cursor: string | null) {
@@ -318,6 +336,8 @@ export function landingAnswer(overrides: Partial<LandingAnswer> = {}): LandingAn
 
 export interface Harness {
   dataDirectory: string;
+  /** The repo as entail names it: `acme/tally`, or `gitlab:acme/tally` on GitLab. */
+  repo: string;
   forge: FakeForge;
   runner: ScriptedRunner;
   printed: string[];
@@ -331,11 +351,12 @@ export interface Harness {
   options(overrides?: Partial<PassOptions>): PassOptions;
 }
 
-export function harness(t: TestContext, options: { confirm?: boolean; settings?: Partial<GlobalSettings>; pins?: string[]; definesCI?: boolean } = {}): Harness {
+export function harness(t: TestContext, options: { confirm?: boolean; settings?: Partial<GlobalSettings>; pins?: string[]; definesCI?: boolean; forge?: "github" | "gitlab" } = {}): Harness {
   const dataDirectory = mkdtempSync(join(tmpdir(), "entail-watch-"));
   t.after(() => rmSync(dataDirectory, { recursive: true, force: true }));
-  appendEntry(dataDirectory, REPO, { type: "enrolled", by: OWNER, since: ENROLLED_AT, confirm: options.confirm ?? true }, new Date(ENROLLED_AT));
-  const forge = new FakeForge();
+  const forge = new FakeForge(options.forge);
+  const { repo } = forge;
+  appendEntry(dataDirectory, repo, { type: "enrolled", by: OWNER, since: ENROLLED_AT, confirm: options.confirm ?? true }, new Date(ENROLLED_AT));
   const runner = new ScriptedRunner();
   const printed: string[] = [];
   const cursors = new CursorStore(dataDirectory);
@@ -364,6 +385,7 @@ export function harness(t: TestContext, options: { confirm?: boolean; settings?:
   });
   return {
     dataDirectory,
+    repo,
     forge,
     runner,
     printed,
@@ -371,14 +393,14 @@ export function harness(t: TestContext, options: { confirm?: boolean; settings?:
     scriptLanding(pr, ...answers) {
       runner.script(
         LANDING_KIND,
-        `${REPO}#${pr}`,
+        `${repo}#${pr}`,
         ...answers.map((a) => (a === "fail" ? { failure: { kind: "error" as const, message: "the run broke" } } : { output: a, facts: { estimatedCostUsd: 0.07 } })),
       );
     },
     script(issue, ...verdicts) {
       runner.script(
         JUDGMENT_KIND,
-        `${REPO}#${issue}`,
+        `${repo}#${issue}`,
         ...verdicts.map((v) => (v === "fail" ? { failure: { kind: "error" as const, message: "the run broke" } } : { output: v, facts: { estimatedCostUsd: 0.05 } })),
       );
     },

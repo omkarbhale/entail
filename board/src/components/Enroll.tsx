@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { api, ApiError, type EnrollResponse } from "../api.ts";
+import { forgeName } from "../format.ts";
 import { REPOS } from "../queries.ts";
 import { useDraft, useToast } from "../state.tsx";
 import { Spinner } from "./Verdict.tsx";
@@ -8,7 +9,16 @@ import { Spinner } from "./Verdict.tsx";
 /** The repo the owner just enrolled, with the issues already open there, so Repos can offer to judge them. */
 export const ENROLLED = ["enrolled"] as const;
 
-const REPO = /^[\w.-]+\/[\w.-]+$/u;
+/** `owner/repo` on GitHub, or `gitlab:group/repo` on GitLab with any subgroups between. */
+const REPO = /^(?:[\w.-]+\/[\w.-]+|gitlab:[\w.-]+(?:\/[\w.-]+)+)$/iu;
+
+/** A repo as typed, with a github.com or gitlab.com address turned into its name. */
+function typedRepo(value: string): string {
+  const repo = value.trim().replace(/\/$/u, "");
+  const gitlab = /^https:\/\/gitlab\.com\/(.+?)(?:\/-(?:\/.*)?)?$/iu.exec(repo);
+  if (gitlab !== null) return `gitlab:${gitlab[1]}`;
+  return repo.replace(/^https:\/\/github\.com\//iu, "");
+}
 
 export function EnrollForm({ primary }: { primary?: boolean }) {
   const client = useQueryClient();
@@ -35,9 +45,9 @@ export function EnrollForm({ primary }: { primary?: boolean }) {
   });
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    const repo = value.trim().replace(/^https:\/\/github\.com\//u, "").replace(/\/$/u, "");
+    const repo = typedRepo(value);
     if (!REPO.test(repo)) {
-      setMessage({ text: "Use owner/repo, for example omkarbhale/entail.", bad: true });
+      setMessage({ text: "Use owner/repo, for example omkarbhale/entail, or gitlab:group/repo for a GitLab project.", bad: true });
       return;
     }
     setMessage(null);
@@ -49,12 +59,12 @@ export function EnrollForm({ primary }: { primary?: boolean }) {
         <label className="sr" htmlFor="enroll-repo">
           Repo to enroll
         </label>
-        <input id="enroll-repo" className="field" placeholder="owner/repo" value={value} onChange={(event) => setValue(event.target.value)} disabled={enroll.isPending} autoComplete="off" spellCheck={false} />
+        <input id="enroll-repo" className="field" placeholder="owner/repo or gitlab:group/repo" value={value} onChange={(event) => setValue(event.target.value)} disabled={enroll.isPending} autoComplete="off" spellCheck={false} />
         <button className={`btn${primary ? " primary" : ""}`} type="submit" disabled={enroll.isPending}>
           {enroll.isPending ? (
             <>
               <Spinner />
-              Checking access on GitHub…
+              Checking access on {forgeName(typedRepo(value))}…
             </>
           ) : (
             "Enroll"
