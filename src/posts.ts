@@ -7,6 +7,7 @@ import {
   type BlockedEntry,
   type LandingPending,
   type Pending,
+  type VisionRecheck,
 } from "./records.ts";
 
 /**
@@ -66,7 +67,8 @@ export function postFor(pending: Pending, owner: string, repo: string): Post | n
         return { issue, markerFor: entry.id, text: join(head, escape(reason), criteria), close: false, reopen: entry.owner.call === "go", label: `entail:${entry.owner.call}` };
       }
       const waits = entry.confirm && entry.call.call !== "ask";
-      return { issue, markerFor: entry.id, text: callText(entry.call, entry.confirm, owner, issue), close: entry.call.call === "no" && !entry.confirm, reopen: false, label: waits ? null : `entail:${entry.call.call}` };
+      const text = callText(entry.call, entry.confirm, owner, issue);
+      return { issue, markerFor: entry.id, text: entry.recheck === undefined ? text : join(recheckText(entry.recheck, entry.call.call, owner), text), close: entry.call.call === "no" && !entry.confirm, reopen: false, label: waits ? null : `entail:${entry.call.call}` };
     }
     case "confirmed": {
       const { call, action } = pending;
@@ -128,6 +130,21 @@ export function callText(call: IssueCall, confirm: boolean, owner: string, issue
   }
   const tail = confirm ? `This call waits for ${owner} to confirm it on entail's board; nothing starts until then.` : "";
   return join(head, criteriaText(criteriaOf(call), issue), tail);
+}
+
+/**
+ * What a call a vision change moved says first: that VISION.md changed, the
+ * call before and after, the line that moved it, and the open PRs that relied
+ * on the old text.
+ */
+export function recheckText(recheck: VisionRecheck, call: IssueCall["call"], owner: string): string {
+  const name = (kind: string) => kind.charAt(0).toUpperCase() + kind.slice(1);
+  const whose = recheck.previousCall === "ask" ? `A question to ${owner} was waiting on this issue` : `The call on this issue was **${name(recheck.previousCall)}**`;
+  const head = `**VISION.md changed, and the call changes with it: ${name(recheck.previousCall)} → ${name(call)}.** ${whose} under the earlier vision; entail judged it again under the new one.`;
+  const what = recheck.passageKind === "added" ? "The line the change added that moves the call:" : recheck.passageKind === "removed" ? "The line the change removed that moves the call:" : "What changed in the vision:";
+  const passage = `${what}\n\n${recheck.passage.split("\n").map((line) => `> ${escape(line).replace(/^>\s*/u, "")}`).join("\n")}`;
+  const prs = recheck.pullRequests.length === 0 ? "" : `In-flight work relied on the old text: ${recheck.pullRequests.map((pr) => pr.url).join(", ")}. It is told of this change.`;
+  return join(head, passage, prs);
 }
 
 function visionLinesText(lines: readonly string[]): string {

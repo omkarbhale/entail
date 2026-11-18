@@ -59,9 +59,10 @@ export interface SettingsEntry extends EntryBase, ByOwner {
 /**
  * What made entail judge an issue. `landing` is not a run: it is the
  * question a cancelled PR leaves for the owner when what blocked it was a
- * product call. `backlog` is the owner asking for the open backlog.
+ * product call. `backlog` is the owner asking for the open backlog. `vision`
+ * is a re-check after VISION.md changed that changed the call.
  */
-export type Trigger = "new" | "edit" | "mention" | "owner" | "landing" | "backlog";
+export type Trigger = "new" | "edit" | "mention" | "owner" | "landing" | "backlog" | "vision";
 
 /** A `/entail` comment, known by its id and the time it was last edited. */
 export interface Mention {
@@ -107,6 +108,64 @@ export interface CallEntry extends EntryBase {
   effort: Effort;
   promptVersion: string;
   costUsd: number | null;
+  /** Set on a call a vision change moved: what it replaced and the vision passage that moved it. */
+  recheck?: VisionRecheck;
+}
+
+/** What a call re-checked after VISION.md changed carries: the call it replaced and why. */
+export interface VisionRecheck {
+  /** The vision-seen entry whose change was re-checked. */
+  vision: number;
+  /** The call it replaced, and that call's kind as it stood (the owner's, when the owner made it). */
+  previous: number;
+  previousCall: OwnerCall | "ask";
+  /** The vision lines the change removed and added, as they stood. */
+  removed: string[];
+  added: string[];
+  /** The passage of the change that moved the call, quoted: one line, or every changed line when the judgment named none. */
+  passage: string;
+  /** Whether the passage is a line the change added or removed, when it is one line of it. */
+  passageKind?: "added" | "removed";
+  /** The open PRs for the issue that relied on the old text: each is told of the change on the forge. */
+  pullRequests: PullRequestRef[];
+}
+
+/**
+ * VISION.md on the default branch as a pass last saw it, recorded when it
+ * changed from what entail saw before. `from` is the commit of the vision it
+ * replaced. The open issues entail called against the earlier text are
+ * re-checked once per change.
+ */
+export interface VisionSeenEntry extends EntryBase {
+  type: "vision-seen";
+  commit: string | null;
+  text: string | null;
+  from: string | null;
+}
+
+/**
+ * One open issue re-checked after a vision change where nothing was posted:
+ * the call held (`held`, with the call the judgment made), the issue was
+ * closed (`closed`), or the judgment gave no call (`failed`, tried again up
+ * to {@link JUDGMENT_ATTEMPTS} times). A call the change moved is a call
+ * entry with `recheck` instead.
+ */
+export interface RecheckedEntry extends EntryBase {
+  type: "rechecked";
+  /** The vision-seen entry whose change was re-checked. */
+  vision: number;
+  issue: number;
+  /** The call that was re-checked. */
+  call: number;
+  outcome: "held" | "closed" | "failed";
+  /** For held: the call the judgment made under the new vision, with its reason. */
+  judged?: IssueCall;
+  /** For failed: why the judgment gave no call. */
+  reason?: string;
+  model?: string;
+  effort?: Effort;
+  promptVersion?: string;
+  costUsd?: number | null;
 }
 
 /**
@@ -291,6 +350,8 @@ export interface ActedEntry extends EntryBase {
   label?: LabelChange;
   /** Set when this act is a go acting and a start command was set: the work to start, run once (see `src/starts.ts`). */
   start?: { command: string; handoff: Handoff };
+  /** For a call a vision change moved: the comment posted on each open PR that relied on the old text. */
+  flagged?: { pr: number; comment: { id: number; url: string } }[];
 }
 
 /**
@@ -405,7 +466,9 @@ export type Entry =
   | SuggestionFiledEntry
   | SuggestFailedEntry
   | BlockedEntry
-  | UnblockedEntry;
+  | UnblockedEntry
+  | VisionSeenEntry
+  | RecheckedEntry;
 
 /** An entry as written, before it has an id and a time. */
 export type NewEntry = Entry extends infer E ? (E extends Entry ? Omit<E, "id" | "at"> : never) : never;
@@ -568,10 +631,12 @@ export interface RepoState {
   /** The repo's own model and effort, or null for the default. */
   model: string | null;
   effort: Effort | null;
+  /** The VISION.md a pass last recorded seeing change, or null when none was recorded. */
+  vision: { entry: number; commit: string | null; text: string | null } | null;
 }
 
 export function repoState(repo: string, entries: readonly Entry[]): RepoState {
-  const state: RepoState = { repo, enrolled: false, since: null, confirm: true, model: null, effort: null };
+  const state: RepoState = { repo, enrolled: false, since: null, confirm: true, model: null, effort: null, vision: null };
   for (const entry of entries) {
     if (entry.type === "enrolled") {
       state.enrolled = true;
@@ -583,6 +648,8 @@ export function repoState(repo: string, entries: readonly Entry[]): RepoState {
       if (entry.confirm !== undefined) state.confirm = entry.confirm;
       if (entry.model !== undefined) state.model = entry.model;
       if (entry.effort !== undefined) state.effort = entry.effort;
+    } else if (entry.type === "vision-seen") {
+      state.vision = { entry: entry.id, commit: entry.commit, text: entry.text };
     }
   }
   return state;

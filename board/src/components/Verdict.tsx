@@ -39,13 +39,22 @@ export function Meta({ item, now }: { item: CallView; now: number }) {
       )}
       <span className="sep">·</span>
       <span>{filed !== undefined && item.pr === null ? `filed ${ago(filed, now)}` : `judged ${ago(item.judgedAt, now)}`}</span>
-      {item.rejudged && (
+      {item.recheck !== null ? (
         <>
           <span className="sep">·</span>
-          <span className="tag" title={`The ${subject(item)} ${item.pr === null ? "was edited" : "was pushed to"} while this waited; entail judged it again and this call replaced the earlier one.`}>
-            re-judged after {item.pr === null ? "an edit" : "a push"}
+          <span className="tag" title="VISION.md changed since the earlier call on this issue; entail judged it again under the new vision and the call changed.">
+            re-judged after a vision change
           </span>
         </>
+      ) : (
+        item.rejudged && (
+          <>
+            <span className="sep">·</span>
+            <span className="tag" title={`The ${subject(item)} ${item.pr === null ? "was edited" : "was pushed to"} while this waited; entail judged it again and this call replaced the earlier one.`}>
+              re-judged after {item.pr === null ? "an edit" : "a push"}
+            </span>
+          </>
+        )
       )}
     </div>
   );
@@ -78,6 +87,7 @@ export function Verdict({ item, prefix }: { item: CallView; prefix?: ReactNode }
         <span className="vlabel">{callLabel(item)}</span>
         {size !== "" && <span className="size">{size}</span>}
       </div>
+      <VisionChanged item={item} />
       <p className="reason">{item.reason}</p>
       {item.question !== null && (
         <div>
@@ -87,6 +97,35 @@ export function Verdict({ item, prefix }: { item: CallView; prefix?: ReactNode }
       )}
       {item.pr === null ? <Criteria item={item} /> : <PullRequestFacts item={item} />}
       <RestsOn item={item} />
+    </div>
+  );
+}
+
+/** On a call a vision change moved: the call before → this one, the passage that moved it, and the PRs that relied on the old text. */
+function VisionChanged({ item }: { item: CallView }) {
+  const { recheck } = item;
+  if (recheck === null) return null;
+  const what = recheck.passageKind === "added" ? "The line the change added" : recheck.passageKind === "removed" ? "The line the change removed" : "What changed in the vision";
+  return (
+    <div className="crit recheck">
+      <span className="k">
+        Vision changed · <Chip call={recheck.previousCall} /> → <Chip call={item.call} />
+      </span>
+      <span className="muted small">{what}:</span>
+      <blockquote className="request">
+        <p>{recheck.passage}</p>
+      </blockquote>
+      {recheck.pullRequests.length > 0 && (
+        <span className="small">
+          In-flight work that relied on the old text:{" "}
+          {recheck.pullRequests.map((pr, index) => (
+            <span key={pr.number}>
+              {index > 0 && ", "}
+              <External href={pr.url}>PR #{pr.number} ↗</External>
+            </span>
+          ))}
+        </span>
+      )}
     </div>
   );
 }

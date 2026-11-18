@@ -25,6 +25,31 @@ describe("Waiting", () => {
     expect(screen.getAllByRole("link", { name: /VISION\.md:48 at 8973851/u }).length).toBe(3);
   });
 
+  it("shows a call a vision change moved with the call before and after, the line that moved it, and the PR that relied on the old text", async () => {
+    const item = aCall({
+      id: 9,
+      call: "no",
+      trigger: "vision",
+      issue: { number: 180, title: "Write the counts as JSON", url: "u180", author: "r" },
+      recheck: {
+        previousCall: "go",
+        previousId: 8,
+        passage: "tally never adds a second output format.",
+        passageKind: "added",
+        removed: ["New features are opt-in."],
+        added: ["tally never adds a second output format."],
+        pullRequests: [{ number: 40, title: "Add --json", url: "https://github.com/omkarbhale/entail/pull/40" }],
+      },
+    });
+    fakeApi({ waiting: { items: [item], held: [], actedAlone: { count: 0, repos: [] } } });
+    renderBoard();
+    expect(await screen.findByText("re-judged after a vision change")).toBeTruthy();
+    expect(screen.getByText(/Vision changed/u)).toBeTruthy();
+    expect(screen.getByText("The line the change added:")).toBeTruthy();
+    expect(screen.getByText("tally never adds a second output format.")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "PR #40 ↗" }).getAttribute("href")).toBe("https://github.com/omkarbhale/entail/pull/40");
+  });
+
   it("welcomes an owner with no repo enrolled, and says plainly when nothing is waiting", async () => {
     const api = fakeApi({ repos: [] });
     const { unmount } = renderBoard();

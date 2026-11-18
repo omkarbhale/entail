@@ -47,8 +47,10 @@ import {
   type GlobalSettings,
   type OverriddenEntry,
   type OwnerAction,
+  type RecheckedEntry,
   type RepoState,
   type UndoneEntry,
+  type VisionSeenEntry,
 } from "./records.ts";
 import { blobUrl, canonicalRepo, forgeTitle, issueUrl, repoSetting } from "./repo-ref.ts";
 import { collapseWhitespace, splitVisionLines } from "./vision.ts";
@@ -318,6 +320,18 @@ export function callView(repo: string, entry: CallEntry, status: CallStatus, ent
     posted: acted?.type === "acted" ? { url: acted.comment.url, closed: acted.closed } : null,
     pr: null,
     rejudged: chain.length > 1,
+    recheck:
+      entry.recheck === undefined
+        ? null
+        : {
+            previousCall: entry.recheck.previousCall,
+            previousId: entry.recheck.previous,
+            passage: entry.recheck.passage,
+            passageKind: entry.recheck.passageKind ?? null,
+            removed: entry.recheck.removed,
+            added: entry.recheck.added,
+            pullRequests: entry.recheck.pullRequests.map((pr) => ({ number: pr.number, title: pr.title, url: pr.url })),
+          },
     waitingSince: chain.at(-1)!.at,
   };
 }
@@ -354,6 +368,7 @@ export function landingView(repo: string, entry: LandingEntry, status: CallStatu
     settledBy,
     posted: acted === undefined ? null : { url: acted.comment.url, closed: acted.closed },
     rejudged: chain.length > 1,
+    recheck: null,
     waitingSince: chain.at(-1)!.at,
     pr: {
       ...entry.pr,
@@ -603,6 +618,7 @@ const TRIGGER_WORDS: Record<CallEntry["trigger"], string> = {
   mention: " on an /entail comment",
   owner: " on the owner's word",
   backlog: " from the open backlog",
+  vision: " after a vision change",
 };
 
 function logRow(repo: string, entry: CallEntry, statuses: Map<number, CallStatus>, entries: readonly Entry[], book: readonly Case[], dayOf: (iso: string) => string): LogRow {
@@ -620,6 +636,12 @@ function logRow(repo: string, entry: CallEntry, statuses: Map<number, CallStatus
   const posted = actedFor(entry.id);
   if (posted?.type === "acted") {
     trail.push({ at: posted.at, text: entry.call.call === "ask" ? "Posted a note on the issue that a question is waiting on the board" : posted.closed ? "Posted the call on the issue and closed it" : "Posted the call on the issue", url: posted.comment.url });
+    for (const flag of posted.flagged ?? []) trail.push({ at: posted.at, text: `Told PR #${flag.pr} that it relied on the old vision`, url: flag.comment.url });
+  }
+  for (const recheck of entries) {
+    if (recheck.type !== "rechecked" || recheck.call !== entry.id) continue;
+    const text = recheck.outcome === "held" ? `Re-checked after a vision change: the call holds (${recheck.judged?.call ?? entry.call.call})` : recheck.outcome === "closed" ? "Not re-checked after a vision change: the issue is closed" : `Re-checking after a vision change gave no call: ${recheck.reason ?? "the run failed"}`;
+    trail.push({ at: recheck.at, text });
   }
   const undone = new Map(entries.filter((other): other is UndoneEntry => other.type === "undone").map((other) => [other.action, other]));
   let ownerCall: CallView | null = null;
@@ -645,7 +667,7 @@ function logRow(repo: string, entry: CallEntry, statuses: Map<number, CallStatus
   const status = statuses.get(entry.id)!;
   if (status.status === "superseded") {
     const by = entries.find((other) => other.id === status.by);
-    if (by !== undefined) trail.push({ at: by.at, text: "Judged again after an edit" });
+    if (by !== undefined) trail.push({ at: by.at, text: by.type === "call" && by.trigger === "vision" ? "Judged again after a vision change, which moved the call" : "Judged again after an edit" });
   }
   // Work started for this call: for entail's go, the owner's action on it, or the go run again on the owner's word.
   const ours = (id: number) => id === entry.id || isActionOn(entries, id, entry.id) || entries.some((other) => other.type === "call" && other.id === id && other.owner !== null && isActionOn(entries, other.owner.action, entry.id));
@@ -717,6 +739,8 @@ export type LogItem =
   /** entail started or stopped following a PR. */
   | { kind: "pr"; repo: string; at: string; entry: Extract<Entry, { type: "followed" | "unfollowed" | "landing-failed" }> }
   | { kind: "repo"; repo: string; at: string; entry: Extract<Entry, { type: "enrolled" | "unenrolled" | "settings" | "undone" | "backlog" | "reopened" }> }
+  /** VISION.md changed, or an issue was re-checked after it changed and nothing was posted. */
+  | { kind: "vision"; repo: string; at: string; entry: VisionSeenEntry | RecheckedEntry }
   /** A suggestion run the owner asked for: what it suggested and left out, or why it gave nothing. */
   | { kind: "suggestion"; repo: string; at: string; run: SuggestionRunView }
   /** One suggestion filed as an issue. */
@@ -783,6 +807,10 @@ export function logItems(dataDirectory: string, book: readonly Case[], repoFilte
         case "blocked":
         case "unblocked":
           items.push({ kind: "held", repo, at: entry.at, entry });
+          break;
+        case "vision-seen":
+        case "rechecked":
+          items.push({ kind: "vision", repo, at: entry.at, entry });
           break;
         default:
           items.push({ kind: "repo", repo, at: entry.at, entry });
@@ -1106,6 +1134,7 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         }
         const whose = item.owner === null ? "entail" : `entail, on ${item.owner.kind === "answer" ? "the owner's answer" : "the owner's override"} (the owner's call: ${item.owner.call})`;
         lines.push(`${at}  ${where(item.issue.number)}  ${item.call.toUpperCase()} by ${whose}: ${item.issue.title}`, `      ${item.reason}`);
+        lines.push(...recheckLines(item.recheck, "      "));
         for (const line of item.restsOn.visionLines) lines.push(`      rests on the vision: > ${line.text}`);
         for (const past of item.restsOn.cases) lines.push(`      rests on case ${past.slug}`);
         if (item.question !== null) lines.push(`      question: ${item.question.question}`);
@@ -1148,6 +1177,20 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         for (const one of run.leftOut) lines.push(`      left out: ${one.item}: ${one.reason}`);
         break;
       }
+      case "vision": {
+        const { entry } = item;
+        if (entry.type === "vision-seen") {
+          lines.push(`${at}  ${where(null) || item.repo}  VISION.md changed${entry.from === null ? "" : ` since ${entry.from.slice(0, 7)}`}${entry.commit === null ? "; it was removed" : ` at ${entry.commit.slice(0, 7)}`}: open calls made under the earlier text are re-checked`);
+        } else if (entry.outcome === "held") {
+          lines.push(`${at}  ${where(entry.issue)}  re-checked after the vision change: the call holds (${entry.judged?.call ?? "unchanged"}); nothing posted (call ${entry.call})`);
+          if (entry.judged !== undefined) lines.push(`      ${oneLine(entry.judged.reason)}`);
+        } else if (entry.outcome === "closed") {
+          lines.push(`${at}  ${where(entry.issue)}  not re-checked after the vision change: the issue is closed (call ${entry.call})`);
+        } else {
+          lines.push(`${at}  ${where(entry.issue)}  re-checking after the vision change gave no call: ${entry.reason ?? "the run failed"} (call ${entry.call})`);
+        }
+        break;
+      }
       case "suggestion-filed":
         lines.push(`${at}  ${where(item.issue.number)}  ${item.already ? "found already filed" : "filed"} suggestion ${item.index + 1} of run ${item.for}: ${item.issue.url}`);
         break;
@@ -1177,6 +1220,16 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
     }
   }
   return lines.join("\n");
+}
+
+/** A call a vision change moved, as text: the call before → this one, the passage that moved it and the PRs that relied on the old text. */
+function recheckLines(recheck: CallView["recheck"], indent: string): string[] {
+  if (recheck === null) return [];
+  const lines = [`${indent}the vision changed; the call was ${recheck.previousCall} (call ${recheck.previousId})`];
+  const what = recheck.passageKind === null ? "moved by" : `moved by the line it ${recheck.passageKind}`;
+  for (const [index, line] of recheck.passage.split("\n").entries()) lines.push(`${indent}${index === 0 ? what : " ".repeat(what.length)}: > ${line}`);
+  for (const pr of recheck.pullRequests) lines.push(`${indent}in-flight work that relied on the old text: ${pr.url}`);
+  return lines;
 }
 
 function prLines(pr: PullRequestView, indent: string): string[] {
@@ -1219,6 +1272,7 @@ export function formatWaiting(items: readonly CallView[]): string {
     } else {
       lines.push(`  ${item.call.toUpperCase()}, to confirm (call ${item.id}): ${item.reason}`);
     }
+    lines.push(...recheckLines(item.recheck, "  "));
     for (const line of item.restsOn.visionLines) lines.push(`  rests on the vision: > ${line.text}`);
     for (const past of item.restsOn.cases) lines.push(`  rests on case ${past.slug}${past.url === null ? "" : ` (${past.url})`}`);
     if (item.pr !== null) lines.push(...prLines(item.pr, "  "));

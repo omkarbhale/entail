@@ -74,7 +74,7 @@ test("a repo is named owner/name, from a URL too, and kept in lower case", () =>
 test("enrolling, settings and unenrolling are logged under the owner's name, and only real changes are", (t) => {
   const directory = dataDirectory(t);
   const state = enroll(directory, "acme/tally", "Omkar", { since: new Date("2026-11-12T09:00:00Z") }, new Date("2026-11-12T09:00:00Z"));
-  assert.deepEqual(state, { repo: "acme/tally", enrolled: true, since: "2026-11-12T09:00:00.000Z", confirm: true, model: null, effort: null });
+  assert.deepEqual(state, { repo: "acme/tally", enrolled: true, since: "2026-11-12T09:00:00.000Z", confirm: true, model: null, effort: null, vision: null });
   assert.throws(() => enroll(directory, "acme/tally", "Omkar"), /already enrolled/u);
 
   changeRepoSettings(directory, "acme/tally", "Omkar", { confirm: true, model: "claude-sonnet-5-5" });

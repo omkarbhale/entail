@@ -20,7 +20,7 @@ import {
   type PullRequest,
 } from "./forge/forge.ts";
 import { oneLine, type RepoFailure } from "./health.ts";
-import { formatCall, judge, JUDGMENT_PROMPT_VERSION } from "./judgment.ts";
+import { formatCall, judge, JUDGMENT_PROMPT_VERSION, RECHECK_PROMPT_VERSION } from "./judgment.ts";
 import { ciGreen, ciProblems, formatLandingCall, judgeLanding, LANDING_PROMPT_VERSION, touched } from "./landing.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import type { ModelRunner } from "./model-runner.ts";
@@ -33,6 +33,7 @@ import {
   followedPullRequests,
   goCallOn,
   heldIssues,
+  heldActions,
   judgedMentions,
   latestCalls,
   latestLandings,
@@ -58,14 +59,17 @@ import {
   type NewEntry,
   type OwnerWord,
   type Pending,
+  type PullRequestRef,
   type LabelChange,
   type RepoState,
   type Trigger,
+  type VisionRecheck,
+  type VisionSeenEntry,
   workStarted,
 } from "./records.ts";
 import { handoffFor, runStart } from "./starts.ts";
 import { SUGGESTED_LABEL, type SuggestReader } from "./suggest.ts";
-import { readVision } from "./vision.ts";
+import { collapseWhitespace, readVision, visionTextChange, type VisionChange } from "./vision.ts";
 
 /**
  * One pass over the enrolled repos: read what changed on each since the last
@@ -105,6 +109,14 @@ import { readVision } from "./vision.ts";
  *
  * When a go acts and the owner set a start command, entail runs it with the
  * handoff, once per issue, and records that work was started (`src/starts.ts`).
+ *
+ * When VISION.md on the default branch states different lines from what
+ * entail last saw, the pass records the change and re-checks once each open
+ * issue whose posted call was made under the earlier text: the same
+ * judgment, with the earlier call and the lines removed and added. A call the
+ * change moves is posted as a changed call, quoting the line that moved it
+ * and flagging each open PR for the issue; a call that holds is logged and
+ * nothing is posted.
  *
  * Every call and every act is appended to the repo's log. With `dryRun` the
  * pass changes nothing: no log entry, no cursor, no comment, no close, no
@@ -374,6 +386,11 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
     }
     record(entry);
     judged++;
+  }
+
+  if (options.actOnly !== true) {
+    const rechecked = await recheckVision(context, entries, record, planned);
+    judged += rechecked;
   }
 
   if (options.actOnly !== true) {
@@ -656,6 +673,7 @@ async function act(
   if (!options.dryRun && pending.kind !== "call" && pending.kind !== "blocked") await writeCase(join(options.dataDirectory, OWNER_CASE_BOOK), caseFor(repo, pending.call, pending.action));
   if (options.dryRun) {
     options.print(`would post on ${name}${post.close ? " and close it" : post.reopen ? " and reopen it if closed" : ""}${post.label === null ? "" : `, labelled ${post.label}`}:\n${indent(body)}`);
+    if (pending.kind === "call") for (const pr of pending.entry.recheck?.pullRequests ?? []) options.print(`would tell ${repo}#${pr.number} that it relied on the old vision`);
     record({ type: "acted", for: post.markerFor, issue: post.issue, comment: { id: 0, url: "(dry run)" }, closed: post.close, ...start });
     return true;
   }
@@ -667,15 +685,37 @@ async function act(
   const comments = await forge.comments("issue", post.issue);
   const already = comments.find((comment) => markedTickets(comment.body).includes(post.markerFor));
   const comment = already === undefined ? await forge.postComment("issue", post.issue, body) : { id: already.id, url: already.url };
+  const flagged = pending.kind === "call" && pending.entry.recheck !== undefined ? await flagPullRequests(options, forge, pending.entry, pending.entry.recheck, comment.url) : [];
   if (post.close) await forge.closeIssue(post.issue, "not-planned");
   const reopened = post.reopen && live?.state === "closed";
   if (reopened) await forge.reopenIssue(post.issue);
-  record({ type: "acted", for: post.markerFor, issue: post.issue, comment, closed: post.close, ...(label === null ? {} : { label }), ...start });
+  record({ type: "acted", for: post.markerFor, issue: post.issue, comment, closed: post.close, ...(label === null ? {} : { label }), ...start, ...(flagged.length === 0 ? {} : { flagged }) });
   options.log?.info("acted", { repo, issue: post.issue, for: post.markerFor, comment: comment.url, closed: post.close, alreadyPosted: already !== undefined, ...(label === null ? {} : { label: label.label, labelRemoved: label.removed }) });
   if (label?.failed !== undefined) options.log?.warn("label-failed", { repo, issue: post.issue, label: label.label, error: label.failed });
   const labelled = label === null || label.already ? "" : label.failed === undefined ? `, labelled it ${label.label}` : `, could not label it ${label.label} (${label.failed})`;
   options.print(`${name}: ${already === undefined ? "posted" : "found already posted"} ${comment.url}${post.close ? ", closed the issue" : reopened ? ", reopened the issue" : ""}${labelled}`);
   return true;
+}
+
+/**
+ * Tells each open PR for an issue whose call a vision change moved that it
+ * relied on the old text, once: a comment carrying the call's marker is not
+ * posted again. A PR closed since is left alone.
+ */
+async function flagPullRequests(options: PassOptions, forge: WatchForge, entry: CallEntry, recheck: VisionRecheck, issueComment: string): Promise<NonNullable<ActedEntry["flagged"]>> {
+  const flagged: NonNullable<ActedEntry["flagged"]> = [];
+  const pullRequest = forge.wording.pullRequest;
+  for (const pr of recheck.pullRequests) {
+    const live = await forge.pullRequest(pr.number);
+    if (live.state !== "open") continue;
+    const comments = await forge.comments("pr", pr.number);
+    const already = comments.find((comment) => markedTickets(comment.body).includes(entry.id));
+    const text = `VISION.md changed, and entail's call on #${entry.issue.number}, which this ${pullRequest} is for, changed with it: **${recheck.previousCall}** → **${entry.call.call}**. This ${pullRequest} relied on the old text. What changed and why: ${issueComment}`;
+    const comment = already === undefined ? await forge.postComment("pr", pr.number, composeComment(options.owner, entry.id, text)) : { id: already.id, url: already.url };
+    flagged.push({ pr: pr.number, comment });
+    options.print(`${forge.setting.path}#${pr.number}: ${already === undefined ? "told the" : "found already told the"} ${pullRequest} it relied on the old vision: ${comment.url}`);
+  }
+  return flagged;
 }
 
 /**
@@ -731,6 +771,211 @@ async function startWork(options: PassOptions, repo: string, acted: ReturnType<t
     options.log?.warn("start-failed", { repo, issue: acted.issue, command, exit: result.exit, error: result.error });
     options.print(`${name}: the start command failed (${result.error ?? `exit ${result.exit}`}); the call stands`);
   }
+}
+
+// Vision changes.
+
+/**
+ * VISION.md as entail last saw it: the change a pass last recorded, or before
+ * any was recorded, the vision the latest call read. Undefined when nothing
+ * was ever judged, so there is nothing to compare.
+ */
+function lastSeenVision(state: RepoState, entries: readonly Entry[]): { commit: string | null; text: string | null } | undefined {
+  if (state.vision !== null) return state.vision;
+  const last = entries.findLast((entry): entry is CallEntry | LandingEntry => entry.type === "call" || entry.type === "landing");
+  if (last === undefined) return undefined;
+  return { commit: last.vision?.commit ?? null, text: last.vision?.text ?? null };
+}
+
+function moved(change: VisionChange): boolean {
+  return change.removed.length > 0 || change.added.length > 0;
+}
+
+/** The call on an issue as it stands: the owner's, when the call was run on the owner's word. */
+function standingCall(call: CallEntry): "go" | "no" | "ask" {
+  return call.owner?.call ?? call.call.call;
+}
+
+/**
+ * The calls a vision change leaves to re-check, in log order: the latest call
+ * on each issue that was posted (for it or for the owner's action on it) and
+ * read a vision whose lines differ from the change's, not yet re-checked for
+ * this change. A call from a cancelled PR is left alone, and so is an issue
+ * held back by an open blocker or with something still to do on it, such as
+ * the owner's action in its window: it is re-checked once that is done.
+ */
+function recheckWork(entries: readonly Entry[], seen: VisionSeenEntry, now: Date): CallEntry[] {
+  const posted = new Set<number>();
+  const actionOn = new Map<number, number>();
+  for (const entry of entries) {
+    if (entry.type === "acted") posted.add(entry.for);
+    if (entry.type === "confirmed" || entry.type === "overridden" || entry.type === "answered") actionOn.set(entry.id, entry.call);
+  }
+  const postedCalls = new Set<number>();
+  for (const id of posted) postedCalls.add(actionOn.get(id) ?? id);
+  const done = new Set<number>();
+  const failures = new Map<number, number>();
+  for (const entry of entries) {
+    if (entry.type !== "rechecked" || entry.vision !== seen.id) continue;
+    if (entry.outcome === "failed") failures.set(entry.call, (failures.get(entry.call) ?? 0) + 1);
+    else done.add(entry.call);
+  }
+  const busy = new Set<number>();
+  for (const pending of pendingWork(entries, now)) busy.add("entry" in pending ? pending.entry.issue.number : pending.call.issue.number);
+  // An issue held back by an open blocker gets no call until it is cleared.
+  for (const number of heldIssues(entries).keys()) busy.add(number);
+  const held = new Set(heldActions(entries, now).map((action) => action.call));
+  const latest = latestCalls(entries);
+  const work: CallEntry[] = [];
+  for (const entry of entries) {
+    if (entry.type !== "call" || latest.get(entry.issue.number)?.id !== entry.id) continue;
+    if (entry.trigger === "landing" || !postedCalls.has(entry.id) || done.has(entry.id)) continue;
+    if ((failures.get(entry.id) ?? 0) >= JUDGMENT_ATTEMPTS) continue;
+    if (busy.has(entry.issue.number) || held.has(entry.id)) continue;
+    if (!moved(visionTextChange(entry.vision?.text ?? null, seen.text))) continue;
+    work.push(entry);
+  }
+  return work;
+}
+
+/** The line of a vision change that moved a call: the model's quote matched to a removed or added line, else its words as given, else every changed line. */
+function movingPassage(quote: string, change: VisionChange): Pick<VisionRecheck, "passage"> & { passageKind?: "added" | "removed" } {
+  const wanted = collapseWhitespace(quote.replace(/^\s*[-+>]\s*/u, ""));
+  if (wanted !== "") {
+    for (const kind of ["added", "removed"] as const) {
+      const line = change[kind].find((one) => one.identity === wanted) ?? change[kind].find((one) => one.identity.includes(wanted) || wanted.includes(one.identity));
+      if (line !== undefined) return { passage: line.text.trim(), passageKind: kind };
+    }
+    return { passage: quote.trim() };
+  }
+  return { passage: [...change.removed.map((line) => `- ${line.text.trim()}`), ...change.added.map((line) => `+ ${line.text.trim()}`)].join("\n") };
+}
+
+/**
+ * Notices a change to VISION.md on the default branch and re-checks the open
+ * issues called under the earlier text, once per change. Returns how many
+ * judgments ran.
+ */
+async function recheckVision(context: JudgeContext, startEntries: readonly Entry[], record: (entry: NewEntry) => Entry, planned: readonly Entry[]): Promise<number> {
+  const { options, state, forge } = context;
+  const { repo } = state;
+  const now = () => options.now?.() ?? new Date();
+  const current = () => [...readLog(options.dataDirectory, repo), ...planned];
+  const seen = lastSeenVision(state, startEntries);
+  // Nothing was ever called here, so nothing can be re-checked, and the vision is not read for it.
+  if (seen === undefined) return 0;
+  let reading: RepoReading;
+  try {
+    reading = await context.reading();
+  } catch (error) {
+    if (options.signal?.aborted) throw error;
+    // The vision could not be read: the rest of the pass goes on, and the change is noticed next pass.
+    const message = error instanceof Error ? error.message : String(error);
+    options.log?.warn("vision-read-failed", { repo, error: message });
+    context.failure = failureAt(options, "reading VISION.md", message);
+    options.print(`${repo}: entail could not read VISION.md to look for a change: ${message}; it looks again next pass`);
+    return 0;
+  }
+  const vision = reading.vision;
+  if (moved(visionTextChange(seen.text, vision?.text ?? null))) {
+    record({ type: "vision-seen", commit: vision?.commit ?? null, text: vision?.text ?? null, from: seen.commit });
+    options.log?.info("vision-changed", { repo, from: seen.commit, to: vision?.commit ?? null });
+    options.print(`${repo}: VISION.md changed${seen.commit === null ? "" : ` since ${seen.commit.slice(0, 7)}`}${vision === null ? "; it was removed" : ` at ${vision.commit.slice(0, 7)}`}`);
+  }
+  const entries = current();
+  const change = entries.findLast((entry): entry is VisionSeenEntry => entry.type === "vision-seen");
+  if (change === undefined) return 0;
+  const work = recheckWork(entries, change, now());
+  if (work.length === 0) return 0;
+  options.print(`${repo}: re-checking ${work.length} open call${work.length === 1 ? "" : "s"} made under the earlier vision`);
+  const book = await options.book();
+  const { model, effort } = runSettings(state, options.settings);
+  const followed = followedPullRequests(entries);
+  let judged = 0;
+  for (const [index, call] of work.entries()) {
+    options.signal?.throwIfAborted();
+    const number = call.issue.number;
+    const name = `${repo}#${number}`;
+    const progress = `(${index + 1} of ${work.length})`;
+    const base = { type: "rechecked" as const, vision: change.id, issue: number, call: call.id };
+    const issue = await forge.issue(number);
+    if (issue === null || issue.state !== "open") {
+      record({ ...base, outcome: "closed" });
+      options.print(`${name} ${progress}: the issue is closed; not re-checked`);
+      continue;
+    }
+    const lines = visionTextChange(call.vision?.text ?? null, change.text);
+    const previous = standingCall(call);
+    const judgment = await judge(
+      options.runner,
+      {
+        repo,
+        issueNumber: number,
+        issueText: call.issueText,
+        vision: reading.vision,
+        pins: reading.pins,
+        precedents: precedentsFor(book, repo, call.issueText),
+        checkout: reading.checkout,
+        sha: reading.sha,
+        recheck: {
+          previous: { call: previous, reason: call.owner === null ? call.call.reason : call.owner.words, owner: call.owner !== null },
+          from: call.vision?.commit ?? null,
+          removed: lines.removed.map((line) => line.text),
+          added: lines.added.map((line) => line.text),
+        },
+      },
+      { model, effort, ...(options.signal === undefined ? {} : { signal: options.signal }) },
+    );
+    judged++;
+    if (!judgment.ok) {
+      const reason = `${judgment.failure.kind}: ${judgment.failure.message}`;
+      record({ ...base, outcome: "failed", reason, model, effort, promptVersion: RECHECK_PROMPT_VERSION, costUsd: judgment.facts?.estimatedCostUsd ?? null });
+      options.log?.warn("recheck-failed", { repo, issue: number, failure: judgment.failure.kind, message: judgment.failure.message });
+      context.failure = failureAt(options, `re-checking #${number}`, reason, judgment.failure.resetAt);
+      options.print(`${name} ${progress}: the re-check gave no call (${reason}); it is tried again next pass, up to ${JUDGMENT_ATTEMPTS} times`);
+      continue;
+    }
+    const facts = { model: judgment.facts.model, effort, promptVersion: RECHECK_PROMPT_VERSION, costUsd: judgment.facts.estimatedCostUsd };
+    options.log?.info("rechecked", { repo, issue: number, from: previous, call: judgment.call.call, model: judgment.facts.model, costUsd: judgment.facts.estimatedCostUsd });
+    if (judgment.call.call === previous) {
+      record({ ...base, outcome: "held", judged: judgment.call, ...facts });
+      options.print(`${name} ${progress}: the call holds under the new vision: ${previous}`);
+      continue;
+    }
+    const pullRequests: PullRequestRef[] = [];
+    for (const followedPr of followed.values()) {
+      if (followedPr.issue !== number) continue;
+      const pr = await forge.pullRequest(followedPr.pr.number);
+      if (pr.state === "open") pullRequests.push(pullRequestRef(pr));
+    }
+    const recheck: VisionRecheck = {
+      vision: change.id,
+      previous: call.id,
+      previousCall: previous,
+      removed: lines.removed.map((line) => line.text),
+      added: lines.added.map((line) => line.text),
+      ...movingPassage(judgment.visionChange ?? "", lines),
+      pullRequests,
+    };
+    record({
+      type: "call",
+      issue: { ...call.issue, title: issue.title, url: issue.url },
+      trigger: "vision",
+      mentions: [],
+      content: call.content,
+      issueText: call.issueText,
+      vision: reading.vision,
+      sha: reading.sha,
+      call: judgment.call,
+      // The owner made the earlier call: a change to it waits for them whatever the mode.
+      confirm: state.confirm || call.owner !== null,
+      owner: null,
+      ...facts,
+      recheck,
+    });
+    options.print(`${name} ${progress}: the vision change moves the call: ${previous} → ${judgment.call.call}: ${issue.title}\n${indent(formatCall(judgment.call))}\n    moved by: ${recheck.passage}${pullRequests.length === 0 ? "" : `\n    in-flight work that relied on the old text: ${pullRequests.map((pr) => pr.url).join(", ")}`}`);
+  }
+  return judged;
 }
 
 // PRs.
