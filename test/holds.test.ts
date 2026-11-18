@@ -98,7 +98,7 @@ test("go, but differently: the owner's line is posted word for word as the crite
   assert.equal(h.runner.requests.length, 1, "entail does not derive criteria from the owner's line");
   const body = h.forge.posted[1]!.body;
   assert.match(body, /\*\*Go\*\*, by Omkar, keeping entail's go but not its criteria\./u);
-  assert.match(body, /What the PR must do beyond solving the issue, in Omkar's words:\n\n- Rebuild the board as a single-page app with a front-end framework\./u);
+  assert.match(body, /What the PR must do beyond solving the issue, in Omkar's words:\n\n- Rebuild the board as a single-page app with a front-end framework\.\n- Link the PR to this issue so GitHub lists it under the PR's Development section, for example with `Closes #\d+` in the PR description; entail does not pick up a PR that is not linked\./u);
   assert.doesNotMatch(body, /server-rendered/u);
   const [past] = await readCaseBook(join(h.dataDirectory, OWNER_CASE_BOOK));
   assert.equal(past!.call, "go");

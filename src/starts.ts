@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { criteriaOf, type Pending } from "./records.ts";
+import { criteriaOf, linkCriterion, type Pending } from "./records.ts";
 import { cmdArguments, killTree } from "./windows.ts";
 
 /**
@@ -55,19 +55,19 @@ export function handoffFor(repo: string, pending: Pending): Handoff | null {
       if (entry.owner !== null) {
         if (entry.owner.call !== "go") return null;
         const reason = entry.owner.kind === "answer" && entry.call.call === "go" ? entry.call.reason : entry.owner.words;
-        return { ...of(entry), call: entry.id, by: "owner", reason, criteria: criteriaOf(entry.call) };
+        return { ...of(entry), call: entry.id, by: "owner", reason, criteria: [...criteriaOf(entry.call), linkCriterion(entry.issue.number)] };
       }
       if (entry.call.call !== "go" || entry.confirm) return null;
-      return { ...of(entry), call: entry.id, by: "entail", reason: entry.call.reason, criteria: entry.call.criteria };
+      return { ...of(entry), call: entry.id, by: "entail", reason: entry.call.reason, criteria: [...entry.call.criteria, linkCriterion(entry.issue.number)] };
     }
     case "confirmed": {
       const { call, action } = pending;
       if (call.call.call !== "go") return null;
-      return { ...of(call), call: action.id, by: "owner", reason: call.call.reason, criteria: call.call.criteria };
+      return { ...of(call), call: action.id, by: "owner", reason: call.call.reason, criteria: [...call.call.criteria, linkCriterion(call.issue.number)] };
     }
     case "owner-go": {
       const { call, action } = pending;
-      return { ...of(call), call: action.id, by: "owner", reason: call.call.reason, criteria: [{ criterion: action.reason, source: "owner", basis: "the owner's go, made differently, word for word" }] };
+      return { ...of(call), call: action.id, by: "owner", reason: call.call.reason, criteria: [{ criterion: action.reason, source: "owner", basis: "the owner's go, made differently, word for word" }, linkCriterion(call.issue.number)] };
     }
     default:
       return null;
