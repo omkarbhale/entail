@@ -2,6 +2,8 @@
 
 The owner's stand-in for product calls on their repos: one call per ticket and per PR, made the way the owner would make it.
 
+![The board's Waiting page: a go on an issue to confirm, and a merge call on a PR](docs/screenshots/waiting.png)
+
 ## What it does
 
 An owner who runs agent-driven work still has to make the product call on every ticket and every PR, and today that call happens in chat and evaporates there. entail makes it instead. The repo's `VISION.md` is the owner's word on what the product is, and the test entail applies to every change is one question: does this make the product better?

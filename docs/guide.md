@@ -78,6 +78,16 @@ A repo starts in confirm mode: entail posts its go or no but closes nothing unti
 
 `run` serves the board on `http://127.0.0.1:4380/`: every enrolled repo and every call, on issues and PRs, in one place, on three pages that never reload. **Waiting** is one column of open cards, questions first and then calls to confirm, oldest first within each; each card says what the ticket (or the PR) was, what entail concluded, why it was raised and the vision line or past case it rests on, and is confirmed, overridden with a one-line reason, or answered in place (`j`/`k` move, `c` confirm, `o` override, `a` answer, `Esc` cancel, `1`/`2`/`3` switch pages). A PR's card says merge or send back, shows the criteria as a met/unmet checklist with evidence, a line from GitHub (CI checks, whether `VISION.md` was touched) that does not come from the PR, and, collapsed, what the PR does beyond its criteria. An action is recorded at once and held for ten seconds with an Undo, on an issue and on a PR alike; entail writes it to the case book and acts on GitHub (posts, closes or merges) when the window closes, and a restart completes it without acting twice. **Log** is every call on issues and PRs, newest first and paged by day, never trimmed, with the owner's call kept beside entail's; a call entail made alone can be overridden from it. **Repos** holds enrolling (with the issues already open offered as a separate click), confirm mode, the model and effort (one default, overridable per repo), the pins as read from their file, and the notice command as set (read only). The tab title carries the count. The board follows the system's light or dark theme until the toggle in its navbar picks one, which it remembers. The board is a React app built into `dist/board` by `npm run build`, and its source is in `board/`.
 
+![The Waiting page: a go on an issue to confirm, and a merge call on a PR below it](screenshots/waiting.png)
+
+![The Log page: every call newest first, with who confirmed it](screenshots/log.png)
+
+![The Repos page: an enrolled repo and its settings](screenshots/repos.png)
+
+A call as entail posts it on the issue:
+
+![entail's go posted as a comment on issue #203](screenshots/call.png)
+
 ## Notices
 
 When something starts waiting, entail can run one command the owner sets (`entail settings --notice '<command>'`, or `--notice none`; the board shows it but does not set it) with one line and a link appended as its last two arguments (`/bin/sh -c`, so `$1` and `$2`; on Windows `cmd.exe /d /s /c`, so `%~1` and `%~2` in a batch file), such as `entail: 1 question and 3 calls to confirm waiting on you http://127.0.0.1:4380/#/waiting`; never the question itself. The same command is told once when a repo's checks have been failing for 10 minutes (gh logged out, the repo gone or out of reach, the claude usage limit or a GitHub rate limit, with when it resets, or a model run erroring), as in `entail: owner/repo has been failing for 12 minutes: the pass: gh: not logged in`, and once when it works again (`entail: owner/repo is working again`), never on every poll and never twice for one run of failures, even across a restart. A PR whose landing judgment gave no call three times at one head is not failing and not recovered but stalled: it is told once per head (`entail: owner/repo stalled: PR #124 judged 3 times without an answer: <reason>; judged again on the next push`), and a new push clears it; meanwhile `entail status`, the repo's card on the board and a line atop the Waiting page say since when it fails and why. A failure changes no call and polling goes on. [`examples/`](../examples/) holds a command that appends the line to a file (`notice-to-file.sh`, or `notice-to-file.cmd` on Windows) and one that drops it into firstmate's inbox. By default there is none.
@@ -129,3 +139,5 @@ npm run board:dev  # the board with hot reload, against a running entail run on 
 ```
 
 The tests run no real model and reach no real forge: model runs are scripted, the GitHub and GitLab adapters are tested against recorded responses, and the board's pages are tested against a fake of its API.
+
+A change to what the board's pages show, or to what entail posts on an issue, retakes the screenshots above in the same PR: see [docs/screenshots](screenshots/README.md).
