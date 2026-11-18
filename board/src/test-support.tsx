@@ -151,6 +151,7 @@ export function aCall(overrides: Partial<CallView> = {}): CallView {
     settledBy: null,
     posted: { url: `https://github.com/omkarbhale/entail/issues/${number}#issuecomment-1`, closed: false },
     rejudged: false,
+    recheck: null,
     waitingSince: new Date(Date.now() - 3600_000).toISOString(),
     ...overrides,
   };

@@ -160,3 +160,11 @@ function uniqueByIdentity(lines: VisionLine[]): VisionLine[] {
     return true;
   });
 }
+
+/**
+ * The vision change between two texts of VISION.md, null standing for no
+ * VISION.md: the vision lines removed and added, by identity.
+ */
+export function visionTextChange(before: string | null, after: string | null): VisionChange {
+  return computeVisionChange(before === null ? [] : splitVisionLines(before), after === null ? [] : splitVisionLines(after));
+}

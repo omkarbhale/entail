@@ -15,11 +15,14 @@ export const JUDGMENT_KIND = "issue-call";
 /** Changes whenever the prompt or the answer's shape changes, so a call records what judged it. */
 export const JUDGMENT_PROMPT_VERSION = "issue-call-3";
 
+/** The version a re-check after a vision change records: the judgment's prompt with the vision change added. */
+export const RECHECK_PROMPT_VERSION = `${JUDGMENT_PROMPT_VERSION}+vision-recheck-1`;
+
 /** Where a criterion comes from; a criterion with no such source is not one. */
 export const CRITERION_SOURCES = ["vision", "reading", "edge", "answer"] as const;
 
-/** The answer the model gives, as JSON. */
-export const VERDICT_SCHEMA = object({
+/** The fields of the answer the model gives. */
+const VERDICT_FIELDS = {
   call: oneOf(["go", "no", "ask"], "go: doing it makes the product better and it is not large or hard to undo; no: it would not make the product better; ask: you cannot tell, or it is large or hard to undo."),
   reason: string("Why, in plain words, in one to three sentences, for the owner to read. Quote the vision line or name the past case the call rests on, when there is one."),
   rests_on: object(
@@ -46,9 +49,25 @@ export const VERDICT_SCHEMA = object({
     }),
     "For ask, the one question; null for go and no.",
   ),
-});
+};
+
+/** The answer the model gives, as JSON. */
+export const VERDICT_SCHEMA = object(VERDICT_FIELDS);
 
 export type Verdict = Infer<typeof VERDICT_SCHEMA>;
+
+/**
+ * The answer to a re-check after VISION.md changed: the same answer, and the
+ * passage of the change that moved the call.
+ */
+export const RECHECK_SCHEMA = object({
+  ...VERDICT_FIELDS,
+  vision_change: string(
+    "The line of the vision change, removed or added, that moves the call from the earlier one, quoted exactly as the change shows it; empty when your call is the earlier one's.",
+  ),
+});
+
+export type RecheckVerdict = Infer<typeof RECHECK_SCHEMA>;
 
 export type Criterion = Verdict["criteria"][number];
 
@@ -114,6 +133,18 @@ export interface JudgmentInputs {
   /** A read-only checkout of the repo for the run to read, and its commit. */
   checkout: string;
   sha: string;
+  /** Set for a re-check after VISION.md changed: the call made under the earlier vision, and what changed. */
+  recheck?: RecheckInputs;
+}
+
+/** What a re-check reads beyond a call's own inputs: the earlier call and how the vision changed since it was made. */
+export interface RecheckInputs {
+  /** The earlier call's kind as it stood (the owner's, when the owner made it), and its reason. */
+  previous: { call: "go" | "no" | "ask"; reason: string; owner: boolean };
+  /** The commit of the vision the earlier call read, or null when there was none. */
+  from: string | null;
+  removed: string[];
+  added: string[];
 }
 
 /** The judgment's prompt: the owner's question, the vision in full, the pins, the precedents and the issue. */
@@ -199,8 +230,31 @@ ${precedents}
 <issue>
 ${inputs.issueText.trim()}
 </issue>
-
+${inputs.recheck === undefined ? "" : `\n${recheckSection(inputs.recheck)}\n`}
 Now answer the owner's question for this issue: would doing it make the product better, as the owner would see it?`;
+}
+
+/** The block a re-check adds: the call made under the earlier vision and the lines the change removed and added. */
+function recheckSection(recheck: RecheckInputs): string {
+  const whose = recheck.previous.owner ? "The owner's call" : "entail's call";
+  const lines = (prefix: string, list: readonly string[]) => (list.length === 0 ? "(none)" : list.map((line) => `${prefix} ${line}`).join("\n"));
+  return `## The vision changed since this issue was called
+
+${whose} on this issue was **${recheck.previous.call}**, made under the vision at ${recheck.from ?? "a time the repo had no VISION.md"}: ${recheck.previous.reason}
+
+VISION.md has changed since. The lines it removed:
+
+<removed>
+${lines("-", recheck.removed)}
+</removed>
+
+The lines it added:
+
+<added>
+${lines("+", recheck.added)}
+</added>
+
+Judge the issue afresh under the vision above. Change the call only when the vision change requires it; when the earlier call still holds, make the same call. When your call differs, name in vision_change the one removed or added line that moved it.`;
 }
 
 function precedent(past: Case): string {
@@ -223,7 +277,7 @@ export interface JudgeOptions extends RunOptions {
 }
 
 export type Judgment =
-  | { ok: true; call: IssueCall; verdict: Verdict; facts: RunFacts }
+  | { ok: true; call: IssueCall; verdict: Verdict; facts: RunFacts; visionChange?: string }
   | { ok: false; failure: MachineFailure; facts: RunFacts | null };
 
 /** Makes the call on one issue: one model run, parsed and routed. */
@@ -234,8 +288,8 @@ export async function judge(runner: ModelRunner, inputs: JudgmentInputs, options
       kind: JUDGMENT_KIND,
       ticket: inputs.issueNumber === null ? inputs.repo : `${inputs.repo}#${inputs.issueNumber}`,
       prompt: judgmentPrompt(inputs),
-      promptVersion: JUDGMENT_PROMPT_VERSION,
-      schema: VERDICT_SCHEMA,
+      promptVersion: inputs.recheck === undefined ? JUDGMENT_PROMPT_VERSION : RECHECK_PROMPT_VERSION,
+      schema: inputs.recheck === undefined ? VERDICT_SCHEMA : RECHECK_SCHEMA,
       checkout: inputs.checkout,
       sha: inputs.sha,
       model,
@@ -246,7 +300,8 @@ export async function judge(runner: ModelRunner, inputs: JudgmentInputs, options
   if (!result.ok) return result;
   const routed = routeVerdict(result.output);
   if (!routed.ok) return { ok: false, failure: { kind: "no-structured-output", message: routed.problem }, facts: result.facts };
-  return { ok: true, call: routed.call, verdict: result.output, facts: result.facts };
+  const output = result.output as Verdict & { vision_change?: string };
+  return { ok: true, call: routed.call, verdict: output, facts: result.facts, ...(output.vision_change === undefined ? {} : { visionChange: output.vision_change }) };
 }
 
 /** A call as plain text, for the terminal. */

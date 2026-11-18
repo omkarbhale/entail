@@ -8,7 +8,7 @@ export type Call = "go" | "no" | "ask" | "merge" | "send-back";
 /** An owner's call on an issue (go, no) or on a PR (merge, send-back). */
 export type OwnerCallName = "go" | "no" | "merge" | "send-back";
 export type EffortName = "low" | "medium" | "high" | "xhigh" | "max";
-export type TriggerName = "new" | "edit" | "mention" | "owner" | "backlog" | "landing" | "opened" | "push";
+export type TriggerName = "new" | "edit" | "mention" | "owner" | "backlog" | "landing" | "vision" | "opened" | "push";
 export type CallStatusName = "waiting" | "auto" | "confirmed" | "overridden" | "answered" | "owner" | "superseded" | "closed";
 
 export interface CriterionView {
@@ -148,10 +148,27 @@ export interface CallView {
   posted: { url: string; closed: boolean } | null;
   /** The issue was edited (or the PR pushed to) while an earlier call on it waited, and this call replaced that one. */
   rejudged: boolean;
+  /** Set on an issue's call that a change to VISION.md moved: the call before it and the vision passage that moved it. */
+  recheck: RecheckView | null;
   /** When the owner was first asked about this issue or PR: the first call of a run of calls replaced while they waited. */
   waitingSince: string;
   /** On a PR's call, everything about the PR; null on an issue's. */
   pr: PullRequestView | null;
+}
+
+/** What a call a vision change moved shows: the call before → this one, and the passage of the vision change that moved it. */
+export interface RecheckView {
+  /** The call it replaced, as it stood: go, no, or ask while a question waited. */
+  previousCall: "go" | "no" | "ask";
+  previousId: number;
+  /** The passage that moved it: one line, or every changed line when the judgment named none. */
+  passage: string;
+  /** Whether the passage is a line the change added or removed, when it is one line of it. */
+  passageKind: "added" | "removed" | null;
+  removed: string[];
+  added: string[];
+  /** The open PRs for the issue that relied on the old text. */
+  pullRequests: { number: number; title: string; url: string }[];
 }
 
 /** An owner's action in its undo window: entail acts on it when `holdUntil` passes. */
