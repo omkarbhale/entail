@@ -8,7 +8,7 @@ entail is being rebuilt. On 2026-11-12 it was started over in this repository ar
 
 ## Use
 
-You need Node 24 or newer, `git`, `gh` logged in, and `claude` logged in.
+You need Node 24 or newer, `git`, `gh` logged in (or `glab`, for GitLab), and `claude` logged in.
 
 ```sh
 npm ci && npm run build
@@ -59,7 +59,7 @@ node dist/cli.js replay                        # the case book through both judg
 
 **The board's API.** The board reads and writes through a small JSON API on the same address, the single path that records answers; the browser never talks to GitHub. It serves what is waiting and what is held in its undo window (`GET /api/waiting`), the log by day (`GET /api/log`), one call (`GET /api/calls/:id`), confirm, override, answer and undo (`POST /api/calls/:id/confirm|override|answer|undo`), the repos (`GET|POST /api/repos`, `PATCH|DELETE /api/repos/:owner/:name`, `POST /api/repos/:owner/:name/check|backlog`), the settings (`GET|PATCH /api/settings`), entail's status (`GET /api/status`) and live updates as server-sent events (`GET /api/events`). `src/api.ts` documents each. Each call it returns carries `kind`, "issue" or "pr"; a PR's call also carries `pr`, with the criteria checklist, the facts read from GitHub, the beyond-the-criteria sort and what entail did on the PR. It answers only on the loopback host, and takes writes only as JSON from no other origin.
 
-**What entail keeps.** Everything lives in entail's data directory (`~/.local/share/entail` on Linux, `~/Library/Application Support/entail` on macOS, `%LOCALAPPDATA%\entail` on Windows): one append-only log per repo in `log/github.com/<owner>/<name>.jsonl` holding every enrollment, setting, call on an issue or a PR (with what it read), owner's action, post and merge, from which everything shown is derived; the owner's case book in `cases/`; pins in `pins/<host>/<owner>/<name>.md`, one topic per line; which waiting items the owner was last told about, and which repos they were told are failing, in `notices.json`; the lock held by the running copy in `entail.lock`; and the settings, mirrors, cursors and operational log.
+**What entail keeps.** Everything lives in entail's data directory (`~/.local/share/entail` on Linux, `~/Library/Application Support/entail` on macOS, `%LOCALAPPDATA%\entail` on Windows): one append-only log per repo in `log/github.com/<owner>/<name>.jsonl` (`log/gitlab.com/<group>/.../<name>.jsonl` for a GitLab project) holding every enrollment, setting, call on an issue or a PR (with what it read), owner's action, post and merge, from which everything shown is derived; the owner's case book in `cases/`; pins in `pins/<host>/<owner>/<name>.md`, one topic per line; which waiting items the owner was last told about, and which repos they were told are failing, in `notices.json`; the lock held by the running copy in `entail.lock`; and the settings, mirrors, cursors and operational log.
 
 `judge` reads the issue and its comments, the repo's `VISION.md` and the repo itself at its default branch, the owner's pins for the repo, and the most relevant past cases, and answers go (with the criteria the PR must meet), no (with the reason) or ask (with the one question). A change that is large or hard to undo is always ask. The prompt is in `src/judgment.ts`.
 
