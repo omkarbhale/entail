@@ -1,4 +1,5 @@
 import type { Blocker, Forge, Issue, IssueRef } from "./forge/forge.ts";
+import { repoSetting } from "./repo-ref.ts";
 
 /**
  * The issues an issue waits on. An issue is blocked while any issue it names
@@ -12,10 +13,14 @@ import type { Blocker, Forge, Issue, IssueRef } from "./forge/forge.ts";
  * text.
  */
 
-/** A list of issue references after "blocked by" or "depends on": `#12`, `acme/core#4`, joined by commas, "and" or "&". */
-const REF = String.raw`(?:[\w.-]+\/[\w.-]+)?#\d+`;
+/**
+ * A list of issue references after "blocked by" or "depends on": `#12`,
+ * `acme/core#4` or, on GitLab, `group/subgroup/project#4`, joined by commas,
+ * "and" or "&".
+ */
+const REF = String.raw`(?:[\w.-]+(?:\/[\w.-]+)+)?#\d+`;
 const BLOCKER_PHRASE = new RegExp(String.raw`\b(?:blocked\s+by|depends\s+on)\s*:?\s+(${REF}(?:\s*(?:,|&|\band\b)\s*${REF})*)`, "giu");
-const ONE_REF = /(?:([\w.-]+)\/([\w.-]+))?#(\d+)/gu;
+const ONE_REF = /(?:([\w.-]+(?:\/[\w.-]+)+))?#(\d+)/gu;
 
 /**
  * The blockers an issue's text names, in the order named, each once. A bare
@@ -28,7 +33,7 @@ export function textBlockers(issue: Pick<Issue, "title" | "body" | "number">, pa
   const refs: IssueRef[] = [];
   for (const phrase of text.matchAll(BLOCKER_PHRASE)) {
     for (const ref of phrase[1]!.matchAll(ONE_REF)) {
-      const found: IssueRef = { path: ref[1] === undefined ? path : `${ref[1]}/${ref[2]}`, number: Number(ref[3]) };
+      const found: IssueRef = { path: ref[1] ?? path, number: Number(ref[2]) };
       if (!Number.isSafeInteger(found.number) || found.number <= 0) continue;
       if (sameRef(found, { path, number: issue.number })) continue;
       if (!refs.some((seen) => sameRef(seen, found))) refs.push(found);
@@ -76,13 +81,26 @@ export function sameBlockers(a: readonly IssueRef[], b: readonly IssueRef[]): bo
   return a.length === b.length && a.every((ref) => b.some((other) => sameRef(ref, other)));
 }
 
-/** A blocker as a comment or the log names it: `#12` in the issue's own repo, `owner/name#12` in another. */
-export function refText(ref: IssueRef, path: string): string {
-  return ref.path.toLowerCase() === path.toLowerCase() ? `#${ref.number}` : `${ref.path}#${ref.number}`;
+/**
+ * A blocker as a comment or the log names it: `#12` in the issue's own repo,
+ * `owner/name#12` in another. `repo` is the issue's repo as entail names it,
+ * `owner/name` or `gitlab:group/name`.
+ */
+export function refText(ref: IssueRef, repo: string): string {
+  return ref.path.toLowerCase() === pathOf(repo).toLowerCase() ? `#${ref.number}` : `${ref.path}#${ref.number}`;
+}
+
+/** A repo's path on its forge: `gitlab:group/name` is `group/name` there. */
+function pathOf(repo: string): string {
+  try {
+    return repoSetting(repo).path;
+  } catch {
+    return repo;
+  }
 }
 
 /** Blockers as a list in words: "#3", "#3 and #4", "#3, #4 and #5". */
-export function refsText(refs: readonly IssueRef[], path: string): string {
-  const texts = refs.map((ref) => refText(ref, path));
+export function refsText(refs: readonly IssueRef[], repo: string): string {
+  const texts = refs.map((ref) => refText(ref, repo));
   return texts.length <= 1 ? (texts[0] ?? "") : `${texts.slice(0, -1).join(", ")} and ${texts.at(-1)}`;
 }

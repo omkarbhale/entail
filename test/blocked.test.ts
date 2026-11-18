@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { textBlockers } from "../src/blockers.ts";
+import { refsText, textBlockers } from "../src/blockers.ts";
 import { commentRuleViolations } from "../src/comment-rules.ts";
 import { blockedViews, formatLog, logItems, logPage } from "../src/owner.ts";
 import { heldIssues, readLog, type BlockedEntry, type CallEntry } from "../src/records.ts";
@@ -21,6 +21,14 @@ test("the text names blockers: blocked by and depends on, lists, other repos, ne
   assert.deepEqual(refs("Related to #3. See #4."), []);
   assert.deepEqual(refs("`blocked by #3`\n```\ndepends on #4\n```"), []);
   assert.deepEqual(refs("blocked by #5"), [], "an issue never blocks itself");
+  assert.deepEqual(refs("Depends on acme/libs/core#9"), ["acme/libs/core#9"], "a GitLab project in a subgroup");
+});
+
+test("a blocker in the issue's own repo is named by its number alone, on GitHub and GitLab alike", () => {
+  const refs = [{ path: "acme/tally", number: 3 }, { path: "acme/libs/core", number: 9 }];
+  assert.equal(refsText(refs, "acme/tally"), "#3 and acme/libs/core#9");
+  assert.equal(refsText(refs, "gitlab:acme/tally"), "#3 and acme/libs/core#9");
+  assert.equal(refsText([{ path: "acme/libs/core", number: 9 }], "gitlab:acme/libs/core"), "#9");
 });
 
 test("an issue blocked in its text gets no call: one note naming the blocker, the entail:blocked label, and nothing more each pass", async (t) => {
