@@ -58,7 +58,7 @@ import {
   waitingItems,
 } from "./owner.ts";
 import { pinsFile } from "./pins.ts";
-import { goCallOn, heldActions, loggedRepos, readLog, readSettings, sendBacksPosted, type GlobalSettings } from "./records.ts";
+import { clearedGoOn, goCallOn, heldActions, loggedRepos, readLog, readSettings, sendBacksPosted, type GlobalSettings } from "./records.ts";
 import { formatReplay, replay, replayLandings } from "./replay.ts";
 import { forgeTitle, GITLAB_PREFIX, isRepo, repoSetting } from "./repo-ref.ts";
 import { installService, isWsl, machineServiceSystem, serviceStatus, uninstallService, type ServiceInputs } from "./service.ts";
@@ -882,15 +882,14 @@ async function landCommand(args: string[]): Promise<number> {
   const pr = await forge.pullRequest(reference.number);
   const entries = readLog(dataDirectory, repo);
 
-  // A PR that closes no issue by the forge's link data, and names none with --issue, is judged on the vision alone.
+  // A PR with no cleared go behind it by the forge's link data, and naming no issue with --issue, is judged on the vision alone.
   let issueNumber: number | null;
   if (values.issue !== undefined) {
     issueNumber = Number(values.issue);
     if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) throw new UsageError("--issue is an issue number");
   } else {
     const linked = await forge.linkedIssues(reference.number);
-    const judged = linked.find((number) => goCallOn(entries, number) !== null);
-    issueNumber = judged ?? linked[0] ?? null;
+    issueNumber = linked.find((number) => clearedGoOn(entries, number) !== null) ?? null;
   }
   const go = issueNumber === null ? null : goCallOn(entries, issueNumber);
   let issueText = "";
@@ -931,7 +930,7 @@ async function landCommand(args: string[]): Promise<number> {
     else if (judgment.ok) {
       if (issueNumber === null) {
         console.log(`${repo}#${reference.number} at ${pr.headSha}, with no issue behind it: ${pr.title}`);
-        console.log(`(it closes no issue by ${forgeTitle(repo)}'s link data: judged on the vision alone)\n`);
+        console.log(`(no cleared go behind it by ${forgeTitle(repo)}'s link data: judged on the vision alone)\n`);
       } else {
         console.log(`${repo}#${reference.number} at ${pr.headSha}, closing #${issueNumber}: ${pr.title}`);
         console.log(go === null ? `(#${issueNumber} has no go in entail's log: judged against no criteria)\n` : `(against the criteria of call ${go.id} on #${issueNumber}; ${sendBacksPosted(entries, reference.number)} send-backs posted before)\n`);
