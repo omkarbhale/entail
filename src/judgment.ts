@@ -13,7 +13,7 @@ import { arrayOf, boolean, nullable, object, oneOf, string, type Infer } from ".
 export const JUDGMENT_KIND = "issue-call";
 
 /** Changes whenever the prompt or the answer's shape changes, so a call records what judged it. */
-export const JUDGMENT_PROMPT_VERSION = "issue-call-3";
+export const JUDGMENT_PROMPT_VERSION = "issue-call-4";
 
 /** The version a re-check after a vision change records: the judgment's prompt with the vision change added. */
 export const RECHECK_PROMPT_VERSION = `${JUDGMENT_PROMPT_VERSION}+vision-recheck-1`;
@@ -23,7 +23,7 @@ export const CRITERION_SOURCES = ["vision", "reading", "edge", "answer"] as cons
 
 /** The fields of the answer the model gives. */
 const VERDICT_FIELDS = {
-  call: oneOf(["go", "no", "ask"], "go: doing it makes the product better and it is not large or hard to undo; no: it would not make the product better; ask: you cannot tell, or it is large or hard to undo."),
+  call: oneOf(["go", "no", "ask"], "go: doing it makes the product better and it is not hard to undo; no: it would not make the product better; ask: you cannot tell, or it is hard to undo."),
   reason: string("Why, in plain words, in one to three sentences, for the owner to read. Quote the vision line or name the past case the call rests on, when there is one."),
   rests_on: object(
     {
@@ -32,20 +32,21 @@ const VERDICT_FIELDS = {
     },
     "What the call rests on.",
   ),
-  large: boolean("Whether the change is large or hard to undo, as defined in the instructions."),
-  large_because: string("When large: which of the four things it does, and how. Empty when not large."),
+  hard_to_undo: boolean("Whether the change is hard to undo, as defined in the instructions, and not already approved by the owner's answer on this issue. True always makes the call ask."),
+  too_large_for_one_pr: boolean("Whether the work needs more than one PR, as defined in the instructions; a go on it is a go for planning."),
+  large_because: string("When hard to undo: which of the four things it does, and how. When too large for one PR: why it needs more than one. Empty when neither."),
   criteria: arrayOf(
     object({
       source: oneOf(CRITERION_SOURCES, "vision, reading, edge or answer, as defined in the instructions."),
       criterion: string("What the PR must do or must not do, in one sentence."),
       basis: string("For vision, the line quoted; for reading, the readings and the one chosen; for edge, what is left out and why; for answer, the owner's answer quoted."),
     }),
-    "For go, and for ask when the change would otherwise be a go: the criteria the PR must meet. Often none. Empty for no.",
+    "For go, and for ask when the change would otherwise be a go: the criteria the PR must meet, or for a ticket too large for one PR, the criteria the plan and the tickets it files must meet. Often none. Empty for no.",
   ),
   question: nullable(
     object({
       question: string("The one question for the owner, answerable without reading anything else."),
-      why: string("What makes it a question: the readings and how users' results would differ, or the stakes that make the change large or hard to undo."),
+      why: string("What makes it a question: the readings and how users' results would differ, or the stakes that make the change hard to undo."),
     }),
     "For ask, the one question; null for go and no.",
   ),
@@ -76,9 +77,24 @@ export interface RestsOn {
   cases: string[];
 }
 
+/**
+ * What a go clears a ticket for: `implement`, work on one PR; `plan`, a
+ * ticket too large for one PR, whose plan and smaller tickets the owner's
+ * workflow writes and files, and whose original issue that workflow closes.
+ */
+export type GoScope = "implement" | "plan";
+
 /** The call as routed: what entail does with the issue. */
 export type IssueCall =
-  | { call: "go"; reason: string; restsOn: RestsOn; criteria: Criterion[] }
+  | {
+      call: "go";
+      reason: string;
+      restsOn: RestsOn;
+      /** The criteria the PR must meet, or for a go for planning, the criteria the plan carries. */
+      criteria: Criterion[];
+      /** What the go clears the ticket for; missing on calls logged before it was kept, which read as implement. */
+      scope?: GoScope;
+    }
   | { call: "no"; reason: string; restsOn: RestsOn }
   | {
       call: "ask";
@@ -86,34 +102,43 @@ export type IssueCall =
       restsOn: RestsOn;
       question: string;
       why: string;
-      /** Whether the change is large or hard to undo, which is why it is asked even if it would be a go. */
+      /** Whether the change is hard to undo, which is why it is asked even if it would be a go. */
       large: boolean;
-      /** The criteria a go would carry, when the change is asked only for its size. */
+      /** The criteria a go would carry, when the change is asked only because it is hard to undo. */
       criteria: Criterion[];
     };
 
+/** What a call's go clears the ticket for; a go logged before scope was kept reads as implement. */
+export function scopeOf(call: Extract<IssueCall, { call: "go" }>): GoScope {
+  return call.scope ?? "implement";
+}
+
 /**
- * Routes the model's answer. A change that is large or hard to undo is
- * always asked, even when the model would go ahead; an ask with no question
- * is not a usable answer.
+ * Routes the model's answer. A change that is hard to undo is always asked,
+ * even when the model would go ahead; a go on a ticket too large for one PR
+ * is a go for planning, carrying its criteria for the plan; an ask with no
+ * question is not a usable answer.
  */
 export function routeVerdict(verdict: Verdict): { ok: true; call: IssueCall } | { ok: false; problem: string } {
   const restsOn = { visionLines: verdict.rests_on.vision_lines, cases: verdict.rests_on.cases };
   const { reason } = verdict;
   if (verdict.call === "no") return { ok: true, call: { call: "no", reason, restsOn } };
-  if (verdict.call === "go" && !verdict.large) return { ok: true, call: { call: "go", reason, restsOn, criteria: verdict.criteria } };
+  if (verdict.call === "go" && !verdict.hard_to_undo) {
+    const scope: GoScope = verdict.too_large_for_one_pr ? "plan" : "implement";
+    return { ok: true, call: { call: "go", reason, restsOn, criteria: verdict.criteria, scope } };
+  }
   if (verdict.call === "go") {
-    // A go on a large change: the owner decides whether to go ahead.
+    // A go on a change that is hard to undo: the owner decides whether to go ahead.
     const question = verdict.question ?? {
-      question: "Go ahead with this change? It is large or hard to undo.",
-      why: verdict.large_because.trim() === "" ? "The change is large or hard to undo." : verdict.large_because,
+      question: "Go ahead with this change? It is hard to undo.",
+      why: verdict.large_because.trim() === "" ? "The change is hard to undo." : verdict.large_because,
     };
     return { ok: true, call: { call: "ask", reason, restsOn, ...question, large: true, criteria: verdict.criteria } };
   }
   if (verdict.question === null || verdict.question.question.trim() === "") {
     return { ok: false, problem: "the answer is ask but carries no question" };
   }
-  return { ok: true, call: { call: "ask", reason, restsOn, ...verdict.question, large: verdict.large, criteria: verdict.criteria } };
+  return { ok: true, call: { call: "ask", reason, restsOn, ...verdict.question, large: verdict.hard_to_undo, criteria: verdict.criteria } };
 }
 
 /** Everything the judgment reads about one issue. */
@@ -169,9 +194,9 @@ The question is the owner's: would doing what this issue asks make the product b
 
 Answer go, no or ask.
 
-- **go**: doing it would make the product better, and the change is not large or hard to undo. Work starts on it without the owner.
+- **go**: doing it would make the product better, and the change is not hard to undo. Work starts on it without the owner. A go comes in two shapes: a go to implement, for work that fits one PR, and a go for planning, for a ticket too large for one PR (see below).
 - **no**: doing it would not make the product better. The issue is closed with your reason, whoever filed it, including the owner. When the issue plainly goes against a line of the vision, quote that line: the owner reopens the issue if they want to change the vision.
-- **ask**: you cannot tell whether it would make the product better, or the change is large or hard to undo. The owner gets one question.
+- **ask**: you cannot tell whether it would make the product better, or the change is hard to undo. The owner gets one question.
 
 ## How to judge
 
@@ -181,16 +206,20 @@ The vision is about the product in this repo. If the product itself makes decisi
 
 Where the issue can be read more than one way, pick the reading that best serves the product and state it. Ask only when the readings would give users noticeably different results and nothing tells you which one the owner wants. A small, easily undone call does not need certainty; a minor wrong call is acceptable and fixable later.
 
-An issue that states a problem and no solution is not a question by itself. Choose the solution that best fits the vision and the product as it is, say which one in the reason, and put it in the criteria as a reading criterion worded as a decision ("Read as: ..."), so the implementer builds that and the PR is checked against it. Ask only when the change is large or hard to undo, or when the possible solutions would give users noticeably different results and nothing tells you which one the owner wants; the question then names the solutions you considered.
+An issue that states a problem and no solution is not a question by itself. Choose the solution that best fits the vision and the product as it is, say which one in the reason, and put it in the criteria as a reading criterion worded as a decision ("Read as: ..."), so the implementer builds that and the PR is checked against it. Ask only when the change is hard to undo, or when the possible solutions would give users noticeably different results and nothing tells you which one the owner wants; the question then names the solutions you considered.
 
-A change is **large or hard to undo** when it does any of these:
+A change is **hard to undo** when it does any of these:
 
 1. removes or replaces something users rely on today;
 2. changes stored data or a public interface that exists today (a command, an API, a file format or anything else other people or programs depend on);
 3. touches the vision (VISION.md) or one of the owner's pinned topics;
 4. cannot be undone by reverting one PR.
 
-Before calling a change large because it removes, replaces or changes something, check in the repo that the thing exists today. Adding something new, such as a new command, is not changing an existing interface. The size of the work alone does not make a change large: a big rewrite that keeps what users rely on and can be reverted is not. A large change is always ask, even when you are sure it would be better; the question then asks whether to go ahead, with the stakes.
+Before calling a change hard to undo because it removes, replaces or changes something, check in the repo that the thing exists today. Adding something new, such as a new command, is not changing an existing interface. The size of the work alone does not make a change hard to undo: a big rewrite that keeps what users rely on and can be reverted is not. A change that is hard to undo is always ask, even when you are sure it would be better; the question then asks whether to go ahead, with the stakes. The owner's own answer on this issue that already approved the change, the part that makes it hard to undo included, settles it: that is a go, not a question again.
+
+## Too large for one PR (go for planning)
+
+A ticket is **too large for one PR** when doing it well needs more than one PR: several separate pieces of work that are each reviewed and merged on their own. Answer go with too_large_for_one_pr set, and the ticket is cleared for planning: the owner's workflow writes the plan and files the smaller tickets, and each of those is judged on its own. Its criteria are the ones the plan and the tickets it files must meet. A go for planning is for size alone, never for risk: a change that is hard to undo is still ask, however large, and a ticket one PR can do is a plain go, however much code it touches.
 
 The past cases below are calls the owner actually made, with their reasons. Where one is like this issue, follow it and name it; where this issue differs in a way that matters, say how.
 
@@ -207,7 +236,7 @@ Restating the issue, "tests cover X", "VISION.md is not changed", and good pract
 
 ## The question (for ask)
 
-Ask one question the owner can answer without reading anything else, and say what makes it a question: the readings and how users' results would differ, or the stakes that make the change large or hard to undo.
+Ask one question the owner can answer without reading anything else, and say what makes it a question: the readings and how users' results would differ, or the stakes that make the change hard to undo.
 
 ## The repo
 
@@ -306,7 +335,7 @@ export async function judge(runner: ModelRunner, inputs: JudgmentInputs, options
 
 /** A call as plain text, for the terminal. */
 export function formatCall(call: IssueCall): string {
-  const lines = [`${call.call}: ${call.reason}`];
+  const lines = [`${call.call === "go" && scopeOf(call) === "plan" ? "go, for planning" : call.call}: ${call.reason}`];
   for (const line of call.restsOn.visionLines) lines.push(`  rests on the vision: > ${line}`);
   for (const slug of call.restsOn.cases) lines.push(`  rests on case ${slug}`);
   if (call.call === "ask") {
@@ -314,7 +343,7 @@ export function formatCall(call: IssueCall): string {
   }
   const criteria = call.call === "no" ? [] : call.criteria;
   if (criteria.length > 0) {
-    lines.push("", call.call === "go" ? "Criteria:" : "Criteria, if the owner says go:");
+    lines.push("", call.call === "go" ? (scopeOf(call) === "plan" ? "Criteria for the plan:" : "Criteria:") : "Criteria, if the owner says go:");
     for (const criterion of criteria) lines.push(`  - [${criterion.source}] ${criterion.criterion}`, `      ${criterion.basis}`);
   }
   return lines.join("\n");

@@ -20,7 +20,7 @@ import {
   type PullRequest,
 } from "./forge/forge.ts";
 import { oneLine, type RepoFailure } from "./health.ts";
-import { formatCall, judge, JUDGMENT_PROMPT_VERSION, RECHECK_PROMPT_VERSION } from "./judgment.ts";
+import { formatCall, judge, JUDGMENT_PROMPT_VERSION, RECHECK_PROMPT_VERSION, scopeOf } from "./judgment.ts";
 import { ciGreen, ciProblems, formatLandingCall, judgeLanding, landingPromptVersion, touched, type LinkedIssue } from "./landing.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import type { ModelRunner } from "./model-runner.ts";
@@ -93,7 +93,8 @@ import { collapseWhitespace, readVision, visionTextChange, type VisionChange } f
  * window has closed.
  *
  * Each act on an issue puts the `entail:` label for the call that acted on
- * it (`entail:go`, `entail:no`, or `entail:ask` while a question waits),
+ * it (`entail:go`, `entail:plan` for a go for planning, `entail:no`, or
+ * `entail:ask` while a question waits),
  * taking off any other `entail:` label. Only an account that cannot label
  * lets the act go ahead without it; any other label failure holds the act for
  * a retry next pass.
@@ -379,6 +380,7 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
       action: action.id,
       kind: action.type === "overridden" ? "override" : "answer",
       call: action.to as OwnerCall,
+      ...(action.scope === "plan" ? { scope: "plan" as const } : {}),
       words: action.type === "overridden" ? action.reason : action.answer,
     };
     const entry = await judgeIssue(context, issue, "owner", [], { word, by: action.by, at: action.at, previous: pending.call });
@@ -618,7 +620,7 @@ async function judgeIssue(context: JudgeContext, issue: Issue, trigger: Trigger,
     return null;
   }
   options.log?.info("judged", { repo, issue: issue.number, trigger, call: judgment.call.call, model: judgment.facts.model, costUsd: judgment.facts.estimatedCostUsd });
-  const why = owner === null ? trigger : `the owner's ${owner.word.kind}, ${owner.word.call}`;
+  const why = owner === null ? trigger : `the owner's ${owner.word.kind}, ${ownerCallWords(owner.word)}`;
   options.print(`${name} (${why}): ${issue.title}\n${indent(formatCall(judgment.call))}`);
   return {
     type: "call",
@@ -644,9 +646,14 @@ function ownerComment(owner: OwnerRun): { author: string; createdAt: string; bod
   const { word, previous } = owner;
   const body =
     word.kind === "answer" && previous.call.call === "ask"
-      ? `entail asked the owner: ${previous.call.question}\n\nThe owner's answer: ${word.call}.\n\n${word.words}`
-      : `entail's call was ${previous.call.call}: ${previous.call.reason}\n\nThe owner overrode it: ${word.call}.\n\n${word.words}`;
+      ? `entail asked the owner: ${previous.call.question}\n\nThe owner's answer: ${ownerCallWords(word)}.\n\n${word.words}`
+      : `entail's call was ${previous.call.call === "go" && scopeOf(previous.call) === "plan" ? "go, for planning" : previous.call.call}: ${previous.call.reason}\n\nThe owner overrode it: ${ownerCallWords(word)}.\n\n${word.words}`;
   return { author: `${owner.by} (the owner, on entail's board)`, createdAt: owner.at, body };
+}
+
+/** The owner's call as words: go, go for planning, or no. */
+function ownerCallWords(word: OwnerWord): string {
+  return word.call === "go" && word.scope === "plan" ? "go, for planning" : word.call;
 }
 
 /**
@@ -758,7 +765,9 @@ function isEntailLabel(label: string): boolean {
  * is recorded and logged, and is not run again: the call stands either way.
  */
 async function startWork(options: PassOptions, repo: string, acted: ReturnType<typeof pendingStarts>[number], record: (entry: NewEntry) => Entry): Promise<void> {
-  const { command, handoff } = acted.start;
+  const { command } = acted.start;
+  // A handoff recorded before scope was kept is a go to implement.
+  const handoff = { ...acted.start.handoff, scope: acted.start.handoff.scope ?? "implement" };
   const name = `${repo}#${acted.issue}`;
   if (options.dryRun) {
     options.print(`would start work on ${name} with: ${command}\n${indent(JSON.stringify(handoff, null, 2))}`);

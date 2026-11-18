@@ -166,7 +166,7 @@ test("each owner's answer applies only where it fits", async (t) => {
   await assert.rejects(confirmCall(directory, auto.id, "Omkar"), /not waiting to be confirmed \(auto\)/u);
   await assert.rejects(overrideCall(directory, go.id, "Omkar", "go", "x"), /already go; confirm it instead/u);
   await assert.rejects(overrideCall(directory, go.id, "Omkar", "no", "  "), (error: OwnerError) => error.status === 400 && /a reason is required/u.test(error.message));
-  await assert.rejects(answerCall(directory, ask.id, "Omkar", "maybe", "x"), /the call is go or no/u);
+  await assert.rejects(answerCall(directory, ask.id, "Omkar", "maybe", "x"), /the call is go, plan or no/u);
   await assert.rejects(confirmCall(directory, 12345, "Omkar"), (error: OwnerError) => error.status === 404);
 
   await confirmCall(directory, go.id, "Omkar");

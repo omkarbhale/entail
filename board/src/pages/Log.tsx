@@ -3,7 +3,7 @@ import { useState } from "react";
 import { api, type ActionView, type CallView, type HeldView, type LogFilter, type LogRow, type SuggestionRunView } from "../api.ts";
 import { OverrideForm, Receipt, useAct } from "../components/Actions.tsx";
 import { Chip, External, Request, Spinner, Verdict } from "../components/Verdict.tsx";
-import { clock, forgeName, dayLabel, overrideChoices, refNumber, shortName, timeZone } from "../format.ts";
+import { clock, forgeName, dayLabel, overrideChoices, ownerCallOf, refNumber, shortName, shownCall, timeZone } from "../format.ts";
 import { useRepos, useWaiting } from "../queries.ts";
 import { LoadFailed, Loading } from "./Waiting.tsx";
 
@@ -193,12 +193,12 @@ function SuggestionRow({ run, open, toggle }: { run: SuggestionRunView; open: bo
   );
 }
 
-const OWNER_CALL_WORDS = { go: "Go ahead", no: "Don’t go ahead", merge: "Merge it", "send-back": "Send it back" } as const;
+const OWNER_CALL_WORDS = { go: "Go ahead", plan: "Go, for planning", no: "Don’t go ahead", merge: "Merge it", "send-back": "Send it back" } as const;
 
 function Status({ row }: { row: LogRow }) {
   const { call } = row;
   const by = call.settledBy?.by ?? "you";
-  const ownerCall = call.settledBy?.to ?? "go";
+  const ownerCall = ownerCallOf(call.settledBy);
   switch (call.status) {
     case "waiting":
       return <span className="st wait">Waiting for you</span>;
@@ -242,7 +242,7 @@ function OwnerBlock({ row }: { row: LogRow }) {
       </div>
     );
   }
-  const call = action.to ?? "go";
+  const call = ownerCallOf(action);
   const head = action.type === "answered" ? `Answered by ${action.by}` : action.differently === true ? `Go, made differently by ${action.by}` : `Overridden by ${action.by}`;
   return (
     <div className={`owner${action.type === "overridden" ? " over" : ""}`}>
@@ -286,7 +286,7 @@ function Row({ row, open, toggle }: { row: LogRow; open: boolean; toggle: () => 
           <span className="lreason">{firstLine}</span>
         </span>
         <span className="lright">
-          <Chip call={call.call} />
+          <Chip call={shownCall(call)} />
           <Status row={row} />
         </span>
       </button>

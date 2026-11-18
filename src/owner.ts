@@ -19,12 +19,14 @@ import type {
 import { caseSlug, LANDING_CALLS, landingCaseSlug, OWNER_CALLS, type Case, type LandingCase, type LandingOwnerCall, type OwnerCall } from "./case-book.ts";
 import { refsText, refText } from "./blockers.ts";
 import { ciGreen } from "./landing.ts";
+import { scopeOf } from "./judgment.ts";
 import { EFFORTS, type Effort } from "./model-runner.ts";
 import { parsePins, pinsFile } from "./pins.ts";
 import {
   appendEntry,
   callStatuses,
   criteriaOf,
+  goScope,
   heldActions,
   isOwnerAction,
   heldIssues,
@@ -294,6 +296,7 @@ export function callView(repo: string, entry: CallEntry, status: CallStatus, ent
     body: issueBody(entry.issueText),
     visionCommit: entry.vision?.commit ?? null,
     call: entry.call.call,
+    ...(entry.call.call === "go" && scopeOf(entry.call) === "plan" ? { scope: "plan" as const } : {}),
     reason: entry.call.reason,
     criteria: criteriaOf(entry.call),
     question: entry.call.call === "ask" ? { question: entry.call.question, why: entry.call.why, large: entry.call.large } : null,
@@ -723,8 +726,13 @@ function isActionOn(entries: readonly Entry[], actionId: number, callId: number)
 
 function actionWords(action: OwnerAction): string {
   if (action.type === "confirmed") return `${action.by} confirmed`;
-  if (action.type === "overridden") return `${action.by} overrode: ${action.differently === true ? "go, differently" : action.to}`;
-  return `${action.by} answered: ${action.to}`;
+  if (action.type === "overridden") return `${action.by} overrode: ${action.differently === true ? "go, differently" : toWords(action)}`;
+  return `${action.by} answered: ${toWords(action)}`;
+}
+
+/** The call an owner's override or answer made, with a go for planning as such. */
+function toWords(action: OverriddenEntry | AnsweredEntry): string {
+  return action.to === "go" && action.scope === "plan" ? "go, for planning" : action.to;
 }
 
 /** The log of one repo, or of every repo, oldest first, every entry: for `entail calls`. */
@@ -872,9 +880,20 @@ function statusOf(entries: readonly Entry[], call: CallEntry): CallStatus {
   return callStatuses(entries).get(call.id)!;
 }
 
-function ownerCall(text: unknown): OwnerCall {
-  if (!(OWNER_CALLS as readonly unknown[]).includes(text)) throw new OwnerError(400, "the call is go or no");
-  return text as OwnerCall;
+/**
+ * The owner's call on an issue: go, no, or plan, a go that clears the ticket
+ * for planning. A go stays a go to implement unless the owner picks plan.
+ */
+function ownerCall(text: unknown): { call: OwnerCall; scope?: "plan" } {
+  if (text === "plan") return { call: "go", scope: "plan" };
+  if (!(OWNER_CALLS as readonly unknown[]).includes(text)) throw new OwnerError(400, "the call is go, plan or no");
+  return { call: text as OwnerCall };
+}
+
+/** The call an issue's entry stands at, with a go for planning as plan. */
+function effectiveCall(call: CallEntry): OwnerCall | "plan" | "ask" {
+  const effective = call.owner?.call ?? call.call.call;
+  return effective === "go" && goScope(call) === "plan" ? "plan" : effective;
 }
 
 function landingOwnerCall(text: unknown): LandingOwnerCall {
@@ -944,20 +963,22 @@ export async function overrideCall(dataDirectory: string, id: number, by: string
     return record(dataDirectory, found.repo, { type: "overridden", by, call: id, to: owner, reason: words }, now, options);
   }
   const { repo, entries, entry: call } = found;
-  const owner = ownerCall(to);
+  const { call: owner, scope } = ownerCall(to);
+  const picked = scope === "plan" ? "plan" : owner;
   const words = ownerWords(reason, options.differently === true ? "the line that becomes the criterion" : "a reason");
   const status = statusOf(entries, call);
   if (call.call.call === "ask" && call.owner === null) throw new OwnerError(409, `call ${id} is a question: answer it`);
   if (status.status === "superseded") throw new OwnerError(409, `the issue was edited and entail judged it again: read the new call`);
   if (status.status === "overridden" || status.status === "answered") throw new OwnerError(409, `call ${id} is already the owner's (${status.status})`);
   if (status.status === "confirmed") throw new OwnerError(409, `call ${id} was confirmed`);
-  const effective = call.owner?.call ?? call.call.call;
+  const effective = effectiveCall(call);
   if (options.differently === true) {
-    if (owner !== "go" || effective !== "go") throw new OwnerError(409, `only a go can be overridden with a go made differently`);
+    // A go made differently keeps entail's go as it is, to implement or for planning.
+    if (picked !== "go" || (effective !== "go" && effective !== "plan")) throw new OwnerError(409, `only a go can be overridden with a go made differently`);
     return record(dataDirectory, repo, { type: "overridden", by, call: id, to: "go", reason: words, differently: true }, now, options);
   }
-  if (owner === effective) throw new OwnerError(409, `call ${id} is already ${owner}; confirm it instead`);
-  return record(dataDirectory, repo, { type: "overridden", by, call: id, to: owner, reason: words }, now, options);
+  if (picked === effective) throw new OwnerError(409, `call ${id} is already ${picked}; confirm it instead`);
+  return record(dataDirectory, repo, { type: "overridden", by, call: id, to: owner, ...(scope === undefined ? {} : { scope }), reason: words }, now, options);
 }
 
 /**
@@ -976,13 +997,13 @@ export async function answerCall(dataDirectory: string, id: number, by: string, 
     return record(dataDirectory, found.repo, { type: "answered", by, call: id, to: owner, answer: words }, now, options);
   }
   const { repo, entries, entry: call } = found;
-  const owner = ownerCall(to);
+  const { call: owner, scope } = ownerCall(to);
   const words = ownerWords(answer, "an answer");
   const status = statusOf(entries, call);
   if (call.call.call !== "ask") throw new OwnerError(409, `call ${id} is a ${call.call.call}, not a question: confirm or override it`);
   if (status.status === "superseded") throw new OwnerError(409, `the issue was edited and entail judged it again: read the new question`);
   if (status.status !== "waiting") throw new OwnerError(409, `call ${id} is not waiting for an answer (${status.status})`);
-  return record(dataDirectory, repo, { type: "answered", by, call: id, to: owner, answer: words }, now, options);
+  return record(dataDirectory, repo, { type: "answered", by, call: id, to: owner, ...(scope === undefined ? {} : { scope }), answer: words }, now, options);
 }
 
 /**
@@ -1038,6 +1059,7 @@ export function caseFor(repo: string, call: CallEntry, action: OwnerAction): Cas
   }
   const words = action.type === "overridden" ? action.reason : action.answer;
   const notes = [`## ${action.by}'s words\n\n${quote(words)}`];
+  if (action.to === "go" && action.scope === "plan") notes.push(`## A go for planning\n\n${action.by} cleared the ticket for planning: their workflow writes the plan, files the smaller tickets and closes this issue.`);
   if (action.type === "overridden" && action.differently === true) {
     notes.push(`## entail's go, made differently\n\nentail called go: ${call.call.reason}\n\n${action.by} kept the go and replaced its criteria with their line above, word for word.`);
   } else if (action.type === "overridden") {
@@ -1147,8 +1169,8 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         const { action } = item;
         const issue = item.pr?.number ?? item.issue?.number ?? null;
         if (action.type === "confirmed") lines.push(`${at}  ${where(issue)}  CONFIRMED by ${action.by} (call ${action.call})`);
-        if (action.type === "overridden") lines.push(`${at}  ${where(issue)}  OVERRIDDEN by ${action.by} to ${action.differently === true ? "go, differently" : action.to} (call ${action.call})`, `      ${oneLine(action.reason)}`);
-        if (action.type === "answered") lines.push(`${at}  ${where(issue)}  ANSWERED by ${action.by}: ${action.to} (call ${action.call})`, `      ${oneLine(action.answer)}`);
+        if (action.type === "overridden") lines.push(`${at}  ${where(issue)}  OVERRIDDEN by ${action.by} to ${action.differently === true ? "go, differently" : toWords(action)} (call ${action.call})`, `      ${oneLine(action.reason)}`);
+        if (action.type === "answered") lines.push(`${at}  ${where(issue)}  ANSWERED by ${action.by}: ${toWords(action)} (call ${action.call})`, `      ${oneLine(action.answer)}`);
         break;
       }
       case "acted":

@@ -5,8 +5,10 @@ import {
   formatCall,
   judge,
   JUDGMENT_KIND,
+  JUDGMENT_PROMPT_VERSION,
   judgmentPrompt,
   routeVerdict,
+  scopeOf,
   VERDICT_SCHEMA,
   type JudgmentInputs,
   type Verdict,
@@ -51,7 +53,8 @@ function verdict(overrides: Partial<Verdict> = {}): Verdict {
     call: "go",
     reason: "It makes the product better.",
     rests_on: { vision_lines: [], cases: [] },
-    large: false,
+    hard_to_undo: false,
+    too_large_for_one_pr: false,
     large_because: "",
     criteria: [],
     question: null,
@@ -87,7 +90,7 @@ test("the prompt has entail choose a solution for an issue that states a problem
   const prompt = judgmentPrompt(inputs());
   assert.match(prompt, /An issue that states a problem and no solution is not a question by itself\./u);
   assert.match(prompt, /say which one in the reason, and put it in the criteria as a reading criterion worded as a decision \("Read as: \.\.\."\)/u);
-  assert.match(prompt, /Ask only when the change is large or hard to undo, or when the possible solutions would give users noticeably different results and nothing tells you which one the owner wants; the question then names the solutions you considered\./u);
+  assert.match(prompt, /Ask only when the change is hard to undo, or when the possible solutions would give users noticeably different results and nothing tells you which one the owner wants; the question then names the solutions you considered\./u);
 });
 
 test("a long past issue is clipped in the prompt, never the issue being judged", () => {
@@ -97,12 +100,41 @@ test("a long past issue is clipped in the prompt, never the issue being judged",
   assert.ok(prompt.includes(long.trim()));
 });
 
-test("go routes to go with its criteria", () => {
+test("go routes to a go to implement with its criteria", () => {
   const routed = routeVerdict(verdict({ criteria: [flag], rests_on: { vision_lines: ["New features are opt-in."], cases: [] } }));
   assert.deepEqual(routed, {
     ok: true,
-    call: { call: "go", reason: "It makes the product better.", restsOn: { visionLines: ["New features are opt-in."], cases: [] }, criteria: [flag] },
+    call: { call: "go", reason: "It makes the product better.", restsOn: { visionLines: ["New features are opt-in."], cases: [] }, criteria: [flag], scope: "implement" },
   });
+});
+
+test("a go on a ticket too large for one PR routes to a go for planning, its criteria the plan's", () => {
+  const routed = routeVerdict(verdict({ too_large_for_one_pr: true, large_because: "It needs a new store, a command and a board page.", criteria: [flag] }));
+  assert.deepEqual(routed, {
+    ok: true,
+    call: { call: "go", reason: "It makes the product better.", restsOn: { visionLines: [], cases: [] }, criteria: [flag], scope: "plan" },
+  });
+  assert.match(formatCall(routed.ok ? routed.call : (null as never)), /^go, for planning: /u);
+});
+
+test("a go too large for one PR and also hard to undo is still asked: planning is for size, never risk", () => {
+  const routed = routeVerdict(verdict({ too_large_for_one_pr: true, hard_to_undo: true, large_because: "It replaces the log format.", criteria: [flag] }));
+  assert.ok(routed.ok && routed.call.call === "ask");
+  assert.equal(routed.call.large, true);
+  assert.equal(routed.call.why, "It replaces the log format.");
+  assert.deepEqual(routed.call.criteria, [flag]);
+});
+
+test("a go logged before scope was kept reads as a go to implement", () => {
+  assert.equal(scopeOf({ call: "go", reason: "r", restsOn: { visionLines: [], cases: [] }, criteria: [] }), "implement");
+});
+
+test("the prompt names the three outcomes and keeps a go for planning for size, not risk", () => {
+  const prompt = judgmentPrompt(inputs());
+  assert.match(prompt, /a go to implement, for work that fits one PR, and a go for planning, for a ticket too large for one PR/u);
+  assert.match(prompt, /A go for planning is for size alone, never for risk: a change that is hard to undo is still ask, however large/u);
+  assert.match(prompt, /The owner's own answer on this issue that already approved the change, the part that makes it hard to undo included, settles it/u);
+  assert.equal(JUDGMENT_PROMPT_VERSION, "issue-call-4");
 });
 
 test("no routes to no, dropping any criteria or question", () => {
@@ -118,8 +150,8 @@ test("ask routes to ask with its one question", () => {
   });
 });
 
-test("a go on a large or hard-to-undo change becomes ask, keeping the criteria a go would carry", () => {
-  const withoutQuestion = routeVerdict(verdict({ large: true, large_because: "It changes the stored file format.", criteria: [flag] }));
+test("a go on a hard-to-undo change becomes ask, keeping the criteria a go would carry", () => {
+  const withoutQuestion = routeVerdict(verdict({ hard_to_undo: true, large_because: "It changes the stored file format.", criteria: [flag] }));
   assert.ok(withoutQuestion.ok);
   assert.equal(withoutQuestion.call.call, "ask");
   assert.ok(withoutQuestion.call.call === "ask");
@@ -128,13 +160,13 @@ test("a go on a large or hard-to-undo change becomes ask, keeping the criteria a
   assert.equal(withoutQuestion.call.large, true);
   assert.deepEqual(withoutQuestion.call.criteria, [flag]);
 
-  const withQuestion = routeVerdict(verdict({ large: true, large_because: "x", question: { question: "Replace the format?", why: "Old files stop opening." } }));
+  const withQuestion = routeVerdict(verdict({ hard_to_undo: true, large_because: "x", question: { question: "Replace the format?", why: "Old files stop opening." } }));
   assert.ok(withQuestion.ok && withQuestion.call.call === "ask");
   assert.equal(withQuestion.call.question, "Replace the format?");
 });
 
-test("a no on a large change stays no: nothing is done, so nothing needs undoing", () => {
-  const routed = routeVerdict(verdict({ call: "no", large: true, large_because: "x" }));
+test("a no on a hard-to-undo change stays no: nothing is done, so nothing needs undoing", () => {
+  const routed = routeVerdict(verdict({ call: "no", hard_to_undo: true, large_because: "x" }));
   assert.ok(routed.ok);
   assert.equal(routed.call.call, "no");
 });
