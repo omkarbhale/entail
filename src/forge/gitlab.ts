@@ -1,5 +1,6 @@
 import {
   type Actor,
+  type Blocker,
   assertEntailLabel,
   type Change,
   type ChangeBatch,
@@ -238,6 +239,24 @@ export class GitLabForge implements Forge {
     if (response.status === 404) return null;
     this.#ensureOk(response, path, "GET");
     return this.#issue(parseJson(response, this.setting.host, path, "GET"));
+  }
+
+  /** GitLab's issue links are a paid feature, so only an issue's text names its blockers. */
+  async blockedBy(_issueNumber: number): Promise<Blocker[] | null> {
+    return null;
+  }
+
+  async issueState(path: string, issueNumber: number): Promise<"open" | "closed" | null> {
+    if (!PROJECT_PATH.test(path) || path.split("/").some((segment) => /^\.+$/.test(segment))) return null;
+    const url = `projects/${encodeURIComponent(path)}/issues/${pathNumber(issueNumber)}`;
+    const response = await this.#get(url);
+    if (response.status === 404) return null;
+    this.#ensureOk(response, url, "GET");
+    const raw = parseJson(response, this.setting.host, url, "GET");
+    if (!isObject(raw)) return null;
+    if (raw.state === "opened") return "open";
+    if (raw.state === "closed") return "closed";
+    return null;
   }
 
   /**
