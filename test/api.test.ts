@@ -366,7 +366,7 @@ test("the settings for every repo are read and changed, the notice and start com
 
   // Set from the command line, the remote is shown with its password hidden, and how its last push went.
   changeSettings(api.dataDirectory, "claude-opus-5-5", { backup: "https://me:s3cret@example.com/me/records.git" });
-  assert.deepEqual((await api.call("GET", "/api/settings")).body.backup, { remote: "https://me:***@example.com/me/records.git", pushedAt: null, problem: null });
+  assert.deepEqual((await api.call("GET", "/api/settings")).body.backup, { remote: "https://***:***@example.com/me/records.git", pushedAt: null, problem: null });
   assert.throws(() => changeSettings(api.dataDirectory, "claude-opus-5-5", { backup: "-oProxyCommand=x" }), /backup is a git remote URL/u);
 });
 

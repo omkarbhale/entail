@@ -278,7 +278,7 @@ export async function restore(dataDirectory: string, remote: string, now: () => 
   const found = existsSync(dataDirectory) ? readdirSync(dataDirectory) : [];
   if (found.length > 0) throw new RestoreRefusedError(dataDirectory, found);
   try {
-    await runGitCommand(["clone", "--quiet", "--branch", BACKUP_BRANCH, "--", remote, dataDirectory], { timeoutMs: CLONE_TIMEOUT_MS });
+    await runGitCommand(["-c", "core.autocrlf=false", "clone", "--quiet", "--branch", BACKUP_BRANCH, "--", remote, dataDirectory], { timeoutMs: CLONE_TIMEOUT_MS });
   } catch (error) {
     throw new Error(redacted(error instanceof Error ? error.message : String(error), remote));
   }
