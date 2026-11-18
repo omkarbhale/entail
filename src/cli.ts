@@ -453,11 +453,12 @@ async function restoreCommand(args: string[]): Promise<number> {
   console.log(`  ${report.cases} case${report.cases === 1 ? "" : "s"} in your case book`);
   console.log(`  pins for ${report.pins} repo${report.pins === 1 ? "" : "s"}`);
   console.log(`  ${report.settings ? "the settings" : "no settings (the defaults apply)"}`);
-  const backup = settingsIn(dataDirectory).backup ?? null;
+  const restoredBackup = settingsIn(dataDirectory).backup ?? null;
+  if (restoredBackup !== null) changeSettings(dataDirectory, DEFAULT_MODEL, { backup: null });
   console.log(
-    backup === null
-      ? "Backup is off in the restored settings: entail settings --backup <git remote url> turns it on."
-      : `The restored settings back up to ${shownRemote(backup)}: once entail runs here it pushes there, so stop entail on any other machine that does.`,
+    restoredBackup === null
+      ? "Backup is off here: entail settings --backup <git remote url> turns it on."
+      : "Backup is off here, so this copy will not push to the remote until you run entail settings --backup <git remote url>: one machine writes, a restored one only restores.",
   );
   return 0;
 }

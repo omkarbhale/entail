@@ -173,7 +173,9 @@ test("the backup remote is set from the command line, pushes at once, reports ho
   const printed = freshOut.join("\n");
   assert.match(printed, /Restored entail's records from .*records\.git into /u);
   assert.match(printed, /the log of 1 repo, 1 entry: acme\/tally \(1\)/u);
-  assert.match(printed, /The restored settings back up to .*records\.git: once entail runs here it pushes there/u);
+  assert.match(printed, /Backup is off here, so this copy will not push to the remote until you run entail settings --backup/u);
+  assert.equal(await main(["settings"]), 0);
+  assert.match(freshOut.pop()!, /\nbackup: none$/u);
   assert.equal(readFileSync(join(fresh, "log", "github.com", "acme", "tally.jsonl"), "utf8"), readFileSync(join(dataDirectory, "log", "github.com", "acme", "tally.jsonl"), "utf8"));
   assert.equal(await main(["restore", remote]), 1);
   assert.match(freshOut.pop()!, /is not empty .*entail restores only into an empty data directory/u);

@@ -159,7 +159,8 @@ test("a fresh install restores every record from the remote, and refuses a data 
 });
 
 test("a remote is shown with any password hidden, and must be one line not read as an option", () => {
-  assert.equal(shownRemote("https://me:s3cret@example.com/me/records.git"), "https://me:***@example.com/me/records.git");
+  assert.equal(shownRemote("https://me:s3cret@example.com/me/records.git"), "https://***:***@example.com/me/records.git");
+  assert.equal(shownRemote("https://ghp_token@example.com/me/records.git"), "https://***@example.com/me/records.git");
   assert.equal(shownRemote("git@github.com:me/records.git"), "git@github.com:me/records.git");
   assert.equal(shownRemote("/srv/backups/entail.git"), "/srv/backups/entail.git");
   assert.equal(checkRemote(" git@github.com:me/records.git "), "git@github.com:me/records.git");

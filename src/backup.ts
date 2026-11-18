@@ -190,7 +190,8 @@ export async function backUp(dataDirectory: string, remote: string | null, optio
   return { kind: "pushed", commit: head };
 }
 
-function failed(dataDirectory: string, state: BackupState, reason: string, at: Date, log: OperationalLog | null, shown: string): BackupOutcome {
+function failed(dataDirectory: string, state: BackupState, rawReason: string, at: Date, log: OperationalLog | null, shown: string): BackupOutcome {
+  const reason = state.remote === null ? rawReason : redacted(rawReason, state.remote);
   log?.warn("backup-failed", { remote: shown, reason });
   const problem: BackupProblem = state.problem?.kind === "failed" ? { ...state.problem, reason } : { kind: "failed", since: at.toISOString(), reason };
   if (existsSync(join(dataDirectory, ".git"))) writeBackupState(dataDirectory, { ...state, problem });
@@ -227,9 +228,14 @@ function message(error: unknown): string {
 export function shownRemote(remote: string): string {
   if (!/^[a-z][a-z0-9+.-]*:\/\//iu.test(remote) || !URL.canParse(remote)) return remote;
   const url = new URL(remote);
-  if (url.password === "") return remote;
-  url.password = "***";
+  if (url.username === "" && url.password === "") return remote;
+  if (url.username !== "") url.username = "***";
+  if (url.password !== "") url.password = "***";
   return url.toString();
+}
+
+function redacted(text: string, remote: string): string {
+  return text.split(remote).join(shownRemote(remote));
 }
 
 /** A remote as `entail settings --backup` takes it: one line, not starting with `-` so git never reads it as an option. */
@@ -271,7 +277,11 @@ export class RestoreRefusedError extends Error {
 export async function restore(dataDirectory: string, remote: string, now: () => Date = () => new Date()): Promise<RestoreReport> {
   const found = existsSync(dataDirectory) ? readdirSync(dataDirectory) : [];
   if (found.length > 0) throw new RestoreRefusedError(dataDirectory, found);
-  await runGitCommand(["clone", "--quiet", "--branch", BACKUP_BRANCH, "--", remote, dataDirectory], { timeoutMs: CLONE_TIMEOUT_MS });
+  try {
+    await runGitCommand(["clone", "--quiet", "--branch", BACKUP_BRANCH, "--", remote, dataDirectory], { timeoutMs: CLONE_TIMEOUT_MS });
+  } catch (error) {
+    throw new Error(redacted(error instanceof Error ? error.message : String(error), remote));
+  }
   const { run } = repository(dataDirectory);
   const [commit, committedAt] = (await run(["log", "-1", "--format=%H%n%cI"])).stdout.trim().split("\n");
   // The remote already holds what was cloned, so the first backup after this pushes only what changes.
