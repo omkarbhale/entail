@@ -382,6 +382,39 @@ export function uninstallService(inputs: ServiceInputs, system: ServiceSystem): 
   return { definition, removed: true };
 }
 
+/**
+ * Restarts the installed service on the code now built, the way it ran
+ * before: `systemctl --user restart` on Linux, `launchctl kickstart -k` on
+ * macOS, and on Windows the task ended, the entail it started stopped, and
+ * the task run again. The stop is immediate (or {@link STOP_TIMEOUT_SECONDS}
+ * at most), so `entail update` drains entail before it calls this. Resolves
+ * once the stopped copy has released the lock.
+ */
+export async function restartService(inputs: ServiceInputs, system: ServiceSystem): Promise<ServiceDefinition> {
+  const definition = serviceDefinition(inputs);
+  if (!existsSync(definition.path)) throw new ServiceError(`the entail service is not installed (${definition.path})`);
+  const before = system.runningCopy();
+  if (definition.manager === "task-scheduler") {
+    if (stopService(definition, inputs, system)) await waitForRelease(system, before);
+    must(system, "schtasks", ["/Run", "/TN", SCHEDULED_TASK], inputs);
+  } else if (definition.manager === "systemd") {
+    must(system, "systemctl", ["--user", "restart", SYSTEMD_UNIT], inputs);
+  } else {
+    must(system, "launchctl", ["kickstart", "-k", `gui/${inputs.uid}/${LAUNCHD_LABEL}`], inputs);
+  }
+  return definition;
+}
+
+/** Waits until `before`, the copy that held the lock, holds it no more. */
+async function waitForRelease(system: ServiceSystem, before: LockHolder | null): Promise<void> {
+  if (before === null) return;
+  for (let waited = 0; waited < LOCK_RELEASE_WAIT_MS; waited += 250) {
+    const holder = system.runningCopy();
+    if (holder === null || holder.pid !== before.pid) return;
+    await system.sleep(250);
+  }
+}
+
 /** Where the service stands on this machine. */
 export interface ServiceStatus {
   definition: ServiceDefinition;

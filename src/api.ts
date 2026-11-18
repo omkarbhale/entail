@@ -39,7 +39,9 @@ import { loggedRepos, readLog, readSettings, repoState, writeSettings, type Glob
  * {@link HOLD_MS} so it can be undone, and entail acts on GitHub for it when
  * the window closes.
  *
- *   GET    /api/status                        whether entail is watching, when it last checked, and which repos are failing and why
+ *   GET    /api/status                        whether entail is watching, when it last checked, which repos are failing and why, and whether it is drained for an update
+ *   POST   /api/drain                         {}: starts no new pass and lets the running one finish, before `entail update` restarts entail; answers with the status
+ *   DELETE /api/drain                         takes passes again, when an update could not restart entail
  *   GET    /api/events                        server-sent events: something changed, a repo is being checked, a check finished
  *   GET    /api/waiting[?repo=&since=]        what waits on the owner, the answers still in their undo window, and calls made alone since `since`
  *   GET    /api/log[?repo=&filter=&before=&tz=]  one page of the log, newest first, in whole days of time zone `tz`; `before=` pages back
@@ -81,6 +83,12 @@ export interface BoardLoop {
   checkedAt(repo: string): string | null;
   readonly lastPassAt: string | null;
   readonly checking: boolean;
+  /** Whether the loop is drained for an update: it starts no new pass. */
+  readonly draining: boolean;
+  /** Starts no new pass; the running one finishes. */
+  drain(): void;
+  /** Takes passes again. */
+  resume(): void;
 }
 
 export interface ApiOptions {
@@ -105,6 +113,8 @@ export interface ApiOptions {
   board?: string | null;
   /** Where the board is served, for the status line and notices. */
   url?: string;
+  /** The entail script this process runs, so `entail update` can tell which checkout it runs from. */
+  cli?: string;
 }
 
 /** The built board: `dist/board`, next to the compiled server, or found from the sources. */
@@ -154,6 +164,14 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
   const settings = () => readSettings(dataDirectory, { model: options.defaultModel });
 
   if (method === "GET" && path === "/api/status") return send(response, 200, status(options));
+  if (path === "/api/drain") {
+    if (method !== "POST" && method !== "DELETE") return send(response, 405, { error: `${method} is not allowed on ${path}` });
+    if (options.loop === undefined) throw new OwnerError(409, "entail is not watching here, so there is nothing to drain");
+    if (method === "POST") options.loop.drain();
+    else options.loop.resume();
+    options.events?.emit({ type: "changed" });
+    return send(response, 200, status(options));
+  }
   if (method === "GET" && path === "/api/events") return events(options, request, response);
   if (method === "GET" && path === "/api/waiting") {
     const since = url.searchParams.get("since");
@@ -224,6 +242,7 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
     if (action === "check" && method === "POST") {
       if (!repoState(name, readLog(dataDirectory, name)).enrolled) throw new OwnerError(404, `${name} is not enrolled`);
       if (options.loop === undefined) throw new OwnerError(409, "entail is not watching: start it with entail run");
+      if (options.loop.draining) throw new OwnerError(409, "entail is stopping for an update; check again once it has restarted");
       return send(response, 200, await options.loop.check(name));
     }
     if (action === "backlog" && method === "POST") {
@@ -291,6 +310,9 @@ function status(options: ApiOptions): StatusView {
     stalled: repos.flatMap((repo) => stalledViews(readLog(options.dataDirectory, repo)).map((stalled) => ({ repo, stalled }))),
     checkedAt: options.loop?.lastPassAt ?? null,
     checking: options.loop?.checking ?? false,
+    draining: options.loop?.draining ?? false,
+    pid: process.pid,
+    cli: options.cli ?? null,
     url: options.url ?? null,
   };
 }

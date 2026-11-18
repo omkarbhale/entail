@@ -134,6 +134,11 @@ export function holderIsRunning(holder: LockHolder): boolean {
   return command === "" || /entail/i.test(command);
 }
 
+/** A process's command line, or "" when it cannot be read. */
+export function commandLineOf(pid: number): string {
+  return psField("args", pid);
+}
+
 /** A process's start time or command line, from `ps`; on Windows, which has no `ps`, from PowerShell. */
 function psField(field: "lstart" | "args", pid: number): string {
   try {

@@ -6,7 +6,7 @@ import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { BoardEvent } from "../src/api-types.ts";
 import { EventBus, watchLogs } from "../src/events.ts";
-import { Loop, type PassRequest } from "../src/loop.ts";
+import { DrainingError, Loop, type PassRequest } from "../src/loop.ts";
 import { noticeLine, Notifier, sendNotice } from "../src/notices.ts";
 import { appendEntry } from "../src/records.ts";
 
@@ -83,6 +83,67 @@ test("the loop passes on its interval until stopped, and a wake ends the wait ea
   });
   await loop.run(stop.signal);
   assert.equal(passes, 3);
+});
+
+test("a drain lets the running pass finish and starts no other: not the interval's, a check or an act-only pass, until resumed", async () => {
+  const runs: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const errors: unknown[] = [];
+  const stop = new AbortController();
+  const loop = new Loop({
+    intervalMs: 20,
+    nextDue: () => new Date(Date.now() + 10),
+    onError: (error) => errors.push(error),
+    pass: async (request) => {
+      const name = request.actOnly ? "act" : (request.only?.join(",") ?? "all");
+      runs.push(`start ${name}`);
+      if (runs.length === 1) await gate;
+      runs.push(`end ${name}`);
+      return report;
+    },
+  });
+  const running = loop.run(stop.signal);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(loop.checking, true);
+  const queued = loop.check("acme/tally");
+  loop.drain();
+  assert.equal(loop.draining, true);
+  assert.equal(loop.checking, true, "the pass in flight is not cut off");
+  loop.schedule(new Date(Date.now() + 5));
+  release();
+  await assert.rejects(queued, DrainingError, "a check queued behind the running pass does not run");
+  await assert.rejects(loop.request({}), DrainingError);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.deepEqual(runs, ["start all", "end all"], "no pass runs after the drain: not the interval's and not an act-only one");
+  assert.equal(loop.checking, false, "idle: the update can restart it now");
+  assert.deepEqual(errors, [], "a pass refused while drained is not a failure");
+
+  loop.resume();
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal(loop.draining, false);
+  assert.ok(runs.length > 2, "passes run again once resumed");
+  stop.abort();
+  await running;
+});
+
+test("a drain during the wait between passes ends it, and the loop stops when entail is stopped", async () => {
+  let passes = 0;
+  const stop = new AbortController();
+  const loop = new Loop({
+    intervalMs: 10,
+    pass: async () => {
+      passes++;
+      return report;
+    },
+  });
+  const running = loop.run(stop.signal);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  loop.drain();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(passes, 1);
+  stop.abort();
+  await running;
 });
 
 test("a notice is one line of counts and the link, never the question, and each waiting item is announced once", async (t) => {

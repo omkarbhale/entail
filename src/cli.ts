@@ -32,7 +32,7 @@ import { allChecksFinished } from "./forge/forge.ts";
 import { Health } from "./health.ts";
 import { formatCall, judge, type JudgeOptions } from "./judgment.ts";
 import { formatLandingCall, judgeLanding } from "./landing.ts";
-import { acquireLock, holderIsRunning, readLock } from "./lock.ts";
+import { acquireLock, commandLineOf, holderIsRunning, readLock } from "./lock.ts";
 import { Loop } from "./loop.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
 import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS, REPLAY_EFFORT, type Effort, type RunFacts } from "./model-runner.ts";
@@ -60,6 +60,7 @@ import { pinsFile } from "./pins.ts";
 import { goCallOn, heldActions, loggedRepos, readLog, readSettings, sendBacksPosted, type GlobalSettings } from "./records.ts";
 import { formatReplay, replay, replayLandings } from "./replay.ts";
 import { installService, isWsl, machineServiceSystem, serviceStatus, uninstallService, type ServiceInputs } from "./service.ts";
+import { machineUpdate, update } from "./update.ts";
 import { mirrorReader, mirrorReaders, runPass, type PassOptions } from "./watch.ts";
 
 /** The port the board and its API are served on unless --port names another. */
@@ -75,6 +76,7 @@ const USAGE = `usage:
   entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--owner <name>] [--notice <command>|none] [--start <command>|none]
   entail run [--once] [--dry-run] [--interval <seconds>] [--port <n>]
   entail service install|uninstall|status
+  entail update [--port <n>]
   entail status [--port <n>]
   entail open [--port <n>]
   entail waiting [<owner/repo>] [--json]
@@ -107,6 +109,11 @@ service    install: run \`entail run\` as a per-user service that starts at logi
            after a crash (a systemd user unit on Linux, a launchd agent on macOS; on
            Windows a Task Scheduler task, which starts at login but not after a crash);
            uninstall: stop and remove it; status: whether it is installed and running.
+update     run from entail's checkout: pull its branch (fast-forward only), npm ci and build,
+           then restart the entail running from it on the new code. It first takes no new
+           work and lets the work in flight finish, so no call or start is cut off partway.
+           A service is restarted; entail run by hand is stopped, for you to start again.
+           It refuses an uncommitted change and a copy running from anywhere else.
 status     whether entail is running, each enrolled repo with its confirm mode and when
            it was last checked, what waits on you, and the board's address.
 open       open the board in your browser.
@@ -153,6 +160,8 @@ export async function main(argv: string[]): Promise<number> {
         return await runCommand(rest);
       case "service":
         return await serviceCommand(rest);
+      case "update":
+        return await updateCommand(rest);
       case "status":
         return await statusCommand(rest);
       case "open":
@@ -442,6 +451,7 @@ async function runCommand(args: string[]): Promise<number> {
       get url() {
         return boardUrl;
       },
+      cli: fileURLToPath(import.meta.url),
     });
     server.listen(port, "127.0.0.1");
     await once(server, "listening");
@@ -488,6 +498,22 @@ async function serviceCommand(args: string[]): Promise<number> {
   const status = serviceStatus(inputs, system);
   console.log(serviceLine(status));
   return status.installed && !status.active ? 1 : 0;
+}
+
+async function updateCommand(args: string[]): Promise<number> {
+  const { values, positionals } = parse(args, { port: { type: "string" } });
+  if (positionals.length > 0) throw new UsageError("update takes no arguments");
+  const url = `http://127.0.0.1:${portOption(values.port)}/`;
+  const inputs = serviceInputs();
+  const interrupted = new AbortController();
+  const onInterrupt = () => interrupted.abort();
+  process.once("SIGINT", onInterrupt);
+  try {
+    await update({ checkout: process.cwd(), url, inputs, system: machineServiceSystem(inputs), machine: machineUpdate(url, commandLineOf), print: (line) => console.log(line), signal: interrupted.signal });
+    return 0;
+  } finally {
+    process.off("SIGINT", onInterrupt);
+  }
 }
 
 function serviceLine(status: ReturnType<typeof serviceStatus>): string {

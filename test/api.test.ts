@@ -20,6 +20,7 @@ async function serve(t: TestContext, overrides: Partial<ApiOptions> = {}) {
   let woken = 0;
   let clock = NOON;
   const scheduled: string[] = [];
+  let draining = false;
   const loop: BoardLoop = {
     check: async (repo) => ({ repo, at: new Date(clock).toISOString(), judged: 2, posted: 1, failed: false }),
     schedule: (at) => scheduled.push(at.toISOString()),
@@ -27,6 +28,11 @@ async function serve(t: TestContext, overrides: Partial<ApiOptions> = {}) {
     checkedAt: () => "2026-11-12T11:59:20.000Z",
     lastPassAt: "2026-11-12T11:59:20.000Z",
     checking: false,
+    get draining() {
+      return draining;
+    },
+    drain: () => (draining = true),
+    resume: () => (draining = false),
   };
   const opened: string[] = [];
   const server = createApi({
@@ -234,6 +240,33 @@ test("check now runs a pass for the repo, and the backlog asks entail to judge t
   await noLoop.call("POST", "/api/repos", { repo: "acme/tally" });
   assert.match((await noLoop.call("POST", "/api/repos/acme/tally/check", {})).body.error, /entail is not watching/u);
   assert.equal((await noLoop.call("GET", "/api/status")).body.watching, false);
+});
+
+test("an update drains entail through the API: no new pass, check now refused, and passes taken again on resume", async (t) => {
+  const api = await serve(t, { cli: "/opt/entail/dist/cli.js" });
+  await api.call("POST", "/api/repos", { repo: "acme/tally" });
+  const before = (await api.call("GET", "/api/status")).body;
+  assert.equal(before.draining, false);
+  assert.equal(before.pid, process.pid);
+  assert.equal(before.cli, "/opt/entail/dist/cli.js");
+
+  const drained = await api.call("POST", "/api/drain", {});
+  assert.equal(drained.status, 200);
+  assert.equal(drained.body.draining, true);
+  assert.equal(drained.body.checking, false, "idle: nothing in flight");
+  const refused = await api.call("POST", "/api/repos/acme/tally/check", {});
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.error, /stopping for an update/u);
+
+  const resumed = await api.call("DELETE", "/api/drain", {});
+  assert.equal(resumed.body.draining, false);
+  assert.equal((await api.call("POST", "/api/repos/acme/tally/check", {})).status, 200);
+
+  assert.equal((await api.call("POST", "/api/drain", {}, { Origin: "https://evil.example" })).status, 403, "a web page cannot drain entail");
+  assert.equal((await fetch(`${api.base}/api/drain`, { method: "POST", headers: { "Content-Type": "text/plain" }, body: "{}" })).status, 415);
+  assert.equal((await api.call("GET", "/api/drain")).status, 405);
+  const noLoop = await serve(t, { loop: undefined });
+  assert.equal((await noLoop.call("POST", "/api/drain", {})).status, 409);
 });
 
 test("the settings for every repo are read and changed, the notice and start commands only read", async (t) => {
