@@ -1,12 +1,12 @@
 import { useState, type ReactNode } from "react";
-import type { Call, CallView } from "../api.ts";
-import { ago, callLabel, forgeName, shortName, sizeLine, sourceLabel, subject } from "../format.ts";
+import type { CallView } from "../api.ts";
+import { ago, callLabel, forgeName, shortName, shownCall, sizeLine, sourceLabel, subject, type ShownCall } from "../format.ts";
 
 /** The parts every item has, in order: what the ticket was, what entail concluded, why, and what it rests on. */
 
-const CALL_NAMES: Record<Call, string> = { go: "Go", no: "No", ask: "Ask", merge: "Merge", "send-back": "Send back" };
+const CALL_NAMES: Record<ShownCall, string> = { go: "Go", plan: "Go · plan", no: "No", ask: "Ask", merge: "Merge", "send-back": "Send back" };
 
-export function Chip({ call }: { call: Call }) {
+export function Chip({ call }: { call: ShownCall }) {
   return <span className={`chip c-${call}`}>{CALL_NAMES[call]}</span>;
 }
 
@@ -89,7 +89,7 @@ export function Verdict({ item, prefix }: { item: CallView; prefix?: ReactNode }
     <div className="verdict">
       <div className="vhead">
         {prefix}
-        <Chip call={item.call} />
+        <Chip call={shownCall(item)} />
         <span className="vlabel">{callLabel(item)}</span>
         {size !== "" && <span className="size">{size}</span>}
       </div>

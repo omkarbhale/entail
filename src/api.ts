@@ -52,9 +52,9 @@ import { forgeTitle } from "./repo-ref.ts";
  *   GET    /api/log[?repo=&filter=&before=&tz=]  one page of the log, newest first, in whole days of time zone `tz`; `before=` pages back
  *   GET    /api/calls/:id                     one call
  *   POST   /api/calls/:id/confirm             {}
- *   POST   /api/calls/:id/override            {"call": "go"|"no", "reason": "...", "differently"?: true}  on an issue's call
+ *   POST   /api/calls/:id/override            {"call": "go"|"plan"|"no", "reason": "...", "differently"?: true}  on an issue's call
  *                                             {"call": "merge"|"send-back", "reason": "..."}              on a PR's call
- *   POST   /api/calls/:id/answer              {"call": "go"|"no", "answer": "..."}            on an issue's call
+ *   POST   /api/calls/:id/answer              {"call": "go"|"plan"|"no", "answer": "..."}     on an issue's call
  *                                             {"call": "merge"|"send-back", "answer": "..."}  on a PR's call
  *   POST   /api/calls/:id/undo                {}: undoes the owner's action on the call while it is held
  *   GET    /api/repos[?all=1]                 enrolled repos (all=1: every repo with a log)

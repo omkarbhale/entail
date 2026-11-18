@@ -1,4 +1,23 @@
-import type { ActionView, CallView, CriterionView, OwnerCallName } from "./api.ts";
+import type { ActionView, Call, CallView, CriterionView, OwnerCallName, OwnerWordView } from "./api.ts";
+
+/** A call as the board shows it: a go for planning is shown as plan, with its own tag. */
+export type ShownCall = Call | "plan";
+
+/** The call an item shows: plan for entail's go for planning, else the call itself. */
+export function shownCall(item: Pick<CallView, "call" | "scope">): ShownCall {
+  return item.call === "go" && item.scope === "plan" ? "plan" : item.call;
+}
+
+/** The call an owner's action or word made: plan for a go for planning. */
+export function ownerCallOf(action: Pick<ActionView, "to" | "scope"> | null | undefined, fallback: OwnerCallName = "go"): OwnerCallName {
+  const to = action?.to ?? fallback;
+  return to === "go" && action?.scope === "plan" ? "plan" : to;
+}
+
+/** The call an owner's word a call was run on made: plan for a go for planning. */
+function wordCall(word: OwnerWordView): OwnerCallName {
+  return word.call === "go" && word.scope === "plan" ? "plan" : word.call;
+}
 
 /** The forge a repo lives on, as people say it: GitLab for a `gitlab:` name, else GitHub. */
 export function forgeName(repo: string): string {
@@ -75,16 +94,20 @@ export function subject(item: Pick<CallView, "pr">): "issue" | "PR" {
 /** What the call does, in plain words. */
 export function callLabel(item: CallView): string {
   if (item.call === "ask") return item.question?.question ?? "A question for you";
-  if (item.call === "go") return "Go ahead";
+  if (item.call === "go") return item.scope === "plan" ? "Go, for planning" : "Go ahead";
   if (item.call === "merge") return "Merge it";
   if (item.call === "send-back") return "Send it back";
   return item.restsOn.visionLines.length > 0 ? "Close it, quoting the vision" : "Close it with this reason";
 }
 
-/** How big the change is: a go is never large (a large one is asked), a question says when it is. */
+/**
+ * How big the change is: a go is never hard to undo (such a change is
+ * asked); a go for planning is too large for one PR; a question says when it
+ * is hard to undo.
+ */
 export function sizeLine(item: CallView): string {
-  if (item.call === "go") return "Small · easy to undo";
-  if (item.call === "ask" && item.question?.large === true) return "Large or hard to undo";
+  if (item.call === "go") return item.scope === "plan" ? "Too large for one PR · cleared for planning" : "Fits one PR · easy to undo";
+  if (item.call === "ask" && item.question?.large === true) return "Hard to undo";
   return "";
 }
 
@@ -92,7 +115,8 @@ export function confirmLabel(item: CallView): string {
   if (item.call === "merge") return `Confirm · merge #${refNumber(item)}`;
   if (item.call === "send-back") return `Confirm · send back #${refNumber(item)}`;
   const n = refNumber(item);
-  return item.call === "no" ? `Confirm · close #${n}` : `Confirm · go on #${n}`;
+  if (item.call === "no") return `Confirm · close #${n}`;
+  return item.scope === "plan" ? `Confirm · go for planning on #${n}` : `Confirm · go on #${n}`;
 }
 
 /** Where a criterion comes from, in words. */
@@ -113,21 +137,28 @@ export function sourceLabel(criterion: CriterionView, item: CallView): string {
 
 export type OverrideChoice = { key: string; to: OwnerCallName; differently: boolean; label: string; placeholder: string };
 
-/** The owner's calls that override entail's: the opposite call, and for a go, a go made differently. */
+const NO_CHOICE: OverrideChoice = { key: "no", to: "no", differently: false, label: "No, close it", placeholder: "Why not? entail closes the issue with your reason." };
+const DIFFERENTLY_CHOICE: OverrideChoice = { key: "differently", to: "go", differently: true, label: "Go, but differently", placeholder: "What should be different? It becomes the criterion." };
+const PLAN_CHOICE: OverrideChoice = { key: "plan", to: "plan", differently: false, label: "Go, for planning", placeholder: "Why plan it? Your workflow writes the plan and files the smaller tickets." };
+
+/**
+ * The owner's calls that override entail's: the other calls of go, go for
+ * planning and no, and for a go, a go made differently. An override to go is
+ * a go to implement unless the owner picks planning.
+ */
 export function overrideChoices(item: CallView): OverrideChoice[] {
   if (item.call === "merge") return [{ key: "send-back", to: "send-back", differently: false, label: "Send it back", placeholder: "Why send it back? entail comments your reason on the PR." }];
   if (item.call === "send-back") return [{ key: "merge", to: "merge", differently: false, label: "Merge it", placeholder: "Why merge it? entail merges at the judged head and comments your reason." }];
-  const effective = item.owner?.call ?? item.call;
-  if (effective === "no") return [{ key: "go", to: "go", differently: false, label: "Go instead", placeholder: "Why go? entail posts your reason on the issue." }];
-  return [
-    { key: "no", to: "no", differently: false, label: "No, close it", placeholder: "Why not? entail closes the issue with your reason." },
-    { key: "differently", to: "go", differently: true, label: "Go, but differently", placeholder: "What should be different? It becomes the criterion." },
-  ];
+  const effective = item.owner === null ? shownCall(item) : wordCall(item.owner);
+  const go: OverrideChoice = { key: "go", to: "go", differently: false, label: "Go instead", placeholder: "Why go? entail posts your reason on the issue." };
+  if (effective === "no") return [go, { ...PLAN_CHOICE, label: "Go, for planning, instead" }];
+  if (effective === "plan") return [NO_CHOICE, { ...go, label: "Go to implement instead", placeholder: "Why implement it in one PR? entail posts your reason on the issue." }, DIFFERENTLY_CHOICE];
+  return [NO_CHOICE, DIFFERENTLY_CHOICE, PLAN_CHOICE];
 }
 
 export type AnswerChoice = { to: OwnerCallName; label: string; note: string; lean: boolean };
 
-/** The two answers to a question, and what each does. */
+/** The answers to a question, and what each does: on an issue, go, go for planning, or don't. */
 export function answerChoices(item: CallView): AnswerChoice[] {
   const n = refNumber(item);
   if (item.pr !== null) {
@@ -140,6 +171,7 @@ export function answerChoices(item: CallView): AnswerChoice[] {
   const leansGo = item.question?.large === true && item.criteria.length > 0;
   return [
     { to: "go", label: "Go ahead", note: `entail runs the call on #${n} again with your answer as your word, and posts the go with its criteria.`, lean: leansGo },
+    { to: "plan", label: "Go, for planning", note: `entail runs the call on #${n} again with your answer, and posts a go for planning: your workflow writes the plan and files the smaller tickets.`, lean: false },
     { to: "no", label: "Don’t go ahead", note: `entail closes #${n} with your answer as the reason.`, lean: false },
   ];
 }
@@ -166,14 +198,21 @@ export function receiptText(item: CallView, action: ActionView): { head: string;
     return { head: "Confirmed.", text: item.call === "no" ? `entail closes #${n} with its reason.` : `#${n} is go; its criteria are on the issue.`, quote: null, call: null };
   }
   if (action.type === "overridden") {
-    const label = action.differently === true ? "Go, but differently" : action.to === "go" ? "Go instead" : "No, close it";
-    return { head: "Overridden.", text: `${label}. It goes on the issue and into the case book.`, quote: action.reason ?? null, call: action.to ?? null };
+    const to = ownerCallOf(action);
+    const label = action.differently === true ? "Go, but differently" : to === "plan" ? "Go, for planning" : to === "go" ? "Go instead" : "No, close it";
+    return { head: "Overridden.", text: `${label}. It goes on the issue and into the case book.`, quote: action.reason ?? null, call: action.to === undefined ? null : to };
   }
-  const go = action.to === "go";
+  const to = ownerCallOf(action);
+  const text =
+    to === "plan"
+      ? `Go, for planning. entail runs the call again with your answer and posts the go for planning on #${n}.`
+      : to === "go"
+        ? `Go ahead. entail runs the call again with your answer and posts the go on #${n}.`
+        : `Don’t go ahead. entail closes #${n} with your answer as the reason.`;
   return {
     head: "Answered.",
-    text: go ? `Go ahead. entail runs the call again with your answer and posts the go on #${n}.` : `Don’t go ahead. entail closes #${n} with your answer as the reason.`,
-    quote: action.answer !== undefined && !/^(Go ahead|Don’t go ahead)\.$/u.test(action.answer) ? action.answer : null,
-    call: action.to ?? null,
+    text,
+    quote: action.answer !== undefined && !/^(Go ahead|Go, for planning|Don’t go ahead)\.$/u.test(action.answer) ? action.answer : null,
+    call: action.to === undefined ? null : to,
   };
 }

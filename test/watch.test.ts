@@ -278,7 +278,7 @@ test("a go answer runs the judgment again with the owner's word, and posts the o
 test("a no answer closes the issue with the owner's words, without running the judgment again", async (t) => {
   const h = harness(t);
   h.forge.file(11, "Rewrite tally in Rust");
-  h.script(11, verdict({ call: "ask", reason: "Large.", large: true, large_because: "Cannot be undone by one revert.", question: { question: "Go ahead?", why: "Large." } }));
+  h.script(11, verdict({ call: "ask", reason: "Large.", hard_to_undo: true, large_because: "Cannot be undone by one revert.", question: { question: "Go ahead?", why: "Large." } }));
   await h.pass();
   await answerCall(h.dataDirectory, latestCallOn(h.dataDirectory, REPO, 11), OWNER, "no", "Not now; the JavaScript build is fine.");
   await h.pass();

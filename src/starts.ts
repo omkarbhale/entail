@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { criteriaOf, linkCriterion, type Pending } from "./records.ts";
+import type { GoScope } from "./judgment.ts";
+import { criteriaOf, goScope, linkCriterion, type Pending } from "./records.ts";
 import { cmdArguments, killTree } from "./windows.ts";
 
 /**
@@ -31,6 +32,13 @@ export interface Handoff {
   call: number;
   /** Whose go it is: entail's alone, or the owner's (a confirmation, an answer or an override). */
   by: "entail" | "owner";
+  /**
+   * What the go clears the ticket for: `implement`, work on one PR; `plan`, a
+   * ticket too large for one PR, for the owner's workflow to write the plan,
+   * file the smaller tickets and close this issue with links to them. The
+   * criteria are then the ones the plan carries.
+   */
+  scope: GoScope;
   reason: string;
   /** What the PR must do beyond solving the issue, each with where it comes from. */
   criteria: { criterion: string; source: string; basis: string }[];
@@ -47,6 +55,7 @@ export function handoffFor(repo: string, pending: Pending): Handoff | null {
   const of = (call: Extract<Pending, { kind: "call" }>["entry"]) => ({
     repo,
     issue: { number: call.issue.number, url: call.issue.url, title: call.issue.title },
+    scope: goScope(call) ?? "implement",
     vision: call.vision?.commit ?? null,
   });
   switch (pending.kind) {

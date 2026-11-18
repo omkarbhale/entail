@@ -31,7 +31,7 @@ Tolerance scales with stakes: a minor wrong call is acceptable and fixable later
 
 entail rests on the bet that models are intelligent enough already, and that what is missing is the engineering to use them.
 A ticket entail accepts starts work from an issue or mention without asking the owner, on a zero-ceremony path.
-A ticket too large for one PR is broken by entail into smaller tickets, each judged on its own: the ones it clears start and the rest go to the board.
+A ticket too large for one PR is cleared for planning: the owner's workflow writes the plan and files the smaller tickets, each judged on its own; a change that is hard to undo goes to the owner.
 A PR merges when it solves its ticket's problem, meets its criteria and leaves the product better; finishing accepted work does not wait on the owner any more than starting it does.
 Every call settled automatically is logged with its reason, so it can be audited later.
 Choices a model does not notice it is making cannot be caught reliably, so entail makes them visible and attributable afterwards instead of claiming to prevent them.

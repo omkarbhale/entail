@@ -49,6 +49,7 @@ test("with confirm mode off a go starts work at once, with the handoff on standa
       vision: SHA,
       call: call.id,
       by: "entail",
+      scope: "implement",
       reason: "Counting words in more places makes tally more useful.",
       criteria: [CRITERION, LINK],
     },
@@ -201,7 +202,7 @@ test("a start that timed out without an exit status does not count as started, s
 test("a start recorded with its go but not run, as after a crash, runs at the next pass", async (t) => {
   const h = harness(t, { confirm: false, settings: { start: "my-executor" } });
   const start = recorder();
-  const handoff: Handoff = { repo: REPO, issue: { number: 12, url: "https://github.com/acme/tally/issues/12", title: "T" }, call: 1, by: "entail", reason: "R", criteria: [], vision: null };
+  const handoff: Handoff = { repo: REPO, issue: { number: 12, url: "https://github.com/acme/tally/issues/12", title: "T" }, call: 1, by: "entail", scope: "implement", reason: "R", criteria: [], vision: null };
   const acted = appendEntry(h.dataDirectory, REPO, { type: "acted", for: 1, issue: 12, comment: { id: 5, url: "https://github.com/acme/tally/issues/12#issuecomment-5" }, closed: false, start: { command: "my-executor", handoff } }) as ActedEntry;
   await h.pass({ startWork: start.startWork });
   assert.deepEqual(start.handoffs, [{ command: "my-executor", handoff }]);
@@ -230,6 +231,7 @@ const HANDOFF: Handoff = {
   issue: { number: 12, url: "https://github.com/acme/tally/issues/12", title: "Count words in footnotes" },
   call: 42,
   by: "entail",
+  scope: "implement",
   reason: "Counting words in more places makes tally more useful.\nSecond line.",
   criteria: [{ ...CRITERION }],
   vision: SHA,

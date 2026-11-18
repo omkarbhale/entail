@@ -2,7 +2,7 @@ import { randomInt } from "node:crypto";
 import { appendFileSync, closeSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ForgeFacts, LandingOwnerCall, OwnerCall } from "./case-book.ts";
-import type { Criterion, IssueCall } from "./judgment.ts";
+import { scopeOf, type Criterion, type GoScope, type IssueCall } from "./judgment.ts";
 import type { LandingCall } from "./landing.ts";
 import { DEFAULT_EFFORT, EFFORTS, type Effort } from "./model-runner.ts";
 import { forgeHost, GITLAB_PREFIX, repoSetting } from "./repo-ref.ts";
@@ -81,6 +81,8 @@ export interface OwnerWord {
   action: number;
   kind: "override" | "answer";
   call: OwnerCall;
+  /** Set when the owner's go clears the ticket for planning; missing means a go to implement. */
+  scope?: "plan";
   words: string;
 }
 
@@ -321,6 +323,8 @@ export interface OverriddenEntry extends EntryBase, ByOwner, Held {
   call: number;
   /** go or no on an issue's call; merge or send-back on a PR's. */
   to: OwnerCall | LandingOwnerCall;
+  /** Set when the owner's go clears the ticket for planning; missing means a go to implement. */
+  scope?: "plan";
   reason: string;
   differently?: true;
 }
@@ -331,6 +335,8 @@ export interface AnsweredEntry extends EntryBase, ByOwner, Held {
   call: number;
   /** go or no on an issue's call; merge or send-back on a PR's. */
   to: OwnerCall | LandingOwnerCall;
+  /** Set when the owner's go clears the ticket for planning; missing means a go to implement. */
+  scope?: "plan";
   answer: string;
 }
 
@@ -847,6 +853,17 @@ export function workStarted(entries: readonly Entry[], issue: number): boolean {
 export function heldActions(entries: readonly Entry[], now: Date): OwnerAction[] {
   const undone = undoneActions(entries);
   return entries.filter((entry): entry is OwnerAction => isOwnerAction(entry) && !undone.has(entry.id) && isHeld(entry, now));
+}
+
+/**
+ * What the go a call entry posts clears the ticket for: the owner's word
+ * when the run was made on it (an override or answer to go stays implement
+ * unless the owner picked plan), else entail's own go. Null when the entry
+ * is not a go.
+ */
+export function goScope(entry: Pick<CallEntry, "call" | "owner">): GoScope | null {
+  if (entry.owner !== null) return entry.owner.call === "go" ? (entry.owner.scope ?? "implement") : null;
+  return entry.call.call === "go" ? scopeOf(entry.call) : null;
 }
 
 /** The criteria a call carries, none for a no. */

@@ -1,5 +1,5 @@
 import { landingPrecedentsFor, precedentsFor, type Case, type LandingCase } from "./case-book.ts";
-import { judge, type JudgeOptions, type Judgment, type JudgmentInputs } from "./judgment.ts";
+import { judge, scopeOf, type JudgeOptions, type Judgment, type JudgmentInputs } from "./judgment.ts";
 import { judgeLanding, type LandingInputs, type LandingJudgment } from "./landing.ts";
 import type { ModelRunner } from "./model-runner.ts";
 
@@ -132,7 +132,7 @@ export function formatReplay(results: readonly ReplayResult[], landings: readonl
       const { judgment } = result;
       if (!judgment.ok) return { kind: "issue", slug: result.case.slug, owner: result.case.call, agrees: null, line: `run failed (${judgment.failure.kind}): ${judgment.failure.message}` };
       const { call } = judgment;
-      return { kind: "issue", slug: result.case.slug, owner: result.case.call, agrees: result.agrees, line: `entail ${call.call}${result.agrees ? "" : `: ${call.reason}${call.call === "ask" ? ` Question: ${call.question}` : ""}`}` };
+      return { kind: "issue", slug: result.case.slug, owner: result.case.call, agrees: result.agrees, line: `entail ${call.call === "go" && scopeOf(call) === "plan" ? "go, for planning" : call.call}${result.agrees ? "" : `: ${call.reason}${call.call === "ask" ? ` Question: ${call.question}` : ""}`}` };
     }),
     ...landings.map((result): Row => {
       const { judgment } = result;

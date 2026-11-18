@@ -86,8 +86,8 @@ const USAGE = `usage:
   entail open [--port <n>]
   entail waiting [<owner/repo>] [--json]
   entail confirm <owner/repo>#<n>
-  entail override <owner/repo>#<n> go|no|merge|send-back <reason>
-  entail answer <owner/repo>#<n> go|no|merge|send-back <answer>
+  entail override <owner/repo>#<n> go|plan|no|merge|send-back <reason>
+  entail answer <owner/repo>#<n> go|plan|no|merge|send-back <answer>
   entail calls [<owner/repo>] [--json]
   entail judge <owner/repo>#<n> [--model <model>] [--effort <level>] [--json]
   entail land <owner/repo>#<pr> [--issue <n>] [--model <model>] [--effort <level>] [--json]
@@ -135,9 +135,11 @@ status     whether entail is running, each enrolled repo with its confirm mode a
 open       open the board in your browser.
 waiting    the questions and calls to confirm waiting on you, across repos.
 confirm    confirm the latest call on an issue or PR: entail then acts on it.
-override   replace the latest call on an issue (go or no) or a PR (merge or send-back)
-           with your call and reason.
-answer     answer the question on an issue (go or no) or a PR (merge or send-back)
+override   replace the latest call on an issue (go, plan or no) or a PR (merge or
+           send-back) with your call and reason. plan is a go for planning: your start
+           command gets the handoff with scope "plan", to write the plan and file the
+           smaller tickets; go alone is a go to implement.
+answer     answer the question on an issue (go, plan or no) or a PR (merge or send-back)
            with your call and words.
 calls      the log: every call with its reason, and every confirmation, override,
            answer and post, for one repo or all.
@@ -797,7 +799,7 @@ async function ownerCommand(command: "confirm" | "override" | "answer", args: st
     throw new UsageError(
       command === "confirm"
         ? "confirm takes one issue or PR, as owner/repo#n"
-        : `${command} takes an issue or PR, your call (go or no on an issue, merge or send-back on a PR), and your ${command === "override" ? "reason" : "answer"} in quotes`,
+        : `${command} takes an issue or PR, your call (go, plan or no on an issue, merge or send-back on a PR), and your ${command === "override" ? "reason" : "answer"} in quotes`,
     );
   }
   const reference = parseIssueReference(positionals[0]!);

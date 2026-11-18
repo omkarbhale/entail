@@ -5,8 +5,11 @@
  */
 
 export type Call = "go" | "no" | "ask" | "merge" | "send-back";
-/** An owner's call on an issue (go, no) or on a PR (merge, send-back). */
-export type OwnerCallName = "go" | "no" | "merge" | "send-back";
+/**
+ * An owner's call on an issue (go, no) or on a PR (merge, send-back). Plan,
+ * a go for planning, is asked for by name and recorded as go with scope plan.
+ */
+export type OwnerCallName = "go" | "plan" | "no" | "merge" | "send-back";
 export type EffortName = "low" | "medium" | "high" | "xhigh" | "max";
 export type TriggerName = "new" | "edit" | "mention" | "owner" | "backlog" | "landing" | "vision" | "opened" | "push";
 export type CallStatusName = "waiting" | "auto" | "confirmed" | "overridden" | "answered" | "owner" | "superseded" | "closed";
@@ -39,6 +42,8 @@ export interface ActionView {
   by: string;
   call: number;
   to?: OwnerCallName;
+  /** Set when the owner's go clears the ticket for planning. */
+  scope?: "plan";
   reason?: string;
   answer?: string;
   differently?: true;
@@ -50,6 +55,8 @@ export interface OwnerWordView {
   action: number;
   kind: "override" | "answer";
   call: OwnerCallName;
+  /** Set when the owner's go clears the ticket for planning. */
+  scope?: "plan";
   words: string;
 }
 
@@ -133,6 +140,8 @@ export interface CallView {
   body: string;
   visionCommit: string | null;
   call: Call;
+  /** Set on entail's go when it clears the ticket for planning, not for implementing in one PR. */
+  scope?: "plan";
   reason: string;
   criteria: CriterionView[];
   /** For ask: the question and what makes it one. */
