@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CheckResponse, EnrollResponse, FailingView, LogFilter, SettingsView, StatusView } from "./api-types.ts";
+import type { CheckResponse, EnrollResponse, FailingView, LogFilter, SettingsView, StatusView, SuggestResponse } from "./api-types.ts";
 import type { Case } from "./case-book.ts";
 import type { EventBus } from "./events.ts";
 import type { Forge } from "./forge/forge.ts";
@@ -12,6 +12,7 @@ import { EFFORTS, type Effort } from "./model-runner.ts";
 import {
   answerCall,
   askBacklog,
+  runSettings,
   changeRepoSettings,
   checkSettingsChange,
   confirmCall,
@@ -29,6 +30,7 @@ import {
   unenroll,
   waitingResponse,
 } from "./owner.ts";
+import { SuggestionRunningError, type SuggestionRuns } from "./suggest.ts";
 import { loggedRepos, readLog, readSettings, repoState, writeSettings, type GlobalSettings } from "./records.ts";
 import { forgeTitle } from "./repo-ref.ts";
 
@@ -60,6 +62,8 @@ import { forgeTitle } from "./repo-ref.ts";
  *   DELETE /api/repos/:owner/:name            unenrolls
  *   POST   /api/repos/:owner/:name/check      checks the repo now, and answers with what the check did
  *   POST   /api/repos/:owner/:name/backlog    judges the issues open on the forge that have no call yet
+ *   POST   /api/repos/:owner/:name/suggest    {"model"?: string, "effort"?: string}: starts a run that suggests work from the vision and the product,
+ *                                             filing each suggestion as an issue labelled entail:suggested; 202 with the run, 409 while one runs for the repo
  *   GET    /api/settings                      the owner's name, the default model and effort, the notice and start commands (read only here)
  *   PATCH  /api/settings                      {"owner"?: string, "model"?: string, "effort"?: string}
  *
@@ -114,6 +118,8 @@ export interface ApiOptions {
   /** What enrolling and the backlog read from the forge: that the repo can be reached, and its open issues. */
   forgeFor?: (repo: string) => Pick<Forge, "project" | "openIssueNumbers">;
   events?: EventBus;
+  /** The suggestion runs started from the board, when entail runs them in this process. */
+  suggestions?: Pick<SuggestionRuns, "running" | "repos" | "start">;
   /** The built board's directory; {@link BOARD_DIRECTORY} unless a test says otherwise, null for none. */
   board?: string | null;
   /** Where the board is served, for the status line and notices. */
@@ -243,7 +249,7 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
   }
   // A GitHub repo is addressed as owner/name; a GitLab project, whose path can
   // hold subgroups, as its whole name in one encoded segment.
-  const repo = /^\/api\/repos\/(?:(gitlab(?::|%3A)[^/]+)|([^/]+)\/([^/]+))(?:\/(check|backlog))?$/iu.exec(path);
+  const repo = /^\/api\/repos\/(?:(gitlab(?::|%3A)[^/]+)|([^/]+)\/([^/]+))(?:\/(check|backlog|suggest))?$/iu.exec(path);
   if (repo !== null) {
     const name = repoName(repo[1] !== undefined ? decodeURIComponent(repo[1]) : `${decodeURIComponent(repo[2]!)}/${decodeURIComponent(repo[3]!)}`);
     const action = repo[4];
@@ -258,6 +264,25 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
       const open = await reach(name, () => options.forgeFor!(name).openIssueNumbers());
       const issues = askBacklog(dataDirectory, name, await options.owner(), open, now());
       return send(response, 200, changed({ repo: name, issues }));
+    }
+    if (action === "suggest" && method === "POST") {
+      const body = await readJson(request);
+      const state = repoState(name, readLog(dataDirectory, name));
+      if (!state.enrolled) throw new OwnerError(404, `${name} is not enrolled`);
+      if (body.model !== undefined && (typeof body.model !== "string" || !/^[\w.:-]+$/u.test(body.model))) throw new OwnerError(400, "model is a model name");
+      if (body.effort !== undefined && !(EFFORTS as readonly unknown[]).includes(body.effort)) throw new OwnerError(400, `effort is one of ${EFFORTS.join(", ")}`);
+      if (options.suggestions === undefined) throw new OwnerError(409, "entail is not running here: start it with entail run, or use entail suggest");
+      if (options.loop?.draining === true) throw new OwnerError(409, "entail is stopping for an update; suggest again once it has restarted");
+      const uses = runSettings(state, settings());
+      const choice = { model: (body.model as string | undefined) ?? uses.model, effort: (body.effort as Effort | undefined) ?? uses.effort };
+      let started;
+      try {
+        started = options.suggestions.start(name, choice);
+      } catch (error) {
+        if (error instanceof SuggestionRunningError) throw new OwnerError(409, error.message);
+        throw error;
+      }
+      return send(response, 202, { repo: name, since: started.since, model: started.model, effort: started.effort } satisfies SuggestResponse);
     }
     if (action === undefined && method === "DELETE") return send(response, 200, changed(unenroll(dataDirectory, name, await options.owner(), now())));
     if (action === undefined && method === "PATCH") {
@@ -284,9 +309,10 @@ function optional<K extends string, V>(key: K, value: V | undefined): { [P in K]
   return (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
 }
 
-function checkedAt(options: ApiOptions): Pick<RepoViewOptions, "checkedAt" | "failing"> {
-  const { loop, health } = options;
+function checkedAt(options: ApiOptions): Pick<RepoViewOptions, "checkedAt" | "failing" | "suggesting"> {
+  const { loop, health, suggestions } = options;
   return {
+    ...(suggestions === undefined ? {} : { suggesting: (repo: string) => suggestions.running(repo) }),
     ...(loop === undefined ? {} : { checkedAt: (repo: string) => loop.checkedAt(repo) }),
     ...(health === undefined ? {} : { failing: (repo: string) => failingOf(health, repo) }),
   };
@@ -319,6 +345,7 @@ function status(options: ApiOptions): StatusView {
     checkedAt: options.loop?.lastPassAt ?? null,
     checking: options.loop?.checking ?? false,
     draining: options.loop?.draining ?? false,
+    suggesting: options.suggestions?.repos ?? [],
     pid: process.pid,
     cli: options.cli ?? null,
     url: options.url ?? null,

@@ -3,6 +3,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import type { StatusView } from "./api-types.ts";
 import { RUN_TIMEOUT_MS } from "./claude-runner.ts";
+import { SUGGEST_TIMEOUT_MS } from "./suggest.ts";
 import { restartService, serviceStatus, type CommandResult, type ServiceInputs, type ServiceSystem, type ServiceStatus } from "./service.ts";
 import { windowsCommand } from "./windows.ts";
 
@@ -49,7 +50,7 @@ export const DRAIN_POLL_MS = 2_000;
 export const START_WAIT_MS = 30_000;
 
 /** What `entail update` reads of the running copy's status; a copy from before the drain has no `draining`, `pid` or `cli`. */
-export type RunningStatus = Pick<StatusView, "checking"> & Partial<Pick<StatusView, "draining" | "pid" | "cli">>;
+export type RunningStatus = Pick<StatusView, "checking"> & Partial<Pick<StatusView, "draining" | "pid" | "cli" | "suggesting">>;
 
 /** The running copy's loopback API, as the update reaches it. Replaced by a fake in tests. */
 export interface RunningApi {
@@ -237,14 +238,18 @@ async function drain(options: UpdateOptions, pid: number): Promise<void> {
     }
     const status = await machine.api.status();
     if (status === null || system.runningCopy()?.pid !== pid) return; // It stopped meanwhile: nothing is in flight.
-    if (!status.checking && (legacy || status.draining === true)) return;
+    const suggesting = status.suggesting ?? [];
+    if (!status.checking && suggesting.length === 0 && (legacy || status.draining === true)) return;
     if (!legacy && status.draining === false) await machine.api.drain(); // Resumed meanwhile, from elsewhere.
     if (waited >= limit) {
       if (!legacy) await resumeIfRunning(options, pid);
-      throw new UpdateError(`the pass in flight did not finish within ${Math.round(limit / 60_000)} minutes, so entail was not restarted${legacy ? "" : " and takes work again"}; run entail update again later`);
+      throw new UpdateError(`the work in flight did not finish within ${Math.round(limit / 60_000)} minutes, so entail was not restarted${legacy ? "" : " and takes work again"}; run entail update again later`);
     }
     if (!told && status.checking) {
       print(`Waiting for the pass in flight to finish before restarting (a model run can take up to ${Math.round(RUN_TIMEOUT_MS / 60_000)} minutes)...`);
+      told = true;
+    } else if (!told && suggesting.length > 0) {
+      print(`Waiting for the suggestion run in flight for ${suggesting.join(", ")} to finish before restarting (it can take up to ${Math.round(SUGGEST_TIMEOUT_MS / 60_000)} minutes)...`);
       told = true;
     }
     await system.sleep(poll);

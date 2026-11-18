@@ -1,5 +1,20 @@
 import { readFileSync } from "node:fs";
-import type { ActionView, CallView, FailingView, HeldView, LogFilter, LogPage, LogRow, PullRequestView, RepoView, StalledView, TrailStep, WaitingResponse } from "./api-types.ts";
+import type {
+  ActionView,
+  CallView,
+  FailingView,
+  HeldView,
+  LogFilter,
+  LogPage,
+  LogRow,
+  PullRequestView,
+  RepoView,
+  StalledView,
+  SuggestingView,
+  SuggestionRunView,
+  TrailStep,
+  WaitingResponse,
+} from "./api-types.ts";
 import { caseSlug, LANDING_CALLS, landingCaseSlug, OWNER_CALLS, type Case, type LandingCase, type LandingOwnerCall, type OwnerCall } from "./case-book.ts";
 import { ciGreen } from "./landing.ts";
 import { EFFORTS, type Effort } from "./model-runner.ts";
@@ -160,6 +175,45 @@ export interface RepoViewOptions {
   checkedAt?: (repo: string) => string | null;
   /** Whether each repo's checks are failing in this run, and why. */
   failing?: (repo: string) => FailingView | null;
+  /** The suggestion run in flight for each repo in this process, if one is. */
+  suggesting?: (repo: string) => { since: string; model: string; effort: Effort; resuming?: true } | null;
+}
+
+/** A repo's suggestion run as its card shows it: the one in flight, else how the last one in the log ended. */
+export function suggestingView(entries: readonly Entry[], running: { since: string; model: string; effort: Effort; resuming?: true } | null): SuggestingView | null {
+  if (running !== null) return { state: "running", since: running.since, model: running.model, effort: running.effort, resuming: running.resuming === true };
+  const last = entries.findLast((entry) => entry.type === "suggested" || entry.type === "suggest-failed");
+  if (last === undefined) return null;
+  if (last.type === "suggest-failed") return { state: "failed", at: last.at, reason: last.reason };
+  if (last.type !== "suggested") return null;
+  const filed = new Set(entries.flatMap((entry) => (entry.type === "suggestion-filed" && entry.for === last.id ? [entry.index] : [])));
+  return { state: "done", at: last.at, run: last.id, suggested: last.suggestions.length, filed: filed.size };
+}
+
+/** Every suggestion run in a repo's log, oldest first, with the issues its suggestions were filed as. */
+export function suggestionRunViews(repo: string, entries: readonly Entry[], dayOf: (iso: string) => string = (iso) => iso.slice(0, 10)): SuggestionRunView[] {
+  const issues = new Map<string, { number: number; url: string }>();
+  for (const entry of entries) if (entry.type === "suggestion-filed") issues.set(`${entry.for}.${entry.index}`, entry.issue);
+  return entries.flatMap((entry): SuggestionRunView[] => {
+    const base = { id: entry.id, repo, day: dayOf(entry.at), at: entry.at };
+    if (entry.type === "suggest-failed") {
+      return [{ ...base, by: entry.by, model: entry.model, effort: entry.effort, costUsd: null, sha: null, suggestions: [], leftOut: [], failed: entry.reason }];
+    }
+    if (entry.type !== "suggested") return [];
+    return [
+      {
+        ...base,
+        by: entry.by,
+        model: entry.model,
+        effort: entry.effort,
+        costUsd: entry.costUsd,
+        sha: entry.sha,
+        suggestions: entry.suggestions.map((suggestion, index) => ({ title: suggestion.title, size: suggestion.size, visionLines: suggestion.visionLines, issue: issues.get(`${entry.id}.${index}`) ?? null })),
+        leftOut: entry.leftOut,
+        failed: null,
+      },
+    ];
+  });
 }
 
 export function stalledViews(entries: readonly Entry[]): StalledView[] {
@@ -196,6 +250,7 @@ export function repoViews(dataDirectory: string, settings: GlobalSettings, optio
         stalled: stalledViews(entries),
         backlogAsked: entries.some((entry) => entry.type === "backlog" && entry.at >= (state.since ?? "")),
         cannotLabel: labelProblem(entries),
+        suggesting: suggestingView(entries, options.suggesting?.(repo) ?? null),
       },
     ];
   });
@@ -480,9 +535,11 @@ export interface LogPageOptions {
 export function logPage(dataDirectory: string, book: readonly Case[], options: LogPageOptions = {}): LogPage {
   const dayOf = dayFormatter(options.timeZone);
   const all: LogRow[] = [];
+  const runs: SuggestionRunView[] = [];
   for (const repo of loggedRepos(dataDirectory)) {
     if (options.repo !== undefined && repo !== options.repo) continue;
     const entries = readLog(dataDirectory, repo);
+    runs.push(...suggestionRunViews(repo, entries, dayOf));
     const statuses = callStatuses(entries);
     const landings = landingStatuses(entries);
     for (const entry of entries) {
@@ -507,7 +564,15 @@ export function logPage(dataDirectory: string, book: readonly Case[], options: L
   let index = 0;
   while (index < wanted.length && (rows.length < size || wanted[index]!.day === rows.at(-1)!.day)) rows.push(wanted[index++]!);
   // `before` is exclusive: the next page starts on the day before this page's last.
-  return { rows, next: index < wanted.length ? rows.at(-1)!.day : null, counts };
+  const next = index < wanted.length ? rows.at(-1)!.day : null;
+  // The suggestion runs on the days this page covers: from its last day (or the start, on the last page) up to `before`.
+  const suggestions =
+    (options.filter ?? "all") !== "all"
+      ? []
+      : runs
+          .filter((run) => (options.before === undefined || run.day < options.before) && (next === null || run.day >= next))
+          .sort((a, b) => b.at.localeCompare(a.at));
+  return { rows, suggestions, next, counts };
 }
 
 function dayFormatter(timeZone: string | undefined): (iso: string) => string {
@@ -632,7 +697,11 @@ export type LogItem =
   | { kind: "pr-acted"; repo: string; at: string; for: number; pr: number; url: string; merged: PrActedEntry["merged"]; refused: string | null; sentBack: boolean; closed: boolean }
   /** entail started or stopped following a PR. */
   | { kind: "pr"; repo: string; at: string; entry: Extract<Entry, { type: "followed" | "unfollowed" | "landing-failed" }> }
-  | { kind: "repo"; repo: string; at: string; entry: Extract<Entry, { type: "enrolled" | "unenrolled" | "settings" | "undone" | "backlog" | "reopened" }> };
+  | { kind: "repo"; repo: string; at: string; entry: Extract<Entry, { type: "enrolled" | "unenrolled" | "settings" | "undone" | "backlog" | "reopened" }> }
+  /** A suggestion run the owner asked for: what it suggested and left out, or why it gave nothing. */
+  | { kind: "suggestion"; repo: string; at: string; run: SuggestionRunView }
+  /** One suggestion filed as an issue. */
+  | { kind: "suggestion-filed"; repo: string; at: string; for: number; index: number; issue: { number: number; url: string }; already: boolean };
 
 /**
  * The log of one repo, or of every repo, oldest first: each repo's in the
@@ -653,8 +722,16 @@ export function logItems(dataDirectory: string, book: readonly Case[], repoFilte
       const { kind, ...rest } = view;
       return { kind: "call", callKind: kind, ...rest };
     };
+    const runs = new Map(suggestionRunViews(repo, entries).map((run) => [run.id, run]));
     for (const entry of entries) {
       switch (entry.type) {
+        case "suggested":
+        case "suggest-failed":
+          items.push({ kind: "suggestion", repo, at: entry.at, run: runs.get(entry.id)! });
+          break;
+        case "suggestion-filed":
+          items.push({ kind: "suggestion-filed", repo, at: entry.at, for: entry.for, index: entry.index, issue: entry.issue, already: entry.already });
+          break;
         case "call":
           items.push(asItem(callView(repo, entry, statuses.get(entry.id)!, entries, book)));
           break;
@@ -1034,6 +1111,20 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         if (item.entry.type === "followed") lines.push(`${at}  ${where(item.entry.pr.number)}  following PR "${item.entry.pr.title}", which closes #${item.entry.issue}`);
         else if (item.entry.type === "landing-failed") lines.push(`${at}  ${where(item.entry.pr)}  the landing judgment at ${item.entry.head.slice(0, 7)} gave no call: ${item.entry.reason}`);
         else lines.push(`${at}  ${where(item.entry.pr)}  stopped following the PR: it is ${item.entry.state}`);
+        break;
+      case "suggestion": {
+        const { run } = item;
+        if (run.failed !== null) {
+          lines.push(`${at}  ${where(null) || item.repo}  ${run.by} asked entail to suggest work; ${run.failed}`);
+          break;
+        }
+        lines.push(`${at}  ${where(null) || item.repo}  ${run.by} asked entail to suggest work: ${run.suggestions.length} suggestion${run.suggestions.length === 1 ? "" : "s"} · ${run.model} at ${run.effort} effort · run ${run.id}`);
+        for (const suggestion of run.suggestions) lines.push(`      suggested${suggestion.size === "larger than one PR" ? " (larger than one PR)" : ""}: ${suggestion.title}`);
+        for (const one of run.leftOut) lines.push(`      left out: ${one.item}: ${one.reason}`);
+        break;
+      }
+      case "suggestion-filed":
+        lines.push(`${at}  ${where(item.issue.number)}  ${item.already ? "found already filed" : "filed"} suggestion ${item.index + 1} of run ${item.for}: ${item.issue.url}`);
         break;
       case "repo": {
         const { entry } = item;

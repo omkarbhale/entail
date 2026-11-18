@@ -22,8 +22,8 @@ export function fakeApi(initial: Partial<FakeState> = {}) {
     waiting: { items: [], held: [], actedAlone: { count: 0, repos: [] } },
     repos: [aRepo()],
     settings: { owner: "Omkar", model: "claude-opus-5-5", effort: "low", notice: null, start: null },
-    status: { watching: true, repos: 1, checkedAt: new Date(Date.now() - 40_000).toISOString(), checking: false, draining: false, pid: 4242, cli: null, failing: [], stalled: [], url: "http://127.0.0.1:4380/" },
-    log: () => ({ rows: [], next: null, counts: { all: 0, waiting: 0, overridden: 0, questions: 0, prs: 0 } }),
+    status: { watching: true, repos: 1, checkedAt: new Date(Date.now() - 40_000).toISOString(), checking: false, draining: false, suggesting: [], pid: 4242, cli: null, failing: [], stalled: [], url: "http://127.0.0.1:4380/" },
+    log: () => ({ rows: [], suggestions: [], next: null, counts: { all: 0, waiting: 0, overridden: 0, questions: 0, prs: 0 } }),
     ...initial,
   };
   const requests: { method: string; path: string; body: any }[] = [];
@@ -232,6 +232,7 @@ export function aRepo(overrides: Partial<RepoView> = {}): RepoView {
     stalled: [],
     backlogAsked: false,
     cannotLabel: null,
+    suggesting: null,
     ...overrides,
   };
 }

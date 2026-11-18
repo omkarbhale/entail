@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, type ActionView, type CallView, type HeldView, type LogFilter, type LogRow } from "../api.ts";
+import { api, type ActionView, type CallView, type HeldView, type LogFilter, type LogRow, type SuggestionRunView } from "../api.ts";
 import { OverrideForm, Receipt, useAct } from "../components/Actions.tsx";
 import { Chip, External, Request, Spinner, Verdict } from "../components/Verdict.tsx";
 import { clock, forgeName, dayLabel, overrideChoices, refNumber, shortName, timeZone } from "../format.ts";
@@ -36,7 +36,8 @@ export function LogPage({ repo }: { repo: string | null }) {
   if (log.isPending || repos.isPending) return <Loading cards={2} />;
   if (log.isError) return <LoadFailed retry={() => void log.refetch()} />;
   const counts = log.data.pages[0]!.counts;
-  if (counts.all === 0) {
+  const runs = log.data.pages.flatMap((page) => page.suggestions);
+  if (counts.all === 0 && runs.length === 0) {
     return (
       <div className="page-head">
         <h1>Log</h1>
@@ -54,7 +55,7 @@ export function LogPage({ repo }: { repo: string | null }) {
     );
   }
   const rows = log.data.pages.flatMap((page) => page.rows);
-  const days = [...new Set(rows.map((row) => row.day))];
+  const days = [...new Set([...rows.map((row) => row.day), ...runs.map((run) => run.day)])].sort().reverse();
   const toggle = (id: number) => {
     const next = new Set(open);
     if (next.has(id)) next.delete(id);
@@ -95,6 +96,11 @@ export function LogPage({ repo }: { repo: string | null }) {
           <section key={day} aria-label={dayLabel(day)}>
             <h2 className="day">{dayLabel(day)}</h2>
             <ul className="log">
+              {runs
+                .filter((run) => run.day === day)
+                .map((run) => (
+                  <SuggestionRow key={run.id} run={run} open={open.has(run.id)} toggle={() => toggle(run.id)} />
+                ))}
               {rows
                 .filter((row) => row.day === day)
                 .map((row) => (
@@ -119,6 +125,71 @@ export function LogPage({ repo }: { repo: string | null }) {
         </div>
       )}
     </>
+  );
+}
+
+/** A suggestion run the owner asked for: what it filed, and what it considered and left out. */
+function SuggestionRow({ run, open, toggle }: { run: SuggestionRunView; open: boolean; toggle: () => void }) {
+  const filed = run.suggestions.filter((suggestion) => suggestion.issue !== null).length;
+  const summary =
+    run.failed !== null
+      ? `Gave no suggestions: ${run.failed}`
+      : run.suggestions.length === 0
+        ? `Nothing found worth filing; ${run.leftOut.length} left out.`
+        : `${run.suggestions.length} suggestion${run.suggestions.length === 1 ? "" : "s"}, ${filed === run.suggestions.length ? "all" : filed} filed as issues labelled entail:suggested; ${run.leftOut.length} left out.`;
+  return (
+    <li className="lrow">
+      <button type="button" className="lsum" onClick={toggle} aria-expanded={open}>
+        <span className="ltime">{clock(run.at)}</span>
+        <span className="lmain">
+          <span className="lline">
+            <span className="lref">
+              <b>{shortName(run.repo)}</b>
+            </span>
+            <span className="ltitle">Suggested work, as {run.by} asked</span>
+          </span>
+          <span className="lreason">{summary}</span>
+        </span>
+        <span className="lright">
+          <span className={`st${run.failed === null ? "" : " over"}`}>{run.failed === null ? "Suggestions" : "Suggestion run failed"}</span>
+        </span>
+      </button>
+      {open && (
+        <div className="ldetail">
+          {run.suggestions.length > 0 && (
+            <div className="crit">
+              <span className="k">Suggested</span>
+              <ol>
+                {run.suggestions.map((suggestion, index) => (
+                  <li key={index}>
+                    {suggestion.title}
+                    {suggestion.size === "larger than one PR" && <span className="muted"> · larger than one PR</span>}{" "}
+                    {suggestion.issue === null ? <span className="muted">· not filed yet</span> : <External href={suggestion.issue.url}>#{suggestion.issue.number} ↗</External>}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+          {run.leftOut.length > 0 && (
+            <div className="crit">
+              <span className="k">Left out</span>
+              <ul>
+                {run.leftOut.map((one, index) => (
+                  <li key={index}>
+                    {one.item} <span className="muted">· {one.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <p className="small muted">
+            {run.model}, {run.effort}
+            {run.costUsd === null ? "" : ` · about $${run.costUsd.toFixed(2)}`}
+            {run.sha === null ? "" : ` · read at ${run.sha.slice(0, 7)}`}
+          </p>
+        </div>
+      )}
+    </li>
   );
 }
 

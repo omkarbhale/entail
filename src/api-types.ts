@@ -189,8 +189,44 @@ export interface LogRow {
 
 export type LogFilter = "all" | "waiting" | "overridden" | "questions" | "prs";
 
+/** One suggestion of a run, with the issue it was filed as. */
+export interface SuggestionView {
+  title: string;
+  size: "one PR" | "larger than one PR";
+  visionLines: string[];
+  /** The issue it was filed as, or null while it is not filed yet. */
+  issue: { number: number; url: string } | null;
+}
+
+/** A suggestion run the owner asked for: what it suggested and filed, and what it left out; or why it gave nothing. */
+export interface SuggestionRunView {
+  id: number;
+  repo: string;
+  /** The local day it ran on, `YYYY-MM-DD`. */
+  day: string;
+  at: string;
+  by: string;
+  model: string;
+  effort: EffortName;
+  costUsd: number | null;
+  /** The default branch's commit the repo was read at; null for a run that failed. */
+  sha: string | null;
+  suggestions: SuggestionView[];
+  leftOut: { item: string; reason: string }[];
+  /** Why the run gave no suggestions, or null when it gave its answer. */
+  failed: string | null;
+}
+
+/** A repo's suggestion run as its card shows it: one in flight, or how the last one ended. */
+export type SuggestingView =
+  | { state: "running"; since: string; model: string; effort: EffortName; resuming: boolean }
+  | { state: "done"; at: string; run: number; suggested: number; filed: number }
+  | { state: "failed"; at: string; reason: string };
+
 export interface LogPage {
   rows: LogRow[];
+  /** The suggestion runs on this page's days, newest first; only with the "all" filter. */
+  suggestions: SuggestionRunView[];
   /** The day to ask for next (`before=`), or null when this page reaches the first call. */
   next: string | null;
   /** How many calls each filter holds, over the whole log. */
@@ -225,6 +261,8 @@ export interface RepoView {
   stalled: StalledView[];
   /** Whether the owner already asked for the open backlog to be judged. */
   backlogAsked: boolean;
+  /** A suggestion run in flight for the repo, or how the last one ended; null when none was asked for. */
+  suggesting: SuggestingView | null;
   /** Why the latest `entail:` label entail tried to put on an issue here did not go on, or null when it did or none was tried. */
   cannotLabel: string | null;
 }
@@ -269,6 +307,8 @@ export interface StatusView {
   checking: boolean;
   /** Whether entail is drained for an update: it starts no new pass, and is idle once `checking` is false. */
   draining: boolean;
+  /** The repos a suggestion run is in flight for. */
+  suggesting: string[];
   /** The process serving this API, which holds the lock. */
   pid: number;
   /** The entail script that process runs, or null when not known. */
@@ -299,4 +339,14 @@ export interface CheckResponse {
 export type BoardEvent =
   | { type: "changed" }
   | { type: "checking"; repo: string | null }
-  | { type: "checked"; repo: string; at: string; judged: number; posted: number; failed: boolean };
+  | { type: "checked"; repo: string; at: string; judged: number; posted: number; failed: boolean }
+  | { type: "suggesting"; repo: string }
+  | { type: "suggested"; repo: string; ok: boolean; suggested: number; filed: number; reason: string | null };
+
+/** What `POST /api/repos/:owner/:name/suggest` answers with: the run it started. */
+export interface SuggestResponse {
+  repo: string;
+  since: string;
+  model: string;
+  effort: EffortName;
+}

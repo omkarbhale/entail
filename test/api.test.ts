@@ -11,6 +11,7 @@ import type { BoardEvent } from "../src/api-types.ts";
 import { OWNER_CASE_BOOK, readCaseBook } from "../src/case-book.ts";
 import { EventBus } from "../src/events.ts";
 import { appendEntry, readLog, readSettings, type CallEntry, type LandingEntry } from "../src/records.ts";
+import { SuggestionRuns, type SuggestionOutcome } from "../src/suggest.ts";
 
 const NOON = Date.parse("2026-11-12T12:00:00Z");
 
@@ -262,6 +263,58 @@ test("check now runs a pass for the repo, and the backlog asks entail to judge t
   await noLoop.call("POST", "/api/repos", { repo: "acme/tally" });
   assert.match((await noLoop.call("POST", "/api/repos/acme/tally/check", {})).body.error, /entail is not watching/u);
   assert.equal((await noLoop.call("GET", "/api/status")).body.watching, false);
+});
+
+test("suggest work starts one run per repo with the model and effort picked, refuses a second while it runs, and the card shows how it ended", async (t) => {
+  const bus = new EventBus();
+  const asked: { repo: string; model: string; effort: string }[] = [];
+  const finish = new Map<string, (outcome: SuggestionOutcome) => void>();
+  const suggestions = new SuggestionRuns({
+    events: bus,
+    now: () => new Date(NOON),
+    run: (repo, choice) => {
+      asked.push({ repo, ...choice });
+      return new Promise((resolve) => finish.set(repo, resolve));
+    },
+  });
+  const heard: BoardEvent[] = [];
+  bus.on((event) => heard.push(event));
+  const api = await serve(t, { suggestions, events: bus });
+  assert.equal((await api.call("POST", "/api/repos/acme/tally/suggest", {})).status, 404, "only an enrolled repo");
+  await api.call("POST", "/api/repos", { repo: "acme/tally" });
+  await api.call("PATCH", "/api/repos/acme/tally", { model: "claude-sonnet-5-5" });
+  assert.equal((await api.call("POST", "/api/repos/acme/tally/suggest", { effort: "huge" })).status, 400);
+  assert.equal((await api.call("POST", "/api/repos/acme/tally/suggest", { model: "a model; rm" })).status, 400);
+  assert.equal((await api.call("POST", "/api/repos/acme/tally/suggest", {}, { Origin: "https://evil.example" })).status, 403, "a web page cannot start a run");
+
+  const started = await api.call("POST", "/api/repos/acme/tally/suggest", { effort: "max" });
+  assert.equal(started.status, 202);
+  assert.deepEqual(started.body, { repo: "acme/tally", since: "2026-11-12T12:00:00.000Z", model: "claude-sonnet-5-5", effort: "max" }, "what is not picked comes from the repo's settings");
+  const again = await api.call("POST", "/api/repos/acme/tally/suggest", { model: "claude-opus-5-5", effort: "low" });
+  assert.equal(again.status, 409);
+  assert.match(again.body.error, /already suggesting work for acme\/tally/u);
+  assert.equal(asked.length, 1);
+  assert.deepEqual(heard.filter((event) => event.type === "suggesting"), [{ type: "suggesting", repo: "acme/tally" }]);
+
+  const running = (await api.call("GET", "/api/repos")).body.repos[0].suggesting;
+  assert.deepEqual(running, { state: "running", since: "2026-11-12T12:00:00.000Z", model: "claude-sonnet-5-5", effort: "max", resuming: false });
+  assert.deepEqual((await api.call("GET", "/api/status")).body.suggesting, ["acme/tally"], "an update waits for it");
+
+  const failed = appendEntry(api.dataDirectory, "acme/tally", { type: "suggest-failed", by: "Omkar", model: "claude-sonnet-5-5", effort: "max", reason: "the run gave no suggestions (timeout): ended" }, new Date(NOON));
+  finish.get("acme/tally")!({ ok: false, failed, facts: null });
+  await suggestions.settled();
+  assert.deepEqual((await api.call("GET", "/api/repos")).body.repos[0].suggesting, { state: "failed", at: "2026-11-12T12:00:00.000Z", reason: "the run gave no suggestions (timeout): ended" });
+  assert.ok(heard.some((event) => event.type === "suggested" && !event.ok && event.reason === "the run gave no suggestions (timeout): ended"));
+  assert.deepEqual((await api.call("GET", "/api/status")).body.suggesting, []);
+
+  await api.call("POST", "/api/drain", {});
+  const draining = await api.call("POST", "/api/repos/acme/tally/suggest", {});
+  assert.equal(draining.status, 409);
+  assert.match(draining.body.error, /stopping for an update/u);
+
+  const elsewhere = await serve(t);
+  await elsewhere.call("POST", "/api/repos", { repo: "acme/tally" });
+  assert.match((await elsewhere.call("POST", "/api/repos/acme/tally/suggest", {})).body.error, /entail suggest/u);
 });
 
 test("an update drains entail through the API: no new pass, check now refused, and passes taken again on resume", async (t) => {

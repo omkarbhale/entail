@@ -530,3 +530,39 @@ test("a username lookup the forge refuses for its rate limit is not taken for an
   ]);
   await assert.rejects(forge.actorByUsername("executor"), RateLimitedError);
 });
+
+test("the open issues and the issues carrying a label are read in full, oldest first, leaving pull requests out", async (t) => {
+  const { forge } = forgeOn(t, [
+    {
+      request: { method: "GET", path: "repos/acme/tally/issues?state=open&sort=created&direction=asc&per_page=100" },
+      response: { status: 200, body: [issue(9003, "2026-11-01T10:00:00Z"), { ...issue(9004, "2026-11-01T10:00:00Z"), pull_request: {} }] },
+    },
+    {
+      request: { method: "GET", path: "repos/acme/tally/issues?state=all&labels=entail%3Asuggested&sort=created&direction=asc&per_page=100" },
+      response: { status: 200, body: [{ ...issue(9005, "2026-11-01T10:00:00Z"), state: "closed" }] },
+    },
+  ]);
+  assert.deepEqual((await forge.openIssues()).map((one) => one.number), [3]);
+  const labelled = await forge.labelledIssues("entail:suggested");
+  assert.deepEqual(labelled.map((one) => [one.number, one.state]), [[5, "closed"]]);
+  await assert.rejects(forge.labelledIssues("bug"), /entail writes only its own labels/);
+});
+
+test("a new issue is filed with its entail: labels, each created first when missing", async (t) => {
+  const { forge, transport } = forgeOn(t, [
+    { request: { method: "GET", path: "repos/acme/tally/labels/entail%3Asuggested" }, response: { status: 404, body: { message: "Not Found" } } },
+    {
+      request: { method: "POST", path: "repos/acme/tally/labels", body: { name: "entail:suggested", color: "5319e7", description: "Set by entail: see its latest comment on the issue" } },
+      response: { status: 201, body: { name: "entail:suggested" } },
+    },
+    {
+      request: { method: "POST", path: "repos/acme/tally/issues", body: { title: "Count words in PDFs", body: "Why.\n\n<!-- entail suggestion 7.0 -->", labels: ["entail:suggested"] } },
+      response: { status: 201, body: { ...issue(9012, "2026-11-01T10:00:00Z"), title: "Count words in PDFs" } },
+    },
+  ]);
+  const filed = await forge.createIssue("Count words in PDFs", "Why.\n\n<!-- entail suggestion 7.0 -->", ["entail:suggested"]);
+  assert.equal(filed.number, 12);
+  assert.equal(filed.url, "https://github.com/acme/tally/issues/12");
+  await assert.rejects(forge.createIssue("x", "y", ["bug"]), /entail writes only its own labels/);
+  assert.equal(transport.requests.length, 3);
+});
