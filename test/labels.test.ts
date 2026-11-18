@@ -114,24 +114,23 @@ test("an account that cannot label: the call still posts and closes, and the rep
   assert.match(view!.cannotLabel!, /read access only/u);
 });
 
-test("a label GitHub refuses never holds up the act, and a label that later goes on clears the repo's note", async (t) => {
+test("a label GitHub refuses holds the act, and it is tried again next pass", async (t) => {
   const h = harness(t, { confirm: false });
   h.forge.refuseLabels = "GitHub answered 500";
   h.forge.file(12, "Count words in footnotes");
   h.script(12, verdict());
-  await h.pass();
-  assert.equal(h.forge.posted.length, 1);
-  assert.equal(acted(h.dataDirectory)[0]!.label!.failed, "GitHub answered 500");
-  assert.match(h.printed.join("\n"), /could not label it entail:go \(GitHub answered 500\)/u);
-  assert.equal(repoViews(h.dataDirectory, settings)[0]!.cannotLabel, "GitHub answered 500");
-  assert.deepEqual(await h.pass(), { repos: 1, judged: 0, posted: 0, failed: [] }, "the act is not tried again for its label");
+  const first = await h.pass();
+  assert.equal(first.posted, 0);
+  assert.equal(h.forge.posted.length, 0, "nothing is posted for an act that could not label");
+  assert.deepEqual(acted(h.dataDirectory), []);
+  assert.equal(repoViews(h.dataDirectory, settings)[0]!.cannotLabel, null);
 
   h.forge.refuseLabels = null;
-  h.forge.file(13, "Count words in captions");
-  h.script(13, verdict());
-  await h.pass();
-  assert.deepEqual(h.forge.labelsOn(13), ["entail:go"]);
-  assert.equal(repoViews(h.dataDirectory, settings)[0]!.cannotLabel, null);
+  const second = await h.pass();
+  assert.equal(second.posted, 1);
+  assert.equal(h.forge.posted.length, 1);
+  assert.deepEqual(h.forge.labelsOn(12), ["entail:go"]);
+  assert.equal(acted(h.dataDirectory).length, 1);
 });
 
 test("a dry run prints the label it would put on and writes none", async (t) => {

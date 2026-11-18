@@ -342,10 +342,7 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
   let access: Promise<string | null> | null = null;
   // What the account may do is read once per pass, and only when a label is to go on.
   const cannotLabel = () =>
-    (access ??= forge.access().then(
-      (read) => read.cannotLabelAndComment,
-      () => null,
-    ));
+    (access ??= forge.access().then((read) => read.cannotLabelAndComment));
   for (const pending of pendingWork([...readLog(options.dataDirectory, repo), ...planned], now())) {
     options.signal?.throwIfAborted();
     try {
@@ -549,14 +546,14 @@ async function act(
     record({ type: "acted", for: post.markerFor, issue: post.issue, comment: { id: 0, url: "(dry run)" }, closed: post.close, ...start });
     return true;
   }
+  const live = post.reopen || post.label !== null ? await forge.issue(post.issue) : null;
+  const label = post.label === null ? null : await putLabel(forge, post.issue, post.label, live?.labels ?? [], cannotLabel);
   const comments = await forge.comments("issue", post.issue);
   const already = comments.find((comment) => markedTickets(comment.body).includes(post.markerFor));
   const comment = already === undefined ? await forge.postComment("issue", post.issue, body) : { id: already.id, url: already.url };
   if (post.close) await forge.closeIssue(post.issue, "not-planned");
-  const live = post.reopen || post.label !== null ? await forge.issue(post.issue) : null;
   const reopened = post.reopen && live?.state === "closed";
   if (reopened) await forge.reopenIssue(post.issue);
-  const label = post.label === null ? null : await putLabel(forge, post.issue, post.label, live?.labels ?? [], cannotLabel);
   record({ type: "acted", for: post.markerFor, issue: post.issue, comment, closed: post.close, ...(label === null ? {} : { label }), ...start });
   options.log?.info("acted", { repo, issue: post.issue, for: post.markerFor, comment: comment.url, closed: post.close, alreadyPosted: already !== undefined, ...(label === null ? {} : { label: label.label, labelRemoved: label.removed }) });
   if (label?.failed !== undefined) options.log?.warn("label-failed", { repo, issue: post.issue, label: label.label, error: label.failed });
@@ -568,27 +565,23 @@ async function act(
 /**
  * Puts `label` on an issue that carries `carried`, taking off any other
  * `entail:` label first, so the issue carries one at a time. A label the
- * issue carries already is not added again. Never throws: why the label could
- * not go on, because the account may not label here or the forge refused, is
- * returned for the act to record, and the act goes ahead without it.
+ * issue carries already is not added again. An account that may not label
+ * here is returned for the act to record, and the act goes ahead without the
+ * label; any other failure throws, so the act is tried again next pass.
  */
 async function putLabel(forge: WatchForge, issue: number, label: string, carried: readonly string[], cannotLabel: () => Promise<string | null>): Promise<LabelChange> {
   const removed: string[] = [];
   const already = carried.includes(label);
   const others = carried.filter((other) => other !== label && other.startsWith(ENTAIL_LABEL_PREFIX) && isEntailLabel(other));
   if (already && others.length === 0) return { label, already, removed };
-  try {
-    const cannot = await cannotLabel();
-    if (cannot !== null) return { label, already: false, removed, failed: cannot };
-    for (const other of others) {
-      await forge.removeLabel(issue, other);
-      removed.push(other);
-    }
-    if (!already) await forge.addLabel(issue, label);
-    return { label, already, removed };
-  } catch (error) {
-    return { label, already: false, removed, failed: error instanceof Error ? error.message : String(error) };
+  const cannot = await cannotLabel();
+  if (cannot !== null) return { label, already: false, removed, failed: cannot };
+  for (const other of others) {
+    await forge.removeLabel(issue, other);
+    removed.push(other);
   }
+  if (!already) await forge.addLabel(issue, label);
+  return { label, already, removed };
 }
 
 function isEntailLabel(label: string): boolean {
