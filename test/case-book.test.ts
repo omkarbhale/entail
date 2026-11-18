@@ -30,7 +30,7 @@ function temporary(t: TestContext): string {
   return dir;
 }
 
-test("the seeded case book holds the owner's five calls on this repo", async () => {
+test("the seeded case book holds the owner's seven calls on this repo", async () => {
   const book = await readCaseBook(DEFAULT_CASE_BOOK);
   assert.deepEqual(
     book.map((past) => [past.repo, past.issue, past.call]),
@@ -40,6 +40,8 @@ test("the seeded case book holds the owner's five calls on this repo", async () 
       ["omkarbhale/entail", 170, "go"],
       ["omkarbhale/entail", 174, "no"],
       ["omkarbhale/entail", 177, "go"],
+      ["omkarbhale/entail", 200, "go"],
+      ["omkarbhale/entail", 201, "go"],
     ],
   );
   for (const past of book) {

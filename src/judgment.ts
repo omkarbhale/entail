@@ -13,7 +13,7 @@ import { arrayOf, boolean, nullable, object, oneOf, string, type Infer } from ".
 export const JUDGMENT_KIND = "issue-call";
 
 /** Changes whenever the prompt or the answer's shape changes, so a call records what judged it. */
-export const JUDGMENT_PROMPT_VERSION = "issue-call-2";
+export const JUDGMENT_PROMPT_VERSION = "issue-call-3";
 
 /** Where a criterion comes from; a criterion with no such source is not one. */
 export const CRITERION_SOURCES = ["vision", "reading", "edge", "answer"] as const;
@@ -150,6 +150,8 @@ The vision is about the product in this repo. If the product itself makes decisi
 
 Where the issue can be read more than one way, pick the reading that best serves the product and state it. Ask only when the readings would give users noticeably different results and nothing tells you which one the owner wants. A small, easily undone call does not need certainty; a minor wrong call is acceptable and fixable later.
 
+An issue that states a problem and no solution is not a question by itself. Choose the solution that best fits the vision and the product as it is, say which one in the reason, and put it in the criteria as a reading criterion worded as a decision ("Read as: ..."), so the implementer builds that and the PR is checked against it. Ask only when the change is large or hard to undo, or when the possible solutions would give users noticeably different results and nothing tells you which one the owner wants; the question then names the solutions you considered.
+
 A change is **large or hard to undo** when it does any of these:
 
 1. removes or replaces something users rely on today;
@@ -166,7 +168,7 @@ The past cases below are calls the owner actually made, with their reasons. Wher
 A go carries the criteria the PR must meet beyond solving the problem the issue describes, which is always required and never listed. A criterion earns its place only if an implementer who read just the issue could still deliver a PR that solves it and is wrong for this product. Each criterion has one source:
 
 - **vision**: a vision line that adds a requirement the issue did not state. For example, when a vision says new features are opt-in, a new feature's criterion is "it is behind a flag, off by default". Quote the line.
-- **reading**: the issue can be read more than one way and you chose one; state the reading so the implementer builds what was approved.
+- **reading**: the issue can be read more than one way, or states a problem and no solution, and you chose one; state the reading so the implementer builds what was approved.
 - **edge**: an edge you drew: what is out of this change.
 - **answer**: the owner's answer to a question on this issue, when the comments hold one.
 

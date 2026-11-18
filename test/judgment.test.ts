@@ -83,6 +83,13 @@ test("the prompt says so when there is no vision, no pin and no past case", () =
   assert.match(prompt, /no past cases yet/u);
 });
 
+test("the prompt has entail choose a solution for an issue that states a problem and no solution, asking only on the usual grounds", () => {
+  const prompt = judgmentPrompt(inputs());
+  assert.match(prompt, /An issue that states a problem and no solution is not a question by itself\./u);
+  assert.match(prompt, /say which one in the reason, and put it in the criteria as a reading criterion worded as a decision \("Read as: \.\.\."\)/u);
+  assert.match(prompt, /Ask only when the change is large or hard to undo, or when the possible solutions would give users noticeably different results and nothing tells you which one the owner wants; the question then names the solutions you considered\./u);
+});
+
 test("a long past issue is clipped in the prompt, never the issue being judged", () => {
   const long = `# Long\n\n${"word ".repeat(2000)}`;
   const prompt = judgmentPrompt(inputs({ issueText: long, precedents: [{ ...precedent("p", "go"), issueText: long }] }));
