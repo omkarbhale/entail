@@ -84,8 +84,9 @@ import { readVision } from "./vision.ts";
  *
  * Each act on an issue puts the `entail:` label for the call that acted on
  * it (`entail:go`, `entail:no`, or `entail:ask` while a question waits),
- * taking off any other `entail:` label; a label that cannot be put on never
- * holds up the act.
+ * taking off any other `entail:` label. Only an account that cannot label
+ * lets the act go ahead without it; any other label failure holds the act for
+ * a retry next pass.
  *
  * When a go acts and the owner set a start command, entail runs it with the
  * handoff, once per issue, and records that work was started (`src/starts.ts`).
