@@ -115,7 +115,7 @@ test("the API says which repos are failing, since when and why, until one works 
     book: async () => [],
     board: null,
     health,
-    loop: { check: async () => ({ repo: "", at: "", judged: 0, posted: 0, failed: true }), schedule: () => {}, wake: () => {}, checkedAt: () => since, lastPassAt: since, checking: false },
+    loop: { check: async () => ({ repo: "", at: "", judged: 0, posted: 0, failed: true }), schedule: () => {}, wake: () => {}, checkedAt: () => since, lastPassAt: since, checking: false, draining: false, drain: () => {}, resume: () => {} },
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");

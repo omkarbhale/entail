@@ -8,7 +8,21 @@ import type { PassReport } from "./watch.ts";
  * act-only pass the moment an owner's undo window closes, so a confirmation
  * reaches GitHub ten seconds after it was given rather than at the next poll.
  * Passes never overlap: each waits for the one before it.
+ *
+ * Before an update restarts it, the loop is drained: it starts no new pass
+ * (the interval's, a check asked on the board, or an act-only pass when an
+ * undo window closes) and lets the one running finish, model runs and start
+ * commands included, so a restart never cuts work off partway. What came due
+ * meanwhile is in the log and is acted on after the restart.
  */
+
+/** A pass asked for while the loop is drained for an update. */
+export class DrainingError extends Error {
+  constructor() {
+    super("entail is stopping for an update and starts no new pass; it runs again once it has restarted");
+    this.name = "DrainingError";
+  }
+}
 
 export interface PassRequest {
   /** Only these repos; every enrolled repo when left out. */
@@ -43,6 +57,8 @@ export class Loop {
   #dueAt: number | null = null;
   #wake: (() => void) | null = null;
   #wakeAsked = false;
+  #draining = false;
+  #drained: (() => void) | null = null;
 
   constructor(options: LoopOptions) {
     this.#options = options;
@@ -61,9 +77,35 @@ export class Loop {
     return this.#running > 0;
   }
 
-  /** Queues a pass after any running one, and resolves with its report. */
+  /** Whether the loop is drained for an update: it starts no new pass. */
+  get draining(): boolean {
+    return this.#draining;
+  }
+
+  /** Starts no new pass from now on; the running one, if any, finishes. Idle once {@link checking} is false. */
+  drain(): void {
+    if (this.#draining) return;
+    this.#draining = true;
+    if (this.#dueTimer !== null) clearTimeout(this.#dueTimer);
+    this.#dueTimer = null;
+    this.#dueAt = null;
+    this.#drained?.();
+  }
+
+  /** Takes passes again after a drain, as when an update could not restart entail. */
+  resume(): void {
+    if (!this.#draining) return;
+    this.#draining = false;
+    this.#scheduleDue();
+    this.wake();
+  }
+
+  /** Queues a pass after any running one, and resolves with its report; rejects with {@link DrainingError} while drained. */
   request(request: PassRequest = {}): Promise<PassReport> {
-    const run = this.#tail.then(() => this.#pass(request));
+    const run = this.#tail.then(() => {
+      if (this.#draining) throw new DrainingError();
+      return this.#pass(request);
+    });
     this.#tail = run.catch(() => undefined);
     return run;
   }
@@ -76,6 +118,7 @@ export class Loop {
 
   /** Runs an act-only pass at `at`, or earlier if one is already due sooner. */
   schedule(at: Date): void {
+    if (this.#draining) return;
     const when = at.getTime() + DUE_MARGIN_MS;
     if (this.#dueAt !== null && this.#dueAt <= when) return;
     if (this.#dueTimer !== null) clearTimeout(this.#dueTimer);
@@ -83,7 +126,9 @@ export class Loop {
     this.#dueTimer = setTimeout(() => {
       this.#dueTimer = null;
       this.#dueAt = null;
-      this.request({ actOnly: true }).catch((error: unknown) => this.#options.onError?.(error));
+      this.request({ actOnly: true }).catch((error: unknown) => {
+        if (!(error instanceof DrainingError)) this.#options.onError?.(error);
+      });
     }, Math.max(0, when - this.#now().getTime()));
     this.#dueTimer.unref?.();
   }
@@ -94,15 +139,24 @@ export class Loop {
     else this.#wakeAsked = true;
   }
 
-  /** Runs a full pass every interval until `signal` aborts. */
+  /** Runs a full pass every interval until `signal` aborts; while drained, waits without passing. */
   async run(signal: AbortSignal): Promise<void> {
     this.#scheduleDue();
     while (!signal.aborted) {
+      if (this.#draining) {
+        // Woken by resume() through wake(), or by the abort that stops entail.
+        await new Promise<void>((resolve) => {
+          this.#wake = resolve;
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        this.#wake = null;
+        continue;
+      }
       try {
         await this.request({});
       } catch (error) {
         if (signal.aborted) break;
-        this.#options.onError?.(error);
+        if (!(error instanceof DrainingError)) this.#options.onError?.(error);
       }
       if (this.#wakeAsked) {
         this.#wakeAsked = false;
@@ -119,8 +173,11 @@ export class Loop {
           done();
         };
         signal.addEventListener("abort", done, { once: true });
+        // A drain ends the wait, so the loop stops before the next pass rather than after it.
+        this.#drained = done;
       });
       this.#wake = null;
+      this.#drained = null;
     }
     if (this.#dueTimer !== null) clearTimeout(this.#dueTimer);
   }
@@ -152,6 +209,7 @@ export class Loop {
   }
 
   #scheduleDue(): void {
+    if (this.#draining) return;
     const due = this.#options.nextDue?.();
     if (due !== null && due !== undefined) this.schedule(due);
   }

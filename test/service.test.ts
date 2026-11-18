@@ -10,6 +10,7 @@ import { LOCK_FILE, type LockHolder } from "../src/lock.ts";
 import {
   installService,
   launchdPlist,
+  restartService,
   machineServiceSystem,
   scheduledTaskXml,
   TASK_STATE_QUERY,
@@ -513,4 +514,35 @@ test("status on Windows reads the task's state by name from PowerShell, the same
   assert.deepEqual(state("Ready\r\n"), [true, false, true]);
   assert.deepEqual(state("Disabled\r\n"), [true, false, false]);
   assert.deepEqual(state("Get-ScheduledTask : No MSFT_ScheduledTask objects found", 1), [true, false, false]);
+});
+
+test("restarting the service goes through the service manager: systemctl restart on Linux, launchctl kickstart -k on macOS", async (t) => {
+  const home = tempHome(t);
+  await assert.rejects(restartService(inputs(home, "linux"), fakeSystem()), /the entail service is not installed/u);
+  await installService(inputs(home, "linux"), fakeSystem());
+  const linux = fakeSystem();
+  await restartService(inputs(home, "linux"), linux);
+  assert.deepEqual(linux.calls, ["systemctl --user restart entail.service"]);
+  const failed = fakeSystem({ results: { "systemctl --user restart entail.service": { status: 1, output: "Failed to restart entail.service: Unit not found." } } });
+  await assert.rejects(restartService(inputs(home, "linux"), failed), /systemctl --user restart entail\.service failed: Failed to restart/u);
+
+  const mac = tempHome(t);
+  await installService(inputs(mac, "darwin"), fakeSystem());
+  const darwin = fakeSystem();
+  await restartService(inputs(mac, "darwin"), darwin);
+  assert.deepEqual(darwin.calls, ["launchctl kickstart -k gui/501/entail"]);
+});
+
+test("restarting on Windows ends the task, stops the entail it started, waits for the lock and runs the task again", onWindows, async (t) => {
+  const home = tempHome(t);
+  await installService(windowsHere(home), fakeSystem());
+  let holder: LockHolder | null = { pid: 4242, startedAt: "2026-11-13T12:00:00.000Z" };
+  const system = fakeSystem({ running: () => holder });
+  const exec = system.exec;
+  system.exec = (file, args) => {
+    if (file === "taskkill") holder = null;
+    return exec(file, args);
+  };
+  await restartService(windowsHere(home), system);
+  assert.deepEqual(system.calls, ["schtasks /End /TN entail", "taskkill /T /F /PID 4242", "schtasks /Run /TN entail"]);
 });

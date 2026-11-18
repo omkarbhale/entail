@@ -267,6 +267,12 @@ export interface StatusView {
   repos: number;
   checkedAt: string | null;
   checking: boolean;
+  /** Whether entail is drained for an update: it starts no new pass, and is idle once `checking` is false. */
+  draining: boolean;
+  /** The process serving this API, which holds the lock. */
+  pid: number;
+  /** The entail script that process runs, or null when not known. */
+  cli: string | null;
   /** The enrolled repos whose checks are failing now, with why. */
   failing: { repo: string; failing: FailingView }[];
   /** The stalled PRs of the enrolled repos. */

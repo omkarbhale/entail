@@ -26,6 +26,7 @@ From there the owner files issues and answers on the board; nothing else needs a
 ```sh
 node dist/cli.js run                           # entail by hand instead of the service: poll every minute, post, serve the board
 node dist/cli.js service status                # or: service uninstall, which stops and removes it
+node dist/cli.js update                        # from entail's checkout: pull, build, restart the running entail on the new code
 node dist/cli.js waiting                       # the questions and calls to confirm waiting on you
 node dist/cli.js confirm owner/repo#12         # or: override owner/repo#12 no "reason", answer owner/repo#12 go "answer"
 node dist/cli.js calls owner/repo              # the log: every call and every answer, with its reason
@@ -37,6 +38,8 @@ node dist/cli.js replay                        # the case book through both judg
 `node dist/cli.js help` lists every command and option.
 
 **Running.** `entail service install` writes a systemd user unit (Linux, WSL with systemd on), a launchd agent (macOS) or a Task Scheduler task (Windows) that runs the same `entail run`, with the same data directory and port, from login on and again after a crash; `entail service uninstall` stops and removes it, and `entail service status` says where it stands. Task Scheduler does not restart a crashed task, so on Windows log in again or run `entail service install` again to restart it. One copy runs per machine: the service and `entail run` by hand never run together. A crash or a restart loses nothing: every call and owner's action is in the log before entail acts on it, an action whose undo window closed meanwhile is completed, an undone one is dropped, and a comment already posted is found by its marker and never posted twice.
+
+**Updating.** `entail update`, run from entail's checkout, fast-forwards its branch (`git pull --ff-only`), runs `npm ci` and `npm run build`, and restarts the entail running from that checkout on the new code. Before the restart it asks the running entail to take no new work and waits for the pass in flight to finish, model runs and start commands included, so nothing is cut off partway; what comes due meanwhile is acted on after the restart. The service is restarted through its service manager and the board comes back with it; `entail run` by hand is stopped once idle, for you to start again. It refuses a directory that is not entail's checkout, uncommitted changes to tracked files, and an entail running from anywhere else, and a failed pull or build leaves the running entail alone.
 
 **Watching.** `run` polls each enrolled repo. Each issue filed after it was enrolled gets a call, and gets one again whenever its title or body is edited; a comment with a line starting `/entail` gets a call on its issue too, on any issue. Each call is one model run, Opus 5.5 at high effort unless the settings say otherwise (`entail settings`, for every repo or one), paid on the logged-in `claude`.
 

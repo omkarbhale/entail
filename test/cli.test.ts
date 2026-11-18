@@ -183,7 +183,7 @@ test("status reads when each repo was last checked from the running copy's board
     defaultModel: "claude-opus-5-5",
     book: async () => [],
     board: null,
-    loop: { check: async () => ({ repo: "", at: "", judged: 0, posted: 0, failed: false }), schedule: () => {}, wake: () => {}, checkedAt: () => checked, lastPassAt: checked, checking: false },
+    loop: { check: async () => ({ repo: "", at: "", judged: 0, posted: 0, failed: false }), schedule: () => {}, wake: () => {}, checkedAt: () => checked, lastPassAt: checked, checking: false, draining: false, drain: () => {}, resume: () => {} },
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -215,7 +215,7 @@ test("status says a repo is failing, since when and why, after when it was last 
     book: async () => [],
     board: null,
     health,
-    loop: { check: async () => ({ repo: "", at: "", judged: 0, posted: 0, failed: true }), schedule: () => {}, wake: () => {}, checkedAt: () => checked, lastPassAt: checked, checking: false },
+    loop: { check: async () => ({ repo: "", at: "", judged: 0, posted: 0, failed: true }), schedule: () => {}, wake: () => {}, checkedAt: () => checked, lastPassAt: checked, checking: false, draining: false, drain: () => {}, resume: () => {} },
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
