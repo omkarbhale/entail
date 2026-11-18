@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import type { LockHolder } from "../src/lock.ts";
-import { serviceDefinition, type CommandResult, type ServiceInputs, type ServiceSystem } from "../src/service.ts";
+import { serviceDefinition, TASK_STATE_QUERY, type CommandResult, type ServiceInputs, type ServiceSystem } from "../src/service.ts";
 import { update, UpdateError, type RunningStatus, type UpdateMachine, type UpdateOptions } from "../src/update.ts";
 
 const URL = "http://127.0.0.1:4380/";
@@ -54,11 +54,14 @@ function world(
   } = {},
 ): World {
   const home = temp(t, "entail-update-home-");
-  const inputs: ServiceInputs = { platform: "linux", env: { PATH: "/usr/bin", XDG_CONFIG_HOME: join(home, "config") }, home, uid: 501, node: "/opt/node/bin/node", cli: join(checkout, "dist", "cli.js") };
+  // On Windows, LOCALAPPDATA in a temp directory, so the service's script goes there.
+  const inputs: ServiceInputs = WINDOWS
+    ? { platform: "win32", env: { PATH: "C:\\Windows\\system32", LOCALAPPDATA: join(home, "Local"), USERNAME: "owner" }, home, uid: 0, node: process.execPath, cli: join(checkout, "dist", "cli.js") }
+    : { platform: "linux", env: { PATH: "/usr/bin", XDG_CONFIG_HOME: join(home, "config") }, home, uid: 501, node: "/opt/node/bin/node", cli: join(checkout, "dist", "cli.js") };
   if ((setup.service ?? "active") === "active") {
     const definition = serviceDefinition({ ...inputs, cli: setup.serviceCli ?? join(checkout, "dist", "cli.js") });
     mkdirSync(dirname(definition.path), { recursive: true });
-    writeFileSync(definition.path, definition.content);
+    writeFileSync(definition.path, WINDOWS ? Buffer.from(`\ufeff${definition.content}`, "utf16le") : definition.content);
   }
   const calls: string[] = [];
   const printed: string[] = [];
@@ -76,7 +79,12 @@ function world(
       const call = [file, ...args].join(" ");
       calls.push(call);
       if (call === "systemctl --user is-active --quiet entail.service" || call === "systemctl --user is-enabled --quiet entail.service") return { status: setup.service === "none" ? 3 : 0, output: "" };
-      if (call === "systemctl --user restart entail.service" && setup.results?.[call] === undefined) {
+      if (call === `powershell.exe -NoProfile -NonInteractive -Command ${TASK_STATE_QUERY}`) return { status: 0, output: "Running\r\n" };
+      if (call === "schtasks /End /TN entail" || call.startsWith("taskkill ")) {
+        assert.equal(state.checking, false, "the service is stopped only once no pass runs");
+        if (call.startsWith("taskkill ")) state.holder = null;
+      }
+      if (call === RESTART && setup.results?.[call] === undefined) {
         assert.equal(state.checking, false, "the service is restarted only once no pass runs");
         state.holder = NEW;
         state.draining = false;
@@ -124,6 +132,10 @@ function world(
 }
 
 const BUILD = ["git pull --ff-only", "npm ci", "npm run build"];
+
+/** The service manager these tests restart through: Task Scheduler on Windows, whose paths only it takes, systemd elsewhere. */
+const WINDOWS = process.platform === "win32";
+const RESTART = WINDOWS ? "schtasks /Run /TN entail" : "systemctl --user restart entail.service";
 
 test("update refuses a directory that is not a git checkout of entail, and touches nothing", async (t) => {
   const bare = temp(t, "entail-update-bare-");
@@ -174,7 +186,7 @@ test("with nothing running, update pulls, installs and builds, and says nothing 
   assert.deepEqual(result, { before: "aaaaaaa", after: "bbbbbbb", restarted: "not-running" });
   assert.deepEqual(quiet.calls.filter((call) => BUILD.includes(call)), BUILD);
   assert.ok(!quiet.calls.includes("POST /api/drain"));
-  assert.ok(!quiet.calls.some((call) => call.startsWith("systemctl --user restart")));
+  assert.ok(!quiet.calls.some((call) => call === RESTART));
   assert.match(quiet.printed.join("\n"), /aaaaaaa → bbbbbbb[\s\S]*entail is not running, so there is nothing to restart/u);
 });
 
@@ -187,16 +199,16 @@ test("a failed pull or build leaves the running entail alone", async (t) => {
   const broken = world(t, checkout, { results: { "npm run build": { status: 2, output: "src/cli.ts(1,1): error TS1005" } } });
   await assert.rejects(update(broken.options), /npm run build failed at bbbbbbb; the running entail \(pid 1111\) was left alone on the code it started with: src\/cli\.ts/u);
   assert.ok(!broken.calls.includes("POST /api/drain"));
-  assert.ok(!broken.calls.some((call) => call.startsWith("systemctl --user restart")));
+  assert.ok(!broken.calls.some((call) => call === RESTART));
 });
 
-test("the service is drained, waits out the pass in flight, then is restarted through systemd on the new code", async (t) => {
+test("the service is drained, waits out the pass in flight, then is restarted through its service manager on the new code", async (t) => {
   const checkout = checkoutOf(t);
   const running = world(t, checkout, { passPolls: 3 });
   const result = await update(running.options);
   assert.deepEqual(result, { before: "aaaaaaa", after: "bbbbbbb", restarted: "service" });
-  const order = running.calls.filter((call) => [...BUILD, "POST /api/drain", "systemctl --user restart entail.service"].includes(call));
-  assert.deepEqual(order, [...BUILD, "POST /api/drain", "systemctl --user restart entail.service"]);
+  const order = running.calls.filter((call) => [...BUILD, "POST /api/drain", RESTART].includes(call));
+  assert.deepEqual(order, [...BUILD, "POST /api/drain", RESTART]);
   assert.ok(running.printed.some((line) => /Waiting for the pass in flight to finish/u.test(line)));
   assert.match(running.printed.at(-1)!, /The entail service runs bbbbbbb now \(was aaaaaaa\); the board: http:\/\/127\.0\.0\.1:4380\//u);
 });
@@ -206,7 +218,7 @@ test("entail run by hand is drained and stopped, not restarted, and the owner is
   const byHand = world(t, checkout, { service: "none", passPolls: 2 });
   const result = await update(byHand.options);
   assert.equal(result.restarted, "by-hand");
-  assert.deepEqual(byHand.calls.filter((call) => call === "POST /api/drain" || call.startsWith("stop ") || call.startsWith("systemctl --user restart")), ["POST /api/drain", "stop 1111"]);
+  assert.deepEqual(byHand.calls.filter((call) => call === "POST /api/drain" || call.startsWith("stop ") || call === RESTART), ["POST /api/drain", "stop 1111"]);
   assert.match(byHand.printed.at(-1)!, /running by hand \(pid 1111\): it finished the work in flight and was stopped[\s\S]*node dist\/cli\.js run/u);
 });
 
@@ -219,14 +231,20 @@ test("a copy from before the drain is restarted as soon as no pass runs", async 
 
 test("a failed restart and an interrupted wait both let entail take work again", async (t) => {
   const checkout = checkoutOf(t);
-  const failing = world(t, checkout, { results: { "systemctl --user restart entail.service": { status: 1, output: "Failed to restart entail.service" } } });
-  await assert.rejects(update(failing.options), /could not be restarted, so entail still runs the code it started with/u);
-  assert.equal(failing.calls.at(-1), "DELETE /api/drain");
+  const failing = world(t, checkout, { results: { [RESTART]: { status: 1, output: "Failed to restart entail" } } });
+  if (WINDOWS) {
+    // Task Scheduler stops the old copy before it runs the task again, so a failed run leaves nothing to resume.
+    await assert.rejects(update(failing.options), /stopped but could not be started again on bbbbbbb, so entail is not running/u);
+    assert.ok(!failing.calls.includes("DELETE /api/drain"));
+  } else {
+    await assert.rejects(update(failing.options), /could not be restarted, so entail still runs the code it started with and takes work again/u);
+    assert.equal(failing.calls.at(-1), "DELETE /api/drain");
+  }
 
   const interrupted = world(t, checkout, { passPolls: 100, abortAfterPolls: 2 });
   await assert.rejects(update(interrupted.options), /interrupted; entail takes work again/u);
   assert.ok(interrupted.calls.includes("DELETE /api/drain"));
-  assert.ok(!interrupted.calls.some((call) => call.startsWith("systemctl --user restart")));
+  assert.ok(!interrupted.calls.some((call) => call === RESTART));
 
   const slow = world(t, checkout, { passPolls: 1000 });
   await assert.rejects(update(slow.options), /did not finish within 0 minutes, so entail was not restarted and takes work again/u);
@@ -240,4 +258,15 @@ test("update refuses when the board at the port is not the copy holding the lock
   const silent = world(t, checkout, { status: null });
   await assert.rejects(update(silent.options), /does not answer at http:\/\/127\.0\.0\.1:4380\/: if it serves another port, pass it with --port/u);
   assert.ok(!silent.calls.includes("git pull --ff-only"));
+});
+
+test("a checkout reached through a symlink is the same checkout as the path the running entail reports", { skip: WINDOWS && "a symlink needs privileges on Windows" }, async (t) => {
+  const real = realpathSync(checkoutOf(t));
+  const link = join(temp(t, "entail-update-link-"), "entail");
+  symlinkSync(real, link);
+  // Before dist/ is built, so the script's path cannot be resolved: as macOS's /var, a link to /private/var.
+  const throughLink = world(t, link, { status: { cli: join(link, "dist", "cli.js") } });
+  assert.equal((await update(throughLink.options)).restarted, "service");
+  const byRealPath = world(t, link, { status: { cli: join(real, "dist", "cli.js") } });
+  assert.equal((await update(byRealPath.options)).restarted, "service");
 });

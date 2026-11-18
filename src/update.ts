@@ -148,8 +148,12 @@ export async function update(options: UpdateOptions): Promise<UpdateResult> {
   try {
     await restartService(options.inputs, system);
   } catch (error) {
-    await resumeIfRunning(options, running.pid);
-    throw new UpdateError(`the service could not be restarted, so entail still runs the code it started with: ${error instanceof Error ? error.message : String(error)}`);
+    const reason = error instanceof Error ? error.message : String(error);
+    if (system.runningCopy()?.pid === running.pid) {
+      await resumeIfRunning(options, running.pid);
+      throw new UpdateError(`the service could not be restarted, so entail still runs the code it started with and takes work again: ${reason}`);
+    }
+    throw new UpdateError(`the service was stopped but could not be started again on ${after}, so entail is not running: ${reason}\nStart it with: node dist/cli.js service install`);
   }
   const back = await waitFor(
     system,
@@ -205,7 +209,8 @@ function runningFrom(status: RunningStatus, service: ServiceStatus | null, machi
 function checkRunsFrom(checkout: string, from: { cli: string } | { text: string }, pid: number): void {
   const here = join(checkout, "dist", "cli.js");
   if ("cli" in from) {
-    if (inside(real(from.cli), real(checkout))) return;
+    // Compared as given and with links resolved, since either side may be reached through a symlink (macOS's /var is /private/var).
+    if (inside(from.cli, checkout) || inside(real(from.cli), real(checkout))) return;
     throw new UpdateError(`entail runs from ${from.cli} (pid ${pid}), not from this checkout (${here}): entail update updates only the copy running from the checkout it is run from`);
   }
   if (from.text === "") throw new UpdateError(`cannot tell where the running entail (pid ${pid}) runs from, so it was not updated; it should run ${here}`);
