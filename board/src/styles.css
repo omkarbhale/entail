@@ -47,6 +47,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .count.zero { background: var(--sunk); color: var(--muted); }
 .top-right { margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); min-width: 0; }
 .top-right select { border: 1px solid var(--line); background: var(--surface); border-radius: 7px; padding: 3px 6px; font-size: 13px; max-width: 210px; }
+.theme { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; }
+.theme:hover { color: var(--text); border-color: var(--line-strong); }
 .sync { display: flex; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; }
 .sync > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); display: inline-block; flex: none; }

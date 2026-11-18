@@ -74,6 +74,51 @@ export function useNow(ms = 10_000): number {
 }
 
 const LOOKED_KEY = "entail.lastLooked";
+/** The owner's chosen theme; read before first paint by `public/theme.js`, which names the same key. */
+export const THEME_KEY = "entail.theme";
+
+export type Theme = "light" | "dark";
+
+function systemTheme(): Theme {
+  return typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function storedTheme(): Theme | null {
+  try {
+    const stored = window.localStorage.getItem(THEME_KEY);
+    return stored === "light" || stored === "dark" ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The board's theme: the system's until the owner picks one, which is remembered and wins from then on. */
+export function useTheme(): [Theme, () => void] {
+  const [chosen, setChosen] = useState<Theme | null>(storedTheme);
+  const [system, setSystem] = useState<Theme>(systemTheme);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => setSystem(query.matches ? "dark" : "light");
+    query.addEventListener?.("change", onChange);
+    return () => query.removeEventListener?.("change", onChange);
+  }, []);
+  useEffect(() => {
+    if (chosen === null) delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = chosen;
+  }, [chosen]);
+  const theme = chosen ?? system;
+  const toggle = () => {
+    const next: Theme = theme === "dark" ? "light" : "dark";
+    setChosen(next);
+    try {
+      window.localStorage.setItem(THEME_KEY, next);
+    } catch {
+      // Without storage the choice lasts the visit.
+    }
+  };
+  return [theme, toggle];
+}
 
 /** When the owner last opened the board before this visit, read once per page load; this visit is remembered for the next. */
 export const lastLooked: string | null = (() => {
