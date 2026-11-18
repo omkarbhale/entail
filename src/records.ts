@@ -657,12 +657,14 @@ export interface StalledLanding {
 /** The PRs whose landing is stalled, derived from the log: a new push, judged, ends it. */
 export function stalledLandings(entries: readonly Entry[]): StalledLanding[] {
   const followed = followedPullRequests(entries);
-  const landed = latestLandings(entries);
   const last = new Map<number, LandingFailedEntry>();
-  for (const entry of entries) if (entry.type === "landing-failed" && followed.has(entry.pr)) last.set(entry.pr, entry);
+  for (const entry of entries) {
+    if (entry.type === "landing-failed" && followed.has(entry.pr)) last.set(entry.pr, entry);
+    if (entry.type === "landing") last.delete(entry.pr.number);
+  }
   return [...last.values()]
     .map((failed) => ({ pr: failed.pr, head: failed.head, reason: failed.reason, attempts: entries.filter((entry) => entry.type === "landing-failed" && entry.pr === failed.pr && entry.head === failed.head).length }))
-    .filter((stalled) => stalled.attempts >= JUDGMENT_ATTEMPTS && landed.get(stalled.pr)?.head !== stalled.head)
+    .filter((stalled) => stalled.attempts >= JUDGMENT_ATTEMPTS)
     .sort((a, b) => a.pr - b.pr);
 }
 

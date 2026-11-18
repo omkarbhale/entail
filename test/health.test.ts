@@ -167,3 +167,24 @@ test("a landing judgment that gives no call three times at one head is stalled: 
   await r.pass();
   assert.deepEqual(repoViews(r.h.dataDirectory, { owner: OWNER, model: "m", effort: "low" })[0]!.stalled, []);
 });
+
+test("a stalled PR is no longer stalled once a push to a new head is judged, while the PR stays followed", async (t) => {
+  const r = running(t, harness(t));
+  r.h.forge.file(1, "Read standard input", "tally only reads files.");
+  r.h.script(1, verdict({ criteria: [{ source: "reading", criterion: "Words from standard input count.", basis: "One total." }] }));
+  await r.pass();
+  const headA = "1".repeat(40);
+  const headB = "2".repeat(40);
+  r.h.forge.openPull(4, "Read standard input", { head: headA, closes: [1] });
+  r.h.forge.report(headA, ["test", "passed"]);
+  r.h.scriptLanding(4, "fail", "fail", "fail", landingAnswer());
+  for (let n = 0; n < 4; n++) await r.pass();
+  const stalled = () => repoViews(r.h.dataDirectory, { owner: OWNER, model: "m", effort: "low" })[0]!.stalled;
+  assert.equal(stalled().length, 1);
+
+  r.h.forge.editPull(4, { headSha: headB });
+  r.h.forge.report(headB, ["test", "passed"]);
+  await r.pass();
+  assert.equal(r.h.runner.requests.filter((request) => request.kind === "pr-call").length, 4);
+  assert.deepEqual(stalled(), []);
+});
