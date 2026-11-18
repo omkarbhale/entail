@@ -1,17 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError, type CheckResponse, type EnrollResponse, type RepoView, type SettingsView, type SuggestingView } from "../api.ts";
 import { ENROLLED, EnrollForm, Welcome } from "../components/Enroll.tsx";
+import { EFFORTS, MODELS, options, Saved, useSave } from "../components/Save.tsx";
 import { External, Spinner } from "../components/Verdict.tsx";
 import { ago, forgeName, repoHref } from "../format.ts";
 import { REPOS, SETTINGS, useRepos, useSettings } from "../queries.ts";
 import { useNow, useToast } from "../state.tsx";
 import { LoadFailed, Loading } from "./Waiting.tsx";
 
-/** Repos: the repos entail watches and the few settings that change its calls. */
-
-const MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-haiku-5-5"];
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+/** Repos: the repos entail watches, each with its own settings; the settings for every repo are on Settings. */
 
 export function ReposPage({ showRepo }: { showRepo: (repo: string, page: "waiting" | "log") => void }) {
   const repos = useRepos();
@@ -25,7 +23,7 @@ export function ReposPage({ showRepo }: { showRepo: (repo: string, page: "waitin
           <h1>Repos</h1>
         </div>
         <Welcome />
-        <Notices settings={settings.data} />
+        <ToSettings />
       </>
     );
   }
@@ -33,9 +31,9 @@ export function ReposPage({ showRepo }: { showRepo: (repo: string, page: "waitin
     <>
       <div className="page-head">
         <h1>Repos</h1>
-        <p className="sub">The repos entail watches, and the few settings that change its calls.</p>
+        <p className="sub">The repos entail watches, each with its own settings.</p>
       </div>
-      <Defaults settings={settings.data} />
+      <ToSettings />
       <ul className="plain">
         {repos.data.map((repo) => (
           <RepoCard key={repo.repo} repo={repo} settings={settings.data} showRepo={showRepo} />
@@ -45,60 +43,7 @@ export function ReposPage({ showRepo }: { showRepo: (repo: string, page: "waitin
         <h2>Enroll a repo</h2>
         <EnrollForm />
       </div>
-      <Notices settings={settings.data} />
     </>
-  );
-}
-
-function options(values: string[], current: string): string[] {
-  return values.includes(current) ? values : [current, ...values];
-}
-
-/** A settings change with its pending state and a "Saved" that fades. */
-function useSave<T>(save: (value: T) => Promise<unknown>) {
-  const client = useQueryClient();
-  const toast = useToast();
-  const [saved, setSaved] = useState(false);
-  const mutation = useMutation({
-    mutationFn: save,
-    onSuccess: () => {
-      setSaved(true);
-      void client.invalidateQueries();
-    },
-    onError: (error) => toast(error instanceof ApiError && !error.network ? `Not saved: ${error.message}.` : "Not saved: entail did not answer. Nothing changed."),
-  });
-  useEffect(() => {
-    if (!saved) return;
-    const timer = window.setTimeout(() => setSaved(false), 1800);
-    return () => window.clearTimeout(timer);
-  }, [saved]);
-  return { mutation, saved };
-}
-
-function Saved({ pending, saved }: { pending: boolean; saved: boolean }) {
-  if (pending) return <Spinner />;
-  return saved ? <span className="saved">Saved</span> : null;
-}
-
-function Defaults({ settings }: { settings: SettingsView }) {
-  const { mutation, saved } = useSave((change: Partial<SettingsView>) => api.changeSettings(change));
-  return (
-    <div className="global">
-      <span className="small muted">Judging with</span>
-      <select aria-label="Default model" value={settings.model} onChange={(event) => mutation.mutate({ model: event.target.value })} disabled={mutation.isPending}>
-        {options(MODELS, settings.model).map((model) => (
-          <option key={model}>{model}</option>
-        ))}
-      </select>
-      <span className="small muted">effort</span>
-      <select aria-label="Default effort" value={settings.effort} onChange={(event) => mutation.mutate({ effort: event.target.value as SettingsView["effort"] })} disabled={mutation.isPending}>
-        {EFFORTS.map((effort) => (
-          <option key={effort}>{effort}</option>
-        ))}
-      </select>
-      <span className="small muted">· the default for every repo</span>
-      <Saved pending={mutation.isPending} saved={saved} />
-    </div>
   );
 }
 
@@ -433,57 +378,12 @@ function checkText(outcome: { ok: true; result: CheckResponse } | { ok: false; e
   return `Checked just now: ${parts.join(", ")}.`;
 }
 
-/** The notice and start commands and the backup remote as set, read only; they are changed from the command line. */
-function Notices({ settings }: { settings: SettingsView }) {
-  const now = useNow();
-  const { backup } = settings;
-  const [name, setName] = useState(settings.owner ?? "");
-  useEffect(() => setName(settings.owner ?? ""), [settings.owner]);
-  const owner = useSave((value: string) => api.changeSettings({ owner: value }));
-  const saveName = (event: FormEvent) => {
-    event.preventDefault();
-    if (name.trim() !== "") owner.mutation.mutate(name.trim());
-  };
+/** Where the settings for every repo are, now that this page holds only each repo's own. */
+function ToSettings() {
   return (
-    <div className="notice-line">
-      <div className="setting">
-        <b>Notices.</b> When something starts waiting, entail runs a command with one line and a link (<code>$1</code>, <code>$2</code>), never the question itself. Now: <code id="notice-command">{settings.notice ?? "none"}</code>
-        <p className="hint">
-          Change it from the command line: <code>entail settings --notice '&lt;command&gt;'</code> (or <code>--notice none</code>), e.g. <code>examples/notice-to-firstmate.sh</code> or <code>examples/notice-to-file.sh</code> in entail’s checkout. The line reads like “entail: 1 question and 3 calls to confirm waiting on you”; the tab title carries the count too.
-        </p>
-      </div>
-      <div className="setting">
-        <b>Starting work.</b> When a go acts (at once, or once you confirm it), entail runs a command with the issue, the reason and the criteria as JSON on its standard input, once per issue. Now: <code id="start-command">{settings.start ?? "none"}</code>
-        <p className="hint">
-          Change it from the command line: <code>entail settings --start '&lt;command&gt;'</code> (or <code>--start none</code>), e.g. <code>examples/start-to-file.sh</code> in entail’s checkout.
-        </p>
-      </div>
-      <div className="setting">
-        <b>Backup.</b> After each pass entail commits its log, your case book, the settings and the pins, and pushes them to a git remote with your own git. Now: <code id="backup-remote">{backup.remote ?? "none"}</code>
-        {backup.remote !== null && backup.problem === null && <span className="muted">{backup.pushedAt === null ? " · no push yet" : ` · last pushed ${ago(backup.pushedAt, now)}`}</span>}
-        {backup.problem !== null && (
-          <p className="small bad note" role="status">
-            Backup {backup.problem.kind === "stuck" ? "stuck" : "failing"} since {ago(backup.problem.since, now)}: {backup.problem.reason}.
-          </p>
-        )}
-        <p className="hint">
-          Change it from the command line: <code>entail settings --backup &lt;git remote url&gt;</code> (or <code>--backup none</code>). A new machine restores from it with <code>entail restore &lt;git remote url&gt;</code>.
-        </p>
-      </div>
-      <form onSubmit={saveName} className="setting">
-        <label htmlFor="owner-name">
-          <b>Your name.</b> entail’s comments open with “Speaking from {settings.owner ?? "your GitHub or GitLab name"}’s entail”, and your answers are recorded under it.
-        </label>
-        <div className="ov-row">
-          <input id="owner-name" className="field" placeholder="the GitHub account gh is logged in as, else the GitLab account glab is" value={name} onChange={(event) => setName(event.target.value)} autoComplete="off" />
-          <button className="btn sm" type="submit" disabled={owner.mutation.isPending || name.trim() === "" || name.trim() === (settings.owner ?? "")}>
-            Save
-          </button>
-          <Saved pending={owner.mutation.isPending} saved={owner.saved} />
-        </div>
-      </form>
-    </div>
+    <p className="to-settings small muted">
+      The default model and effort, your name, notices, the start command and the backup remote are the same for every repo; change them on <a href="#/settings">Settings</a>.
+    </p>
   );
 }
-
 export { SETTINGS };

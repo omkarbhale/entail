@@ -1,7 +1,7 @@
 import { mkdirSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import type { BoardEvent } from "./api-types.ts";
-import { LOG_DIRECTORY } from "./records.ts";
+import { LOG_DIRECTORY, SETTINGS_FILE } from "./records.ts";
 
 /**
  * What the board hears live, over server-sent events on `/api/events`: that
@@ -32,29 +32,39 @@ export class EventBus {
 }
 
 /**
- * Emits "changed" whenever a repo's log is written, by this process or any
- * other (such as `entail confirm` from a terminal), at most once per
- * `debounceMs`. Returns a function that stops watching.
+ * Emits "changed" whenever a repo's log or the settings for every repo are
+ * written, by this process or any other (such as `entail confirm` or
+ * `entail settings` from a terminal), at most once per `debounceMs`. Returns
+ * a function that stops watching.
  */
 export function watchLogs(dataDirectory: string, bus: EventBus, debounceMs = 150): () => void {
   const directory = join(dataDirectory, LOG_DIRECTORY);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   let timer: NodeJS.Timeout | null = null;
-  let watcher: FSWatcher | null = null;
-  try {
-    watcher = watch(directory, { recursive: true, persistent: false }, () => {
-      if (timer !== null) return;
-      timer = setTimeout(() => {
-        timer = null;
-        bus.emit({ type: "changed" });
-      }, debounceMs);
-    });
-    watcher.on("error", () => watcher?.close());
-  } catch {
-    // Without file watching the board still hears every change made through this process.
-  }
+  const changed = () => {
+    if (timer !== null) return;
+    timer = setTimeout(() => {
+      timer = null;
+      bus.emit({ type: "changed" });
+    }, debounceMs);
+  };
+  const watchers: FSWatcher[] = [];
+  const watchIt = (path: string, recursive: boolean, listener: (file: string | null) => void) => {
+    try {
+      const watcher = watch(path, { recursive, persistent: false }, (_event, file) => listener(file === null ? null : String(file)));
+      watcher.on("error", () => watcher.close());
+      watchers.push(watcher);
+    } catch {
+      // Without file watching the board still hears every change made through this process.
+    }
+  };
+  watchIt(directory, true, changed);
+  // The settings are written whole and renamed into place, so the data directory sees their name.
+  watchIt(dataDirectory, false, (file) => {
+    if (file === null || file === SETTINGS_FILE) changed();
+  });
   return () => {
-    watcher?.close();
+    for (const watcher of watchers) watcher.close();
     if (timer !== null) clearTimeout(timer);
   };
 }

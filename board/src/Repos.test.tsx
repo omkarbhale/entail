@@ -4,14 +4,14 @@ import { describe, expect, it } from "vitest";
 import { aRepo, fakeApi, renderBoard } from "./test-support.tsx";
 
 describe("Repos", () => {
-  it("shows each repo with its settings, the default model, and the nudge to turn confirm mode off", async () => {
+  it("shows each repo with its settings, where the settings for every repo are, and the nudge to turn confirm mode off", async () => {
     fakeApi({
       repos: [aRepo({ checked: 6, agreed: 5, suggestConfirmOff: true, pins: { file: "/data/pins/github.com/omkarbhale/entail.md", topics: ["pricing", "the board's look"] } })],
     });
     renderBoard("#/repos");
     expect(await screen.findByRole("heading", { name: "Repos" })).toBeTruthy();
-    expect((screen.getByRole("combobox", { name: "Default model" }) as HTMLSelectElement).value).toBe("claude-opus-5-5");
-    expect((screen.getByRole("combobox", { name: "Default effort" }) as HTMLSelectElement).value).toBe("low");
+    expect(screen.queryByRole("combobox", { name: "Default model" })).toBeNull();
+    expect(within(document.querySelector("main")!).getByRole("link", { name: "Settings" }).getAttribute("href")).toBe("#/settings");
     expect(screen.getByText(/You’ve checked 6 of its calls here and agreed with 5\./u)).toBeTruthy();
     expect(screen.getByText("It agrees with you often enough to try confirm mode off.")).toBeTruthy();
     expect(screen.getByText("pricing · the board's look")).toBeTruthy();
@@ -146,38 +146,6 @@ describe("Repos", () => {
     expect(api.sent(/DELETE/u)).toHaveLength(1);
   });
 
-  it("shows the notice command read only, with how to change it", async () => {
-    const api = fakeApi();
-    api.state.settings = { ...api.state.settings, notice: "examples/notice-to-file.sh" };
-    renderBoard("#/repos");
-    expect((await screen.findAllByText("examples/notice-to-file.sh", { selector: "code" })).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/entail settings --notice '<command>'/u)).toBeTruthy();
-    expect(screen.queryByRole("textbox", { name: /Notices\./u })).toBeNull();
-    expect(api.sent(/PATCH \/api\/settings/u)).toHaveLength(0);
-  });
-
-  it("shows the start command read only, with how to change it", async () => {
-    const api = fakeApi();
-    api.state.settings = { ...api.state.settings, start: "examples/start-to-file.sh" };
-    renderBoard("#/repos");
-    expect((await screen.findAllByText("examples/start-to-file.sh", { selector: "code" })).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/entail settings --start '<command>'/u)).toBeTruthy();
-    expect(api.sent(/PATCH \/api\/settings/u)).toHaveLength(0);
-  });
-
-  it("shows the backup remote read only, and says when backup is stuck and why", async () => {
-    const api = fakeApi();
-    const since = new Date(Date.now() - 5 * 60_000).toISOString();
-    api.state.settings = {
-      ...api.state.settings,
-      backup: { remote: "git@example.com:me/records.git", pushedAt: since, problem: { kind: "stuck", since, reason: "git@example.com:me/records.git has moved on since entail last pushed (fetch first)" } },
-    };
-    renderBoard("#/repos");
-    expect((await screen.findAllByText("git@example.com:me/records.git", { selector: "code" })).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Backup stuck since .*: git@example\.com:me\/records\.git has moved on since entail last pushed/u).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/entail settings --backup <git remote url>/u)).toBeTruthy();
-    expect(api.sent(/PATCH \/api\/settings/u)).toHaveLength(0);
-  });
   it("suggests work with the model and effort picked, shows the run in flight, and says when one is already running", async () => {
     const api = fakeApi({ repos: [aRepo({ uses: { model: "claude-sonnet-5-5", effort: "high" } })] });
     api.route((method, path, body) => {

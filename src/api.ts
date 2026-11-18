@@ -65,8 +65,9 @@ import { forgeTitle } from "./repo-ref.ts";
  *   POST   /api/repos/:owner/:name/backlog    judges the issues open on the forge that have no call yet
  *   POST   /api/repos/:owner/:name/suggest    {"model"?: string, "effort"?: string}: starts a run that suggests work from the vision and the product,
  *                                             filing each suggestion as an issue labelled entail:suggested; 202 with the run, 409 while one runs for the repo
- *   GET    /api/settings                      the owner's name, the default model and effort, the notice and start commands and the backup remote with how its last push went (read only here)
- *   PATCH  /api/settings                      {"owner"?: string, "model"?: string, "effort"?: string}
+ *   GET    /api/settings                      the owner's name, the default model and effort, the notice and start commands and the backup remote with how its last push went
+ *   PATCH  /api/settings                      {"owner"?: string, "model"?: string, "effort"?: string, "notice"?: string|null, "start"?: string|null, "backup"?: string|null},
+ *                                             checked as `entail settings` checks them
  *
  * A GitLab project is addressed by its whole name as one encoded segment in
  * place of `:owner/:name`, such as `/api/repos/gitlab%3Aacme%2Ftally/check`.
@@ -296,11 +297,7 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
   if (path === "/api/settings") {
     if (method === "GET") return send(response, 200, settingsView(settings(), dataDirectory));
     if (method === "PATCH") {
-      const change = await readJson(request);
-      if ("notice" in change) throw new OwnerError(400, "the notice command is set from the command line, not here: entail settings --notice '<command>' (or --notice none)");
-      if ("start" in change) throw new OwnerError(400, "the start command is set from the command line, not here: entail settings --start '<command>' (or --start none)");
-      if ("backup" in change) throw new OwnerError(400, "the backup remote is set from the command line, not here: entail settings --backup <git remote url> (or --backup none)");
-      return send(response, 200, changed(settingsView(changeSettings(dataDirectory, options.defaultModel, change), dataDirectory)));
+      return send(response, 200, changed(settingsView(changeSettings(dataDirectory, options.defaultModel, await readJson(request)), dataDirectory)));
     }
     return send(response, 405, { error: `${method} is not allowed on ${path}` });
   }

@@ -57,6 +57,16 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return parsed as T;
 }
 
+/** A change to the settings for every repo, as `PATCH /api/settings` takes it: null turns a command or the backup off. */
+export interface SettingsChange {
+  owner?: string;
+  model?: string;
+  effort?: SettingsView["effort"];
+  notice?: string | null;
+  start?: string | null;
+  backup?: string | null;
+}
+
 /** A repo in the API's paths: `owner/name` for GitHub; a GitLab project, whose path can hold subgroups, as one encoded segment. */
 const repoPath = (repo: string) => (repo.startsWith("gitlab:") ? encodeURIComponent(repo) : repo.split("/").map(encodeURIComponent).join("/"));
 
@@ -84,7 +94,7 @@ export const api = {
   check: (repo: string) => request<CheckResponse>("POST", `/api/repos/${repoPath(repo)}/check`, {}),
   backlog: (repo: string) => request<{ repo: string; issues: number[] }>("POST", `/api/repos/${repoPath(repo)}/backlog`, {}),
   suggest: (repo: string, choice: { model: string; effort: string }) => request<SuggestResponse>("POST", `/api/repos/${repoPath(repo)}/suggest`, choice),
-  changeSettings: (change: Partial<SettingsView>) => request<SettingsView>("PATCH", "/api/settings", change),
+  changeSettings: (change: SettingsChange) => request<SettingsView>("PATCH", "/api/settings", change),
 };
 
 /** What to say when an action did not go through: nothing was recorded, and the owner's words are kept. */

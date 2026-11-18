@@ -6,11 +6,11 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { changeSettings, createApi, type ApiOptions, type BoardLoop } from "../src/api.ts";
+import { createApi, type ApiOptions, type BoardLoop } from "../src/api.ts";
 import type { BoardEvent } from "../src/api-types.ts";
 import { OWNER_CASE_BOOK, readCaseBook } from "../src/case-book.ts";
 import { EventBus } from "../src/events.ts";
-import { appendEntry, readLog, readSettings, type CallEntry, type LandingEntry } from "../src/records.ts";
+import { appendEntry, loggedRepos, readLog, readSettings, type CallEntry, type LandingEntry } from "../src/records.ts";
 import { SuggestionRuns, type SuggestionOutcome } from "../src/suggest.ts";
 
 const NOON = Date.parse("2026-11-12T12:00:00Z");
@@ -344,30 +344,54 @@ test("an update drains entail through the API: no new pass, check now refused, a
   assert.equal((await noLoop.call("POST", "/api/drain", {})).status, 409);
 });
 
-test("the settings for every repo are read and changed, the notice and start commands and the backup remote only read", async (t) => {
+test("every setting for every repo is read and changed, checked as entail settings checks it", async (t) => {
   const api = await serve(t);
   const noBackup = { remote: null, pushedAt: null, problem: null };
   assert.deepEqual((await api.call("GET", "/api/settings")).body, { owner: null, model: "claude-opus-5-5", effort: "high", notice: null, start: null, backup: noBackup });
   const changed = await api.call("PATCH", "/api/settings", { owner: "Omkar", effort: "medium" });
   assert.deepEqual(changed.body, { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null, backup: noBackup });
-  const stored = { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null, backup: null };
-  assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), stored);
-  assert.equal((await api.call("PATCH", "/api/settings", { owner: "two\nlines" })).status, 400);
-  const refused = await api.call("PATCH", "/api/settings", { owner: "Other", notice: "touch /tmp/x" });
-  assert.equal(refused.status, 400);
-  assert.match(String(refused.body.error), /entail settings --notice/u);
-  const noStart = await api.call("PATCH", "/api/settings", { start: "touch /tmp/x" });
-  assert.equal(noStart.status, 400);
-  assert.match(String(noStart.body.error), /entail settings --start/u);
-  const noRemote = await api.call("PATCH", "/api/settings", { backup: "git@example.com:me/records.git" });
-  assert.equal(noRemote.status, 400);
-  assert.match(String(noRemote.body.error), /entail settings --backup/u);
+  assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null, backup: null });
+
+  const commands = await api.call("PATCH", "/api/settings", { notice: "  examples/notice-to-file.sh  ", start: "examples/start-to-file.sh 'a b'", backup: "git@example.com:me/records.git" });
+  assert.equal(commands.status, 200);
+  assert.deepEqual(
+    commands.body,
+    { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: "examples/notice-to-file.sh", start: "examples/start-to-file.sh 'a b'", backup: { remote: "git@example.com:me/records.git", pushedAt: null, problem: null } },
+    "a command is kept as given, trimmed",
+  );
+  const stored = { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: "examples/notice-to-file.sh", start: "examples/start-to-file.sh 'a b'", backup: "git@example.com:me/records.git" };
   assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), stored);
 
-  // Set from the command line, the remote is shown with its password hidden, and how its last push went.
-  changeSettings(api.dataDirectory, "claude-opus-5-5", { backup: "https://me:s3cret@example.com/me/records.git" });
+  for (const [change, error] of [
+    [{ owner: "two\nlines" }, /owner is the owner's name, on one line/u],
+    [{ owner: "" }, /owner is the owner's name/u],
+    [{ model: "no spaces allowed" }, /model is a model name/u],
+    [{ effort: "huge" }, /effort is one of low, medium, high, xhigh, max/u],
+    [{ notice: "echo one\necho two" }, /notice is a command on one line, or null for no notices/u],
+    [{ notice: 3 }, /notice is a command on one line/u],
+    [{ start: "a\rb" }, /start is a command on one line, or null to start nothing/u],
+    [{ backup: "-oProxyCommand=x" }, /backup is a git remote URL on one line, or null to back nothing up/u],
+    [{ backup: "" }, /backup is a git remote URL/u],
+    [{ owner: "Other", port: 4381 }, /no setting named port/u],
+  ] as const) {
+    const refused = await api.call("PATCH", "/api/settings", change);
+    assert.equal(refused.status, 400, JSON.stringify(change));
+    assert.match(String(refused.body.error), error);
+  }
+  assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), stored, "a refused change changes nothing, not even its valid fields");
+
+  // The remote is shown with its password hidden.
+  await api.call("PATCH", "/api/settings", { backup: "https://me:s3cret@example.com/me/records.git" });
   assert.deepEqual((await api.call("GET", "/api/settings")).body.backup, { remote: "https://***:***@example.com/me/records.git", pushedAt: null, problem: null });
-  assert.throws(() => changeSettings(api.dataDirectory, "claude-opus-5-5", { backup: "-oProxyCommand=x" }), /backup is a git remote URL/u);
+  assert.equal(readSettings(api.dataDirectory, { model: "x" }).backup, "https://me:s3cret@example.com/me/records.git");
+
+  const off = await api.call("PATCH", "/api/settings", { notice: null, start: "", backup: null });
+  assert.deepEqual(off.body, { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null, backup: noBackup }, "null or empty turns a command off");
+
+  assert.equal((await api.call("PATCH", "/api/settings", { start: "touch /tmp/x" }, { Origin: "https://evil.example" })).status, 403, "a web page cannot set a command");
+  assert.equal((await fetch(`${api.base}/api/settings`, { method: "PATCH", headers: { "Content-Type": "text/plain" }, body: JSON.stringify({ start: "touch /tmp/x" }) })).status, 415);
+  assert.equal(readSettings(api.dataDirectory, { model: "x" }).start, null);
+  assert.deepEqual(loggedRepos(api.dataDirectory), [], "a change to a setting is no call, question or board item: nothing is logged");
 });
 
 test("the board hears every change live, over server-sent events", async (t) => {
