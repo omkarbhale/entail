@@ -267,6 +267,19 @@ test("with no cleared ticket behind the PR, the prompt judges it on the vision a
   assert.doesNotMatch(landingPrompt(inputs()), /no cleared ticket/u);
 });
 
+test("a ticketless merge or send-back that cites no vision line is no call, while an ask or a ticketed merge needs none", async () => {
+  const bare = answer({ criteria: [], rests_on: { vision_lines: [], cases: [] } });
+  const sendBack = answer({ call: "send-back", criteria: [], solves: { solved: false, evidence: "" }, needs_to_change: ["Drop it."], rests_on: { vision_lines: [" "], cases: [] } });
+  const ask = answer({ call: "ask", criteria: [], question: { question: "Drop it?", why: "It is a product call." } });
+  const runner = new ScriptedRunner().script(LANDING_KIND, "acme/tally#4", { output: bare });
+  assert.equal((await judgeLanding(runner, inputs({ issue: null, criteria: [] }))).ok, false);
+  const given = { criteria: [], facts: green, touched: { vision: false, pins: [] }, ticketless: true };
+  assert.equal(routeLanding(bare, given).ok, false);
+  assert.equal(routeLanding(sendBack, given).ok, false);
+  assert.ok(routeLanding(ask, given).ok);
+  assert.ok(routeLanding(bare, { ...given, ticketless: false }).ok);
+});
+
 test("the vision-only judgment runs with its own prompt version and schema, and routes like any landing call", async () => {
   const better = answer({ criteria: [], reason: "It leaves tally better.", beyond: [{ change: "Reads stdin.", sort: "needed", why: "The vision says it counts words." }], rests_on: { vision_lines: ["tally counts words offline."], cases: [] } });
   assert.deepEqual(checkAgainst(VISION_ONLY_LANDING_SCHEMA, better), []);

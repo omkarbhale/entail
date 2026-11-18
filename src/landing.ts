@@ -203,7 +203,7 @@ export function touched(files: readonly ChangedFile[], pins: readonly string[]):
  */
 export function routeLanding(
   answer: LandingAnswer,
-  given: { criteria: readonly LandingCriterion[]; facts: ForgeFacts; touched: { vision: boolean; pins: string[] } },
+  given: { criteria: readonly LandingCriterion[]; facts: ForgeFacts; touched: { vision: boolean; pins: string[] }; ticketless?: boolean },
 ): { ok: true; call: LandingCall } | { ok: false; problem: string } {
   if (answer.criteria.length !== given.criteria.length) {
     return { ok: false, problem: `the answer marks ${answer.criteria.length} criteria, but ${given.criteria.length} were given` };
@@ -228,6 +228,9 @@ export function routeLanding(
     question: answer.question === null || answer.question.question.trim() === "" ? null : answer.question,
     guard: null,
   };
+  if (given.ticketless === true && answer.call !== "ask" && call.restsOn.visionLines.every((line) => line.trim() === "")) {
+    return { ok: false, problem: `the answer is ${answer.call} on a PR with no ticket but cites no vision line` };
+  }
   if (answer.call === "merge" && blocking.length > 0) return { ok: false, problem: `the answer is merge but marks ${blocking.join(", ")}` };
   if (answer.call === "send-back") {
     if (blocking.length === 0 && green) return { ok: false, problem: "the answer is send-back, but the problem is solved, every criterion met, nothing unwanted and CI green" };
@@ -540,7 +543,7 @@ export async function judgeLanding(runner: ModelRunner, inputs: LandingInputs, o
     runOptions,
   );
   if (!result.ok) return result;
-  const routed = routeLanding(result.output, { criteria: inputs.criteria, facts: inputs.facts, touched: touched(inputs.facts.files, inputs.pins) });
+  const routed = routeLanding(result.output, { criteria: inputs.criteria, facts: inputs.facts, touched: touched(inputs.facts.files, inputs.pins), ticketless: inputs.issue === null });
   if (!routed.ok) return { ok: false, failure: { kind: "no-structured-output", message: routed.problem }, facts: result.facts };
   return { ok: true, call: routed.call, answer: result.output, facts: result.facts };
 }
