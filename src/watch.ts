@@ -16,6 +16,7 @@ import {
   type Project,
   type PullRequest,
 } from "./forge/forge.ts";
+import { oneLine, type RepoFailure } from "./health.ts";
 import { formatCall, judge, JUDGMENT_PROMPT_VERSION } from "./judgment.ts";
 import { ciGreen, ciProblems, formatLandingCall, judgeLanding, LANDING_PROMPT_VERSION, touched } from "./landing.ts";
 import { forgeRemote, Mirror } from "./mirror.ts";
@@ -168,9 +169,17 @@ export interface PassOptions {
   /** Read nothing new from the forge: only act on what the log says is still to do, such as an owner's action whose window closed. */
   actOnly?: boolean;
   /** Told when a repo has been checked for changes, with what the check did. */
-  onChecked?: (repo: string, outcome: { ok: boolean; judged: number; posted: number }) => void;
+  onChecked?: (repo: string, outcome: CheckOutcome) => void;
   /** Runs the start command; {@link runStart} unless replaced in tests. */
   startWork?: typeof runStart;
+}
+
+/** What a check on one repo did; `failure` is the last step that failed, if any did. */
+export interface CheckOutcome {
+  ok: boolean;
+  judged: number;
+  posted: number;
+  failure?: RepoFailure;
 }
 
 export interface PassReport {
@@ -208,11 +217,12 @@ export async function runPass(options: PassOptions): Promise<PassReport> {
       if (options.actOnly !== true) options.onChecked?.(repo, outcome);
     } catch (error) {
       if (options.signal?.aborted) throw error;
-      if (options.actOnly !== true) options.onChecked?.(repo, { ok: false, judged: 0, posted: 0 });
+      const message = error instanceof Error ? error.message : String(error);
+      const failure = failureAt(options, "the pass", message, error instanceof RateLimitedError ? error.resetAt : undefined);
+      if (options.actOnly !== true) options.onChecked?.(repo, { ok: false, judged: 0, posted: 0, failure });
       report.failed.push(repo);
       // Forget what was seen, so the changes are read and weighed again next pass.
       options.seen.delete(repo);
-      const message = error instanceof Error ? error.message : String(error);
       options.log?.warn("pass-failed", { repo, error: message, ...(error instanceof RateLimitedError ? { resetAt: error.resetAt.toISOString() } : {}) });
       options.print(`${repo}: the pass stopped: ${message}`);
     }
@@ -227,7 +237,12 @@ interface IssueWork {
   mentions: Mention[];
 }
 
-async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]): Promise<{ ok: boolean; judged: number; posted: number }> {
+/** A failed step, as the owner is told of it. */
+function failureAt(options: PassOptions, step: string, message: string, resetAt?: Date): RepoFailure {
+  return { at: (options.now?.() ?? new Date()).toISOString(), step, message: oneLine(message), ...(resetAt === undefined ? {} : { resetAt: resetAt.toISOString() }) };
+}
+
+async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]): Promise<CheckOutcome> {
   const { repo } = state;
   const forge = options.forgeFor(repo);
   const now = () => options.now?.() ?? new Date();
@@ -247,6 +262,7 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
     state,
     forge,
     reading: () => (reading ??= options.reader(repo, forge)),
+    failure: null,
   };
   const planned: Entry[] = [];
   const record = (entry: NewEntry): Entry => {
@@ -338,6 +354,7 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
       const message = error instanceof Error ? error.message : String(error);
       const issue = pending.kind === "call" ? pending.entry.issue.number : pending.call.issue.number;
       options.log?.warn("act-failed", { repo, issue, error: message });
+      context.failure = failureAt(options, `acting on #${issue}`, message, error instanceof RateLimitedError ? error.resetAt : undefined);
       options.print(`${repo}#${issue}: entail could not act on the issue: ${message}; it tries again next pass`);
     }
   }
@@ -351,6 +368,7 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
       acted = false;
       const message = error instanceof Error ? error.message : String(error);
       options.log?.warn("pr-act-failed", { repo, pr, error: message });
+      context.failure = failureAt(options, `acting on PR #${pr}`, message, error instanceof RateLimitedError ? error.resetAt : undefined);
       options.print(`${repo}#${pr}: entail could not act on the pull request: ${message}; it tries again next pass`);
     }
   }
@@ -364,7 +382,7 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
   if (ok && !options.dryRun && key !== null) options.cursors.set(key, batch.cursor);
   // A judgment that did not run is tried again: the changes are read again from the old cursor.
   if (!ok) options.seen.delete(repo);
-  return { ok: ok && acted, judged, posted };
+  return { ok: ok && acted, judged, posted, ...(context.failure === null ? {} : { failure: context.failure }) };
 }
 
 /** The issues the owner asked entail to judge from the open backlog, in the order asked. */
@@ -429,6 +447,8 @@ interface JudgeContext {
   state: RepoState;
   forge: WatchForge;
   reading: () => Promise<RepoReading>;
+  /** The last step of this check that failed, if one did. */
+  failure: RepoFailure | null;
 }
 
 /** The owner's word a judgment runs again on, with the call it answers. */
@@ -467,6 +487,7 @@ async function judgeIssue(context: JudgeContext, issue: Issue, trigger: Trigger,
   const name = `${repo}#${issue.number}`;
   if (!judgment.ok) {
     options.log?.warn("judgment-failed", { repo, issue: issue.number, failure: judgment.failure.kind, message: judgment.failure.message });
+    context.failure = failureAt(options, `judging #${issue.number}`, `${judgment.failure.kind}: ${judgment.failure.message}`, judgment.failure.resetAt);
     options.print(`${name}: the judgment gave no call (${judgment.failure.kind}): ${judgment.failure.message}; it is tried again next pass`);
     return null;
   }
@@ -638,6 +659,7 @@ async function passPullRequests(
       ok = false;
       const message = error instanceof Error ? error.message : String(error);
       options.log?.warn("pr-read-failed", { repo, pr: number, error: message });
+      context.failure = failureAt(options, `reading PR #${number}`, message, error instanceof RateLimitedError ? error.resetAt : undefined);
       options.print(`${name}: entail could not read the pull request: ${message}; it tries again next pass`);
     }
   }
@@ -697,6 +719,7 @@ async function judgePullRequest(
     );
     if (!judgment.ok) {
       options.log?.warn("landing-failed", { repo, pr: pr.number, failure: judgment.failure.kind, message: judgment.failure.message });
+      context.failure = failureAt(options, `judging PR #${pr.number}`, `${judgment.failure.kind}: ${judgment.failure.message}`, judgment.failure.resetAt);
       options.print(`${name}: the landing judgment gave no call (${judgment.failure.kind}): ${judgment.failure.message}; it is tried again next pass, up to ${JUDGMENT_ATTEMPTS} times at this head`);
       return { failed: `${judgment.failure.kind}: ${judgment.failure.message}` };
     }

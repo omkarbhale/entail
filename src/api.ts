@@ -2,10 +2,11 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CheckResponse, EnrollResponse, LogFilter, SettingsView, StatusView } from "./api-types.ts";
+import type { CheckResponse, EnrollResponse, FailingView, LogFilter, SettingsView, StatusView } from "./api-types.ts";
 import type { Case } from "./case-book.ts";
 import type { EventBus } from "./events.ts";
 import type { Forge } from "./forge/forge.ts";
+import { failingView, type Health } from "./health.ts";
 import { EFFORTS, type Effort } from "./model-runner.ts";
 import {
   answerCall,
@@ -21,6 +22,7 @@ import {
   OwnerError,
   repoName,
   repoViews,
+  type RepoViewOptions,
   undoAction,
   unenroll,
   waitingResponse,
@@ -36,7 +38,7 @@ import { loggedRepos, readLog, readSettings, repoState, writeSettings, type Glob
  * {@link HOLD_MS} so it can be undone, and entail acts on GitHub for it when
  * the window closes.
  *
- *   GET    /api/status                        whether entail is watching, and when it last checked
+ *   GET    /api/status                        whether entail is watching, when it last checked, and which repos are failing and why
  *   GET    /api/events                        server-sent events: something changed, a repo is being checked, a check finished
  *   GET    /api/waiting[?repo=&since=]        what waits on the owner, the answers still in their undo window, and calls made alone since `since`
  *   GET    /api/log[?repo=&filter=&before=&tz=]  one page of the log, newest first, in whole days of time zone `tz`; `before=` pages back
@@ -93,6 +95,8 @@ export interface ApiOptions {
   /** How long an answer can be undone; {@link HOLD_MS} unless a test says otherwise. */
   holdMs?: number;
   loop?: BoardLoop;
+  /** Whether each repo's checks are failing, as the loop in this process saw them. */
+  health?: Health;
   /** What enrolling and the backlog read from GitHub: that the repo can be reached, and its open issues. */
   forgeFor?: (repo: string) => Pick<Forge, "project" | "openIssueNumbers">;
   events?: EventBus;
@@ -252,9 +256,17 @@ function optional<K extends string, V>(key: K, value: V | undefined): { [P in K]
   return (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
 }
 
-function checkedAt(options: ApiOptions): { checkedAt?: (repo: string) => string | null } {
-  const loop = options.loop;
-  return loop === undefined ? {} : { checkedAt: (repo) => loop.checkedAt(repo) };
+function checkedAt(options: ApiOptions): Pick<RepoViewOptions, "checkedAt" | "failing"> {
+  const { loop, health } = options;
+  return {
+    ...(loop === undefined ? {} : { checkedAt: (repo: string) => loop.checkedAt(repo) }),
+    ...(health === undefined ? {} : { failing: (repo: string) => failingOf(health, repo) }),
+  };
+}
+
+function failingOf(health: Health, repo: string): FailingView | null {
+  const failing = health.failing(repo);
+  return failing === null ? null : failingView(failing);
 }
 
 async function reach<T>(repo: string, read: () => Promise<T>): Promise<T> {
@@ -266,10 +278,15 @@ async function reach<T>(repo: string, read: () => Promise<T>): Promise<T> {
 }
 
 function status(options: ApiOptions): StatusView {
-  const repos = loggedRepos(options.dataDirectory).filter((repo) => repoState(repo, readLog(options.dataDirectory, repo)).enrolled).length;
+  const repos = loggedRepos(options.dataDirectory).filter((repo) => repoState(repo, readLog(options.dataDirectory, repo)).enrolled);
+  const { health } = options;
   return {
     watching: options.loop !== undefined,
-    repos,
+    repos: repos.length,
+    failing: health === undefined ? [] : repos.flatMap((repo) => {
+      const failing = failingOf(health, repo);
+      return failing === null ? [] : [{ repo, failing }];
+    }),
     checkedAt: options.loop?.lastPassAt ?? null,
     checking: options.loop?.checking ?? false,
     url: options.url ?? null,

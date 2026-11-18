@@ -219,8 +219,23 @@ export interface RepoView {
   pins: { file: string; topics: string[] };
   /** When the repo was last checked for changes, or null when not yet in this run. */
   checkedAt: string | null;
+  /** While its last check failed and none has succeeded since: since when, and why. */
+  failing: FailingView | null;
   /** Whether the owner already asked for the open backlog to be judged. */
   backlogAsked: boolean;
+}
+
+/** A repo entail has stopped making calls on: its checks fail. */
+export interface FailingView {
+  /** The first failed check of this run of failures. */
+  since: string;
+  /** The last failure: when, at which step, the error, and for a usage or rate limit when it resets. */
+  at: string;
+  step: string;
+  message: string;
+  resetAt: string | null;
+  /** The last failure on one line, for the owner to read. */
+  reason: string;
 }
 
 export interface SettingsView {
@@ -238,6 +253,8 @@ export interface StatusView {
   repos: number;
   checkedAt: string | null;
   checking: boolean;
+  /** The enrolled repos whose checks are failing now, with why. */
+  failing: { repo: string; failing: FailingView }[];
   /** Where the board is served, for notices. */
   url: string | null;
 }

@@ -5,6 +5,7 @@ import { homedir, release } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
+import type { FailingView } from "./api-types.ts";
 import { BOARD_DIRECTORY, changeSettings, createApi } from "./api.ts";
 import {
   DEFAULT_CASE_BOOK,
@@ -28,6 +29,7 @@ import { EventBus, watchLogs } from "./events.ts";
 import { createForge } from "./forge/create-forge.ts";
 import type { Forge, ForgeSetting } from "./forge/forge.ts";
 import { allChecksFinished } from "./forge/forge.ts";
+import { Health } from "./health.ts";
 import { formatCall, judge, type JudgeOptions } from "./judgment.ts";
 import { formatLandingCall, judgeLanding } from "./landing.ts";
 import { acquireLock, holderIsRunning, readLock } from "./lock.ts";
@@ -400,17 +402,27 @@ async function runCommand(args: string[]): Promise<number> {
       },
       onResult: (result) => (result.ok ? log.info("notice", { line: result.line }) : log.warn("notice-failed", { line: result.line, error: result.error })),
     });
+    const health = new Health();
     const loop = new Loop({
       intervalMs: interval * 1000,
       bus,
       pass: async (request) => {
-        const report = await runPass({ ...(await passOptions()), ...(request.only ? { only: request.only } : {}), ...(request.actOnly ? { actOnly: true } : {}), onChecked: request.onChecked });
+        const report = await runPass({
+          ...(await passOptions()),
+          ...(request.only ? { only: request.only } : {}),
+          ...(request.actOnly ? { actOnly: true } : {}),
+          onChecked: (repo, outcome) => {
+            health.checked(repo, outcome.failure, new Date().toISOString());
+            request.onChecked(repo, outcome);
+          },
+        });
         log.info("pass", { ...report, ...(request.only ? { only: request.only } : {}), ...(request.actOnly ? { actOnly: true } : {}) });
         return report;
       },
       nextDue: () => nextDue(dataDirectory),
       afterPass: async () => {
         await notifier.check(waitingItems(dataDirectory, await caseBook(dataDirectory)));
+        await notifier.health(health.repos(), new Date());
       },
       onError: (error) => {
         log.error("pass-error", { error: error instanceof Error ? error.message : String(error) });
@@ -423,6 +435,7 @@ async function runCommand(args: string[]): Promise<number> {
       defaultModel: DEFAULT_MODEL,
       book: () => caseBook(dataDirectory),
       loop,
+      health,
       events: bus,
       forgeFor: (repo) => createForge({ forge: "github", host: GITHUB, path: repo }),
       get url() {
@@ -489,13 +502,14 @@ function portOption(value: string | undefined): number {
   return port;
 }
 
-/** What the running copy's API says: when each repo was last checked, or null when it cannot be reached. */
-async function readRunning(url: string): Promise<{ checkedAt: Map<string, string | null> } | null> {
+/** What the running copy's API says: when each repo was last checked and whether it is failing, or null when it cannot be reached. */
+async function readRunning(url: string): Promise<{ checkedAt: Map<string, string | null>; failing: Map<string, FailingView | null> } | null> {
   try {
     const response = await fetch(`${url}api/repos`, { signal: AbortSignal.timeout(2000) });
     if (!response.ok) return null;
-    const body = (await response.json()) as { repos?: { repo: string; checkedAt: string | null }[] };
-    return { checkedAt: new Map((body.repos ?? []).map((repo) => [repo.repo, repo.checkedAt])) };
+    const body = (await response.json()) as { repos?: { repo: string; checkedAt: string | null; failing?: FailingView | null }[] };
+    const repos = body.repos ?? [];
+    return { checkedAt: new Map(repos.map((repo) => [repo.repo, repo.checkedAt])), failing: new Map(repos.map((repo) => [repo.repo, repo.failing ?? null])) };
   } catch {
     return null;
   }
@@ -540,8 +554,9 @@ async function statusCommand(args: string[]): Promise<number> {
   const width = Math.max(0, ...repos.map((repo) => repo.repo.length));
   for (const repo of repos) {
     const checked = live?.checkedAt.get(repo.repo) ?? null;
+    const failing = live?.failing.get(repo.repo) ?? null;
     console.log(
-      `${repo.repo.padEnd(width)}  confirm ${repo.confirm ? "on " : "off"}  ${checked === null ? (running === null ? "not checked: entail is not running" : "not checked yet") : `checked ${ago(checked, now)}`}  ${repo.waiting} waiting`,
+      `${repo.repo.padEnd(width)}  confirm ${repo.confirm ? "on " : "off"}  ${checked === null ? (running === null ? "not checked: entail is not running" : "not checked yet") : `checked ${ago(checked, now)}`}${failing === null ? "" : `, failing since ${ago(failing.since, now)}: ${failing.reason}`}  ${repo.waiting} waiting`,
     );
   }
   const waiting = waitingItems(dataDirectory, await caseBook(dataDirectory));

@@ -22,7 +22,7 @@ export function fakeApi(initial: Partial<FakeState> = {}) {
     waiting: { items: [], held: [], actedAlone: { count: 0, repos: [] } },
     repos: [aRepo()],
     settings: { owner: "Omkar", model: "claude-opus-5-5", effort: "low", notice: null, start: null },
-    status: { watching: true, repos: 1, checkedAt: new Date(Date.now() - 40_000).toISOString(), checking: false, url: "http://127.0.0.1:4380/" },
+    status: { watching: true, repos: 1, checkedAt: new Date(Date.now() - 40_000).toISOString(), checking: false, failing: [], url: "http://127.0.0.1:4380/" },
     log: () => ({ rows: [], next: null, counts: { all: 0, waiting: 0, overridden: 0, questions: 0, prs: 0 } }),
     ...initial,
   };
@@ -228,6 +228,7 @@ export function aRepo(overrides: Partial<RepoView> = {}): RepoView {
     vision: { commit: "8973851abcdef", url: "https://github.com/omkarbhale/entail/blob/8973851abcdef/VISION.md" },
     pins: { file: "/home/me/.local/share/entail/pins/github.com/omkarbhale/entail.md", topics: [] },
     checkedAt: new Date(Date.now() - 40_000).toISOString(),
+    failing: null,
     backlogAsked: false,
     ...overrides,
   };

@@ -179,6 +179,11 @@ function RepoCard({ repo, settings, showRepo }: { repo: RepoView; settings: Sett
           )}
         </button>
       </div>
+      {repo.failing !== null && (
+        <p className="small bad note">
+          Failing since {ago(repo.failing.since, now)}: {repo.failing.reason}
+        </p>
+      )}
       {checkResult !== null && <p className="small muted note" role="status">{checkText(checkResult)}</p>}
       {fresh !== null && fresh.openIssues > 0 && !repo.backlogAsked && (
         <p className="small note">

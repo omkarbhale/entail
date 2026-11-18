@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { ActionView, CallView, HeldView, LogFilter, LogPage, LogRow, PullRequestView, RepoView, TrailStep, WaitingResponse } from "./api-types.ts";
+import type { ActionView, CallView, FailingView, HeldView, LogFilter, LogPage, LogRow, PullRequestView, RepoView, TrailStep, WaitingResponse } from "./api-types.ts";
 import { caseSlug, LANDING_CALLS, landingCaseSlug, OWNER_CALLS, type Case, type LandingCase, type LandingOwnerCall, type OwnerCall } from "./case-book.ts";
 import { ciGreen } from "./landing.ts";
 import { EFFORTS, type Effort } from "./model-runner.ts";
@@ -157,6 +157,8 @@ export interface RepoViewOptions {
   all?: boolean;
   /** When each repo was last checked in this run. */
   checkedAt?: (repo: string) => string | null;
+  /** Whether each repo's checks are failing in this run, and why. */
+  failing?: (repo: string) => FailingView | null;
 }
 
 export function repoViews(dataDirectory: string, settings: GlobalSettings, options: RepoViewOptions = {}): RepoView[] {
@@ -182,6 +184,7 @@ export function repoViews(dataDirectory: string, settings: GlobalSettings, optio
         vision: lastVision === null ? null : { commit: lastVision.commit, url: `https://${HOST}/${repo}/blob/${lastVision.commit}/VISION.md` },
         pins: { file, topics: readPinsNow(file) },
         checkedAt: options.checkedAt?.(repo) ?? null,
+        failing: options.failing?.(repo) ?? null,
         backlogAsked: entries.some((entry) => entry.type === "backlog" && entry.at >= (state.since ?? "")),
       },
     ];

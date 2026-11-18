@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CallView } from "./api-types.ts";
+import { FAILING_NOTICE_AFTER_MS, failureReason, type Failing } from "./health.ts";
 import { cmdArguments } from "./windows.ts";
 
 /**
@@ -20,7 +21,7 @@ import { cmdArguments } from "./windows.ts";
  * into firstmate's inbox.
  */
 
-/** Which items the owner was last told about, so each item is announced once while it waits. */
+/** Which items the owner was last told about, so each item is announced once while it waits, and which repos they were told are failing. */
 export const NOTICES_FILE = "notices.json";
 
 /** How long a notice command may run before entail stops it. */
@@ -35,6 +36,23 @@ export function noticeLine(items: readonly Pick<CallView, "call" | "repo">[]): s
   if (calls > 0) parts.push(`${calls} call${calls === 1 ? "" : "s"} to confirm`);
   const repos = new Set(items.map((item) => item.repo)).size;
   return `entail: ${parts.join(" and ")} waiting on you${repos > 1 ? ` across ${repos} repos` : ""}`;
+}
+
+/** The line that tells the owner a repo has stopped working: for how long, and why. */
+export function failingLine(repo: string, failing: Failing, now: Date): string {
+  return `entail: ${repo} has been failing for ${span(now.getTime() - Date.parse(failing.since))}: ${failureReason(failing.last)}`;
+}
+
+/** The line that tells the owner a repo they were told was failing works again. */
+export function workingLine(repo: string): string {
+  return `entail: ${repo} is working again`;
+}
+
+function span(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  if (minutes < 120) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} hours` : `${Math.round(hours / 24)} days`;
 }
 
 export interface NoticeResult {
@@ -91,9 +109,38 @@ export class Notifier {
     this.#options = options;
   }
 
+  /**
+   * Tells the owner once when a repo has been failing for
+   * {@link FAILING_NOTICE_AFTER_MS}, and once when a repo they were told of
+   * works again. Which repos they were told of is kept in `notices.json`, so
+   * a restart does not tell them again; a notice the command did not deliver
+   * is tried again at the next check.
+   */
+  async health(repos: readonly { repo: string; failing: Failing | null }[], now: Date): Promise<string[]> {
+    const told = new Set(this.#read().failing);
+    const command = this.#options.command();
+    const sent: string[] = [];
+    for (const { repo, failing } of repos) {
+      let line: string | null = null;
+      if (failing !== null && !told.has(repo) && now.getTime() - Date.parse(failing.since) >= FAILING_NOTICE_AFTER_MS) line = failingLine(repo, failing, now);
+      else if (failing === null && told.has(repo)) line = workingLine(repo);
+      if (line === null) continue;
+      if (command !== null) {
+        const result = await (this.#options.send ?? sendNotice)(command, line, this.#options.link);
+        this.#options.onResult?.({ ...result, line });
+        if (!result.ok) continue;
+        sent.push(line);
+      }
+      if (failing === null) told.delete(repo);
+      else told.add(repo);
+    }
+    this.#write({ ...this.#read(), failing: [...told].sort() });
+    return sent;
+  }
+
   async check(items: readonly (Pick<CallView, "call" | "repo" | "kind"> & { issue: { number: number } })[]): Promise<{ sent: boolean; line: string | null }> {
     const keys = items.map((item) => `${item.repo}#${item.kind}#${item.issue.number}`);
-    const told = this.#told();
+    const told = new Set(this.#read().waiting);
     const fresh = keys.filter((key) => !told.has(key));
     const command = this.#options.command();
     if (fresh.length === 0 || command === null) {
@@ -107,20 +154,28 @@ export class Notifier {
     return { sent: result.ok, line };
   }
 
-  #told(): Set<string> {
-    try {
-      const value: unknown = JSON.parse(readFileSync(join(this.#options.dataDirectory, NOTICES_FILE), "utf8"));
-      const waiting = (value as { waiting?: unknown }).waiting;
-      return new Set(Array.isArray(waiting) ? waiting.filter((key): key is string => typeof key === "string") : []);
-    } catch {
-      return new Set();
-    }
+  #remember(keys: readonly string[]): void {
+    this.#write({ ...this.#read(), waiting: [...keys] });
   }
 
-  #remember(keys: readonly string[]): void {
+  #read(): { waiting: string[]; failing: string[] } {
+    let value: unknown = null;
+    try {
+      value = JSON.parse(readFileSync(join(this.#options.dataDirectory, NOTICES_FILE), "utf8"));
+    } catch {
+      // No notice sent yet.
+    }
+    const strings = (key: string): string[] => {
+      const list = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+      return Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
+    };
+    return { waiting: strings("waiting"), failing: strings("failing") };
+  }
+
+  #write(told: { waiting: string[]; failing: string[] }): void {
     const path = join(this.#options.dataDirectory, NOTICES_FILE);
     const staging = `${path}.new-${process.pid}`;
-    writeFileSync(staging, `${JSON.stringify({ waiting: keys }, null, 2)}\n`, { mode: 0o600 });
+    writeFileSync(staging, `${JSON.stringify(told, null, 2)}\n`, { mode: 0o600 });
     renameSync(staging, path);
   }
 }
