@@ -66,6 +66,7 @@ Every verdict persists with its reason.
 
 entail works with or without firstmate; without it quality may drop and firstmate's own features are missing, but everything entail does stays possible.
 Personal use and local-first operation are acceptable.
+Once the service is running, every entail setting can be changed from the board as well as from the CLI.
 
 Every feature works the same on each forge entail supports, unless that cannot be done technically or the feature is a small quality-of-life addition for a single forge.
 

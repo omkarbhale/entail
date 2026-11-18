@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
+import { changeSettings } from "../src/api.ts";
 import type { BoardEvent } from "../src/api-types.ts";
 import { EventBus, watchLogs } from "../src/events.ts";
 import { DrainingError, Loop, type PassRequest } from "../src/loop.ts";
@@ -236,5 +237,16 @@ test("the board hears a change to any repo's log, from this process or another",
   const heard = new Promise<BoardEvent>((resolve) => bus.on(resolve));
   await new Promise((resolve) => setTimeout(resolve, 50));
   appendEntry(directory, "acme/tally", { type: "enrolled", by: "Omkar", since: "2026-11-12T09:00:00.000Z", confirm: true });
+  assert.deepEqual(await heard, { type: "changed" });
+});
+
+test("the board hears the settings for every repo change, as entail settings writes them from a terminal", async (t) => {
+  const directory = scratch(t);
+  const bus = new EventBus();
+  const stop = watchLogs(directory, bus, 20);
+  t.after(stop);
+  const heard = new Promise<BoardEvent>((resolve) => bus.on(resolve));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  changeSettings(directory, "claude-opus-5-5", { start: "examples/start-to-file.sh" });
   assert.deepEqual(await heard, { type: "changed" });
 });

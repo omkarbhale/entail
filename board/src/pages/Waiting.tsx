@@ -144,7 +144,7 @@ export function WaitingPage({ repo }: { repo: string | null }) {
         </section>
       )}
       <p className="hint keyline">
-        <kbd>j</kbd> <kbd>k</kbd> move · <kbd>c</kbd> confirm · <kbd>o</kbd> override · <kbd>a</kbd> answer · <kbd>Esc</kbd> cancel · <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> switch pages
+        <kbd>j</kbd> <kbd>k</kbd> move · <kbd>c</kbd> confirm · <kbd>o</kbd> override · <kbd>a</kbd> answer · <kbd>Esc</kbd> cancel · <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> switch pages
       </p>
     </>
   );

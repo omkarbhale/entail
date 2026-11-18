@@ -336,9 +336,9 @@ export interface SettingsView {
   model: string;
   effort: EffortName;
   notice: string | null;
-  /** The command run when a go acts, with the handoff on its standard input; set only from the command line. */
+  /** The command run when a go acts, with the handoff on its standard input. */
   start: string | null;
-  /** Where the records are backed up, set only from the command line. */
+  /** Where the records are backed up. */
   backup: BackupView;
 }
 

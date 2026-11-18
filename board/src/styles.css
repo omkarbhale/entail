@@ -211,9 +211,8 @@ kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line-st
 .more-days { margin-top: 16px; text-align: center; }
 
 /* repos */
-.global, .rcard, .notice-line { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
-.global { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 16px; margin-bottom: 14px; }
-.global select, .rrow select { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 7px; padding: 4px 7px; font-size: 14px; max-width: 100%; }
+.rcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.rrow select { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 7px; padding: 4px 7px; font-size: 14px; max-width: 100%; }
 .rcard { padding: 14px 16px; margin-bottom: 12px; }
 .rcard.newrepo { border-color: var(--go); }
 .rhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -236,7 +235,12 @@ kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line-st
 .confirmbox span:first-child { flex: 1; min-width: 200px; }
 .enroll-card { background: var(--surface); border: 1px dashed var(--line-strong); border-radius: var(--radius); padding: 14px 16px; margin: 0 0 14px; }
 .enroll-card h2 { font-size: 15px; margin: 0; font-weight: 620; }
-.notice-line { padding: 12px 16px; font-size: 14px; display: grid; gap: 14px; margin-top: 14px; }
+.settings { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; font-size: 14px; display: grid; gap: 20px; }
+.settings select { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 7px; padding: 4px 7px; font-size: 14px; max-width: 100%; }
+.settings code { overflow-wrap: anywhere; }
+.confirm-command { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--sunk); }
+.to-settings { margin: 14px 0; }
+.run-note { margin: 14px 0 0; }
 .setting label { display: block; }
 .setting .hint { margin: 6px 0 0; }
 

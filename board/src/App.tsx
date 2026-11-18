@@ -3,19 +3,20 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ago, shortName } from "./format.ts";
 import { LogPage } from "./pages/Log.tsx";
 import { ReposPage } from "./pages/Repos.tsx";
+import { SettingsPage } from "./pages/Settings.tsx";
 import { WaitingPage } from "./pages/Waiting.tsx";
 import { useLiveUpdates, useRepos, useStatus, useWaiting, type LiveState } from "./queries.ts";
 import { BoardState, useNow, useTheme, type Drafts } from "./state.tsx";
 
 /**
- * entail's board: three pages on hash routes (#/waiting, #/log, #/repos),
+ * entail's board: four pages on hash routes (#/waiting, #/log, #/repos, #/settings),
  * moving between them and acting on items without ever reloading the page.
  */
 
-export type Page = "waiting" | "log" | "repos";
+export type Page = "waiting" | "log" | "repos" | "settings";
 
 function pageOf(hash: string): Page {
-  const match = /^#\/(waiting|log|repos)\b/u.exec(hash);
+  const match = /^#\/(waiting|log|repos|settings)\b/u.exec(hash);
   return (match?.[1] as Page | undefined) ?? "waiting";
 }
 
@@ -99,7 +100,7 @@ function Board() {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, select") || event.metaKey || event.ctrlKey || event.altKey) return;
-      const to = ({ "1": "#/waiting", "2": "#/log", "3": "#/repos" } as Record<string, string>)[event.key];
+      const to = ({ "1": "#/waiting", "2": "#/log", "3": "#/repos", "4": "#/settings" } as Record<string, string>)[event.key];
       if (to !== undefined) window.location.hash = to;
     };
     window.addEventListener("keydown", onKey);
@@ -128,9 +129,12 @@ function Board() {
             <NavLink page="repos" current={page}>
               Repos
             </NavLink>
+            <NavLink page="settings" current={page}>
+              Settings
+            </NavLink>
           </nav>
           <div className="top-right">
-            {page !== "repos" && (repos.data?.length ?? 0) > 0 && (
+            {(page === "waiting" || page === "log") && (repos.data?.length ?? 0) > 0 && (
               <>
                 <label className="sr" htmlFor="repo-filter">
                   Show repos
@@ -155,6 +159,7 @@ function Board() {
         {page === "waiting" && <WaitingPage repo={filter} />}
         {page === "log" && <LogPage repo={filter} />}
         {page === "repos" && <ReposPage showRepo={showRepo} />}
+        {page === "settings" && <SettingsPage />}
       </main>
     </>
   );
