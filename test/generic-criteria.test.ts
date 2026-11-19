@@ -179,6 +179,29 @@ for (const kind of ["github", "gitlab"] as const) {
     const post = h.forge.posted.find((p) => p.issue === 4)!;
     assert.match(post.body, new RegExp(`- Met: ${TICKET}\\n- \\*\\*Not met\\*\\*: ${TESTS}`, "u"));
   });
+
+  test(`on ${kind}, a PR meeting the ticket's criterion and the generic one is merged at the judged head, with both marked met in the record`, async (t) => {
+    const h = harness(t, { confirm: false, forge: kind });
+    changeRepoSettings(h.dataDirectory, h.repo, OWNER, { genericCriteria: [TESTS] });
+    await goAndPr(h);
+    h.forge.openPull(4, "Read standard input", { head: HEAD, closes: [1], body: "Closes #1." });
+    h.forge.report(HEAD, ["test", "passed"]);
+    h.scriptLanding(
+      4,
+      landingAnswer({
+        call: "merge",
+        criteria: [
+          { criterion: TICKET, met: true, evidence: "src/count.ts" },
+          { criterion: TESTS, met: true, evidence: "test/count.test.ts changed" },
+        ],
+      }),
+    );
+    await h.pass();
+    assert.deepEqual(h.forge.merges.map((m) => [m.pr, m.sha]), [[4, HEAD]]);
+    const [landing] = readLog(h.dataDirectory, h.repo).filter((entry): entry is LandingEntry => entry.type === "landing");
+    assert.equal(landing!.call.call, "merge");
+    assert.deepEqual(landing!.call.criteria.map((c) => [c.criterion, c.met]), [[TICKET, true], [TESTS, true]]);
+  });
 }
 
 test("a repo with no generic criteria lands a PR exactly as it did: the ticket's criteria alone, nothing generic in the prompt or the record", async (t) => {
