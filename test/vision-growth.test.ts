@@ -294,3 +294,14 @@ test("the owner is told once of each line added, with the line and a link to VIS
 test("an unweighed answer is no growth entry until the run decides", () => {
   assert.deepEqual(NO_GROWTH.general, false);
 });
+
+test("a line already in VISION.md from a commit made for another answer is not recorded as this answer's growth", async (t) => {
+  const h = harness(t);
+  h.forge.visionFile = `${h.forge.visionFile}${GENERAL.line}\n`;
+  h.forge.fileCommits.push({ path: "VISION.md", content: h.forge.visionFile, message: `Add a line to VISION.md from a board answer on #11\n\n${GENERAL.line}\n\nBoard answer 1`, commit: "a".repeat(40) });
+  h.scriptGrowth(11, GENERAL);
+  await answered(h);
+  assert.deepEqual(grown(h), []);
+  assert.equal(h.forge.fileCommits.length, 1);
+  assert.equal(considered(h).at(-1)!.decision.add, false);
+});

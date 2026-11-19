@@ -546,7 +546,7 @@ async function growVision(context: JudgeContext, record: (entry: NewEntry) => En
         options.print(`would add to ${repo}'s ${VISION_PATH} from ${work.answer.by}'s answer on ${name}: ${line}`);
         continue;
       }
-      const message = `Add a line to ${VISION_PATH} from a board answer on ${subject.kind === "pr" ? "PR " : ""}#${subject.number}\n\n${line}`;
+      const message = `Add a line to ${VISION_PATH} from a board answer on ${subject.kind === "pr" ? "PR " : ""}#${subject.number}\n\n${line}\n\nBoard answer ${work.answer.id}`;
       let written = await forge.updateFile(VISION_PATH, (current) => (current === null ? null : addVisionLine(current, line, heading)), message);
       if (!written.changed) {
         // An earlier pass may have committed this line and stopped before recording it: the commit is on the file's history.
