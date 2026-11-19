@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CASE_BOOK, readCaseBook, readLandingCaseBook, type Case, type LandingCase } from "../src/case-book.ts";
+import { DEFAULT_CASE_BOOK, readCaseBook, readLandingCaseBook, writeLandingCase, type Case, type LandingCase } from "../src/case-book.ts";
 import { JUDGMENT_KIND, type Verdict } from "../src/judgment.ts";
 import { LANDING_KIND, type LandingAnswer } from "../src/landing.ts";
+import { GENERIC_BASIS } from "../src/records.ts";
 import { caseInputs, formatReplay, landingCaseInputs, replay, replayLandings } from "../src/replay.ts";
 import { ScriptedRunner } from "../src/scripted-runner.ts";
 
@@ -199,4 +203,38 @@ test("the replay report names each case's kind, disagreements first, with what e
   assert.match(lines[0]!, new RegExp(`^DISAGREE  landing  ${refused!.slug}\\s+owner merge, entail send-back: entail says send-back Needs to change: Drop the hover style\\. Unwanted: A hover style\\.$`, "u"));
   assert.ok(lines.some((line) => new RegExp(`^agree     landing  ${merged!.slug}\\s+owner merge, entail merge$`, "u").test(line)));
   assert.equal(lines.at(-1), `agreement: ${issues.length + 1} of ${issues.length + 2}`);
+});
+
+test("a ticketless landing case recorded with generic criteria is replayed with them as generic, on the vision-only prompt that lists them", async () => {
+  const book = await readLandingCaseBook(DEFAULT_CASE_BOOK);
+  const generic = { criterion: "Tests were added or run.", source: "owner" as const, basis: GENERIC_BASIS };
+  const ticketless: LandingCase = { ...book[0]!, slug: "acme-tally-pr-21", repo: "acme/tally", pr: 21, issue: null, issueText: "", criteria: [generic], call: "merge" };
+  const inputs = landingCaseInputs(ticketless, [ticketless], { checkout: "/c", diff: "" });
+  assert.deepEqual(inputs.criteria, []);
+  assert.deepEqual(inputs.generic, ["Tests were added or run."]);
+  const runner = new ScriptedRunner().script(LANDING_KIND, "acme/tally#21", { output: { ...landing(ticketless, "merge"), rests_on: { vision_lines: ["A line of the vision."], cases: [] } } });
+  const [result] = await replayLandings(runner, [ticketless], landingReading);
+  assert.ok(result!.judgment.ok, "the answer marks the one generic criterion, as given");
+  assert.ok(runner.requests[0]!.prompt.includes("Tests were added or run."));
+});
+
+test("a ticketless landing with generic criteria keeps them through the case book on disk, and replays them as generic", async () => {
+  const book = await readLandingCaseBook(DEFAULT_CASE_BOOK);
+  const generic = { criterion: "Tests were added or run.", basis: GENERIC_BASIS };
+  const ticketless: LandingCase = { ...book[0]!, slug: "acme-tally-pr-22", repo: "acme/tally", pr: 22, issue: null, issueText: "", criteria: [generic], call: "merge" };
+  const directory = await mkdtemp(join(tmpdir(), "entail-book-"));
+  try {
+    await writeLandingCase(directory, ticketless);
+    const [loaded] = (await readLandingCaseBook(directory)).filter((c) => c.slug === ticketless.slug);
+    assert.deepEqual(loaded!.criteria, [generic]);
+    const inputs = landingCaseInputs(loaded!, [loaded!], { checkout: "/c", diff: "" });
+    assert.deepEqual(inputs.criteria, []);
+    assert.deepEqual(inputs.generic, ["Tests were added or run."]);
+    const runner = new ScriptedRunner().script(LANDING_KIND, "acme/tally#22", { output: { ...landing(loaded!, "merge"), rests_on: { vision_lines: ["A line of the vision."], cases: [] } } });
+    const [result] = await replayLandings(runner, [loaded!], landingReading);
+    assert.ok(result!.judgment.ok);
+    assert.ok(runner.requests[0]!.prompt.includes("Tests were added or run."));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

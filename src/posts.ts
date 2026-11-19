@@ -4,6 +4,7 @@ import { refsText } from "./blockers.ts";
 import type { AnswerParts } from "./parts.ts";
 import {
   criteriaOf,
+  genericCriterion,
   goScope,
   linkCriterion,
   type BlockedEntry,
@@ -58,7 +59,7 @@ export const BLOCKED_LABEL = "entail:blocked";
  * a post (a judgment still to run). `repo` is the issue's repo, `owner/name`,
  * so a blocker there is named by its number alone.
  */
-export function postFor(pending: Pending, owner: string, repo: string, baseBranch: string | null = null, filed: readonly FiledPart[] = []): Post | null {
+export function postFor(pending: Pending, owner: string, repo: string, baseBranch: string | null = null, generic: readonly string[] = [], filed: readonly FiledPart[] = []): Post | null {
   switch (pending.kind) {
     case "rerun":
       return null;
@@ -75,13 +76,13 @@ export function postFor(pending: Pending, owner: string, repo: string, baseBranc
         const go = scope === "plan" ? "**Go, for planning**" : "**Go**";
         const head = entry.owner.kind === "override" ? `${go}, by ${owner}, overriding entail's call on the board.` : `${go}, on ${owner}'s answer on the board.`;
         const reason = entry.owner.kind === "answer" && entry.call.call === "go" ? entry.call.reason : entry.owner.words;
-        const criteria = entry.owner.call === "go" ? criteriaText(criteriaOf(entry.call), issue, scope, baseBranch) : "";
+        const criteria = entry.owner.call === "go" ? criteriaText(criteriaOf(entry.call), issue, scope, baseBranch, generic) : "";
         const label = entry.owner.call === "go" ? goLabel(scope) : "entail:no";
         return { issue, markerFor: entry.id, text: join(head, escape(reason), scope === "plan" ? PLANNING_LINE : "", criteria), close: false, reopen: entry.owner.call === "go", label };
       }
       const waits = entry.confirm && entry.call.call !== "ask";
       const label = entry.call.call === "go" ? goLabel(scopeOf(entry.call)) : (`entail:${entry.call.call}` as const);
-      const text = entry.trigger === "owner-reopen" ? reopenedText(entry.call, owner) : callText(entry.call, entry.confirm, owner, issue, baseBranch);
+      const text = entry.trigger === "owner-reopen" ? reopenedText(entry.call, owner) : callText(entry.call, entry.confirm, owner, issue, baseBranch, generic);
       return { issue, markerFor: entry.id, text: entry.recheck === undefined ? text : join(recheckText(entry.recheck, entry.call.call, owner), text), close: entry.call.call === "no" && !entry.confirm, reopen: false, label: waits ? null : label };
     }
     case "confirmed": {
@@ -115,7 +116,7 @@ export function postFor(pending: Pending, owner: string, repo: string, baseBranc
       return {
         issue: call.issue.number,
         markerFor: action.id,
-        text: join(head, scope === "plan" ? PLANNING_LINE : "", `${what}, in ${owner}'s words:\n\n- ${escape(action.reason).replace(/\n+/gu, " ")}\n- ${escape(linkCriterion(call.issue.number, baseBranch).criterion)}`),
+        text: join(head, scope === "plan" ? PLANNING_LINE : "", `${what}, in ${owner}'s words:\n\n- ${escape(action.reason).replace(/\n+/gu, " ")}\n- ${[...generic.map(genericCriterion), linkCriterion(call.issue.number, baseBranch)].map((criterion) => escape(criterion.criterion).replace(/\n+/gu, " ")).join("\n- ")}`),
         close: false,
         reopen: true,
         label: goLabel(scope),
@@ -192,7 +193,7 @@ export function blockedText(entry: Pick<BlockedEntry, "blockers" | "forgeLinks">
  * against the vision is closed quoting the line; the board and the log carry
  * what every call rests on.
  */
-export function callText(call: IssueCall, confirm: boolean, owner: string, issue: number, baseBranch: string | null = null): string {
+export function callText(call: IssueCall, confirm: boolean, owner: string, issue: number, baseBranch: string | null = null, generic: readonly string[] = []): string {
   if (call.call === "ask") {
     return `A question about this issue is waiting for ${owner} on entail's board. Nothing happens here until it is answered.`;
   }
@@ -203,7 +204,7 @@ export function callText(call: IssueCall, confirm: boolean, owner: string, issue
   const scope = scopeOf(call);
   const head = `**${scope === "plan" ? "Go, for planning" : "Go"}.** ${escape(call.reason)}`;
   const tail = confirm ? `This call waits for ${owner} to confirm it on entail's board; nothing starts until then.` : "";
-  return join(head, call.ruling === undefined ? "" : rulingText(call.ruling), scope === "plan" ? PLANNING_LINE : "", criteriaText(criteriaOf(call), issue, scope, baseBranch), tail);
+  return join(head, call.ruling === undefined ? "" : rulingText(call.ruling), scope === "plan" ? PLANNING_LINE : "", criteriaText(criteriaOf(call), issue, scope, baseBranch, generic), tail);
 }
 
 /**
@@ -256,8 +257,8 @@ function visionLinesText(lines: readonly string[]): string {
  * a base branch set, the line also says to open the PR into it from a branch
  * named for the issue.
  */
-function criteriaText(criteria: readonly Criterion[], issue: number, scope: GoScope = "implement", baseBranch: string | null = null): string {
-  const lines = [...criteria, linkCriterion(issue, baseBranch)].map((criterion) => `- ${escape(criterion.criterion).replace(/\n+/gu, " ")}`);
+function criteriaText(criteria: readonly Criterion[], issue: number, scope: GoScope = "implement", baseBranch: string | null = null, generic: readonly string[] = []): string {
+  const lines = [...criteria, ...generic.map(genericCriterion), linkCriterion(issue, baseBranch)].map((criterion) => `- ${escape(criterion.criterion).replace(/\n+/gu, " ")}`);
   return `${scope === "plan" ? "What the plan must do beyond solving the issue" : "What the PR must do beyond solving the issue"}:\n\n${lines.join("\n")}`;
 }
 

@@ -230,6 +230,7 @@ export function aRepo(overrides: Partial<RepoView> = {}): RepoView {
     drift: false,
     driftEveryDays: null,
     driftCheck: null,
+    genericCriteria: [],
     uses: { model: "claude-opus-5-5", effort: "low" },
     calls: 6,
     waiting: 2,

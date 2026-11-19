@@ -60,7 +60,7 @@ import { forgeTitle, isSelfHostedHost } from "./repo-ref.ts";
  *   POST   /api/calls/:id/undo                {}: undoes the owner's action on the call while it is held
  *   GET    /api/repos[?all=1]                 enrolled repos (all=1: every repo with a log)
  *   POST   /api/repos                         {"repo": "owner/name", "confirm"?: bool, "since"?: ISO time}
- *   PATCH  /api/repos/:owner/:name            {"confirm"?: bool, "model"?: string|null, "effort"?: string|null, "baseBranch"?: string|null, "pin"?: string, "unpin"?: string, "drift"?: bool, "driftEveryDays"?: 1..365|null}
+ *   PATCH  /api/repos/:owner/:name            {"confirm"?: bool, "model"?: string|null, "effort"?: string|null, "baseBranch"?: string|null, "pin"?: string, "unpin"?: string, "drift"?: bool, "driftEveryDays"?: 1..365|null, "genericCriteria"?: string[]|null}
  *                                             pin adds a topic to the repo's pins file and unpin takes one out; each is logged with who made it
  *   DELETE /api/repos/:owner/:name            unenrolls
  *   POST   /api/repos/:owner/:name/check      checks the repo now, and answers with what the check did
