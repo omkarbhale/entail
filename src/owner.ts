@@ -85,7 +85,7 @@ export class OwnerError extends Error {
 /** The repo as the owner named it, checked and lower-cased the way its log is kept. */
 export function repoName(text: string): string {
   const repo = canonicalRepo(text);
-  if (repo === null) throw new OwnerError(400, `not a repo: ${text} (expected owner/name, or gitlab:group/name for GitLab)`);
+  if (repo === null) throw new OwnerError(400, `not a repo: ${text} (expected owner/name, or gitlab:group/name for GitLab, or gitlab://host/group/name, or gitlab: before its address, for a self-hosted GitLab)`);
   return repo;
 }
 

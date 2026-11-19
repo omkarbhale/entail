@@ -50,6 +50,7 @@ async function serve(t: TestContext, overrides: Partial<ApiOptions> = {}) {
         if (repo === "acme/missing") throw new Error("gh: Not Found (HTTP 404)");
         return { forge: "github", host: "github.com", id: 77, path: repo, defaultBranch: "main" };
       },
+      instance: async () => (repo.startsWith("gitlab://old.example.com/") ? { version: "15.6.2", unsupported: "GitLab 15.6.2 is older than 15.7, the oldest version entail serves" } : { version: null, unsupported: null }),
       openIssueNumbers: async () => [3, 5, 8],
     }),
     ...overrides,
@@ -244,6 +245,34 @@ test("the board enrolls a GitLab project, subgroups included, and reaches it by 
     readLog(api.dataDirectory, "gitlab:acme/tools/tally").map((entry) => entry.type),
     ["enrolled", "settings", "backlog", "unenrolled"],
   );
+});
+
+test("the board enrolls a project on a self-hosted GitLab, by name or from its address, and reaches it by its whole name", async (t) => {
+  const api = await serve(t);
+  const bare = await api.call("POST", "/api/repos", { repo: "https://git.example.com/acme/tally" });
+  assert.equal(bare.status, 400);
+  assert.match(bare.body.error, /gitlab: before its address/u);
+  const enrolled = await api.call("POST", "/api/repos", { repo: "gitlab:https://Git.Example.com/Acme/Tools/Tally/-/issues" });
+  assert.equal(enrolled.status, 201);
+  assert.equal(enrolled.body.repo.repo, "gitlab://git.example.com/acme/tools/tally");
+  assert.deepEqual(api.opened.slice(-1), ["gitlab://git.example.com/acme/tools/tally"]);
+  assert.ok(enrolled.body.repo.pins.file.endsWith(join("pins", "git.example.com", "acme", "tools", "tally.md")), enrolled.body.repo.pins.file);
+  assert.equal((await api.call("POST", "/api/repos", { repo: "gitlab://git.example.com/acme/tools/tally" })).status, 409, "the name and the address are the same project");
+
+  const path = `/api/repos/${encodeURIComponent("gitlab://git.example.com/acme/tools/tally")}`;
+  assert.equal((await api.call("PATCH", path, { confirm: false })).body.confirm, false);
+  assert.deepEqual((await api.call("POST", `${path}/check`, {})).body.repo, "gitlab://git.example.com/acme/tools/tally");
+  assert.equal((await api.call("DELETE", path, {})).status, 200);
+  assert.deepEqual(
+    readLog(api.dataDirectory, "gitlab://git.example.com/acme/tools/tally").map((entry) => entry.type),
+    ["enrolled", "settings", "unenrolled"],
+  );
+  assert.deepEqual(readLog(api.dataDirectory, "gitlab:acme/tools/tally"), [], "nothing is kept under gitlab.com");
+
+  const old = await api.call("POST", "/api/repos", { repo: "gitlab://old.example.com/acme/tally" });
+  assert.equal(old.status, 409);
+  assert.match(old.body.error, /older than 15\.7/u);
+  assert.deepEqual(readLog(api.dataDirectory, "gitlab://old.example.com/acme/tally"), [], "a GitLab too old to serve is not enrolled");
 });
 
 test("check now runs a pass for the repo, and the backlog asks entail to judge the issues open on GitHub", async (t) => {

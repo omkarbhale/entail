@@ -20,7 +20,7 @@ You need Node 24 or newer, `git`, `gh` (or `glab`, for GitLab) and `claude` logg
 git clone https://github.com/omkarbhale/entail.git && cd entail
 npm ci && npm run build
 gh auth login                        # or glab auth login, for GitLab
-node dist/cli.js enroll owner/repo   # watch a repo (gitlab:group/project for GitLab); it starts in confirm mode
+node dist/cli.js enroll owner/repo   # watch a repo (gitlab:group/project for GitLab, gitlab://host/group/project self-hosted); it starts in confirm mode
 node dist/cli.js service install     # run entail now, at every login and after a crash
 node dist/cli.js open                # the board, on http://127.0.0.1:4380/
 ```
@@ -42,7 +42,7 @@ From there the owner files issues and answers on the board; nothing else needs a
 The [user guide](docs/guide.md) is the reference:
 
 - [Commands](docs/guide.md#commands)
-- [GitLab](docs/guide.md#gitlab)
+- [GitLab](docs/guide.md#gitlab), on gitlab.com or a self-hosted host
 - [Running](docs/guide.md#running) and [updating](docs/guide.md#updating) the service
 - [Watching](docs/guide.md#watching), [acting on the call](docs/guide.md#acting-on-the-call) and its labels, [landing a PR](docs/guide.md#landing-a-pr)
 - [Confirm mode](docs/guide.md#confirm-mode) and [the board](docs/guide.md#the-board), with its keys and pages

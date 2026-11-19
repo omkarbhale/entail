@@ -678,7 +678,7 @@ export class GitLabForge implements Forge {
     if (status === 429) throw new RateLimitedError(this.setting.host, rateLimitReset(response));
     // glab sends no token for a host it has none for, and an expired or revoked
     // token is refused the same way.
-    if (status === 401) throw new ForgeLoggedOutError(this.setting.host, `${method} ${path} answered HTTP 401`);
+    if (status === 401) throw new ForgeLoggedOutError(this.setting.host, `${method} ${path} answered HTTP 401; run glab auth login --hostname ${this.setting.host}`);
     throw new ForgeRequestError(this.setting.host, status, method, path, errorDetail(response));
   }
 

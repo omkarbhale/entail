@@ -9,14 +9,22 @@ import { Spinner } from "./Verdict.tsx";
 /** The repo the owner just enrolled, with the issues already open there, so Repos can offer to judge them. */
 export const ENROLLED = ["enrolled"] as const;
 
-/** `owner/repo` on GitHub, or `gitlab:group/repo` on GitLab with any subgroups between. */
-const REPO = /^(?:[\w.-]+\/[\w.-]+|gitlab:[\w.-]+(?:\/[\w.-]+)+)$/iu;
+/**
+ * `owner/repo` on GitHub, `gitlab:group/repo` on gitlab.com with any subgroups
+ * between, or `gitlab://host/group/repo` on a self-hosted GitLab.
+ */
+const REPO = /^(?:[\w.-]+\/[\w.-]+|gitlab:(?:\/\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\/)?[\w.-]+(?:\/[\w.-]+)+)$/iu;
 
-/** A repo as typed, with a github.com or gitlab.com address turned into its name. */
+/**
+ * A repo as typed, with a github.com or gitlab.com address turned into its
+ * name, and a self-hosted GitLab's address, written after `gitlab:`, too.
+ */
 function typedRepo(value: string): string {
   const repo = value.trim().replace(/\/$/u, "");
   const gitlab = /^https:\/\/gitlab\.com\/(.+?)(?:\/-(?:\/.*)?)?$/iu.exec(repo);
   if (gitlab !== null) return `gitlab:${gitlab[1]}`;
+  const selfHosted = /^gitlab:(?:https?:)?\/\/([^/]+)\/(.+?)(?:\/-(?:\/.*)?)?$/iu.exec(repo);
+  if (selfHosted !== null) return selfHosted[1]!.toLowerCase() === "gitlab.com" ? `gitlab:${selfHosted[2]}` : `gitlab://${selfHosted[1]}/${selfHosted[2]}`;
   return repo.replace(/^https:\/\/github\.com\//iu, "");
 }
 
@@ -47,7 +55,7 @@ export function EnrollForm({ primary }: { primary?: boolean }) {
     event.preventDefault();
     const repo = typedRepo(value);
     if (!REPO.test(repo)) {
-      setMessage({ text: "Use owner/repo, for example omkarbhale/entail, or gitlab:group/repo for a GitLab project.", bad: true });
+      setMessage({ text: /^https?:\/\//iu.test(repo) ? "Use owner/repo, for example omkarbhale/entail, or gitlab:group/repo for a GitLab project. For a self-hosted GitLab, put gitlab: before its address." : "Use owner/repo, for example omkarbhale/entail, gitlab:group/repo for a GitLab project, or gitlab://host/group/repo on a self-hosted GitLab.", bad: true });
       return;
     }
     setMessage(null);
@@ -59,7 +67,7 @@ export function EnrollForm({ primary }: { primary?: boolean }) {
         <label className="sr" htmlFor="enroll-repo">
           Repo to enroll
         </label>
-        <input id="enroll-repo" className="field" placeholder="owner/repo or gitlab:group/repo" value={value} onChange={(event) => setValue(event.target.value)} disabled={enroll.isPending} autoComplete="off" spellCheck={false} />
+        <input id="enroll-repo" className="field" placeholder="owner/repo, gitlab:group/repo or gitlab://host/group/repo" value={value} onChange={(event) => setValue(event.target.value)} disabled={enroll.isPending} autoComplete="off" spellCheck={false} />
         <button className={`btn${primary ? " primary" : ""}`} type="submit" disabled={enroll.isPending}>
           {enroll.isPending ? (
             <>

@@ -24,8 +24,9 @@ export function forgeName(repo: string): string {
   return repo.startsWith("gitlab:") ? "GitLab" : "GitHub";
 }
 
-/** A repo's web page: `owner/name` on github.com, `gitlab:group/name` on gitlab.com. */
+/** A repo's web page: `owner/name` on github.com, `gitlab:group/name` on gitlab.com, `gitlab://host/group/name` on that host. */
 export function repoHref(repo: string): string {
+  if (repo.startsWith("gitlab://")) return `https://${repo.slice("gitlab://".length)}`;
   return repo.startsWith("gitlab:") ? `https://gitlab.com/${repo.slice("gitlab:".length)}` : `https://github.com/${repo}`;
 }
 
@@ -72,7 +73,7 @@ export function timeZone(): string {
 
 /** The repo's short name, as the board names it beside an item. */
 export function shortName(repo: string): string {
-  return repo.split("/")[1] ?? repo;
+  return repo.split("/").at(-1) || repo;
 }
 
 /** The number an item is known by: the PR's for a call on a PR, the issue's otherwise. */
