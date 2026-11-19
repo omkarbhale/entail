@@ -99,7 +99,9 @@ const USAGE = `usage:
 enroll     watch a repo: entail makes the call on each issue filed or edited from now
            (or --since) on, and on each /entail mention. A repo starts in confirm mode,
            where a go or no is posted but nothing is closed or started until you confirm.
-           A repo is owner/repo on GitHub, through gh, or gitlab:group/repo on GitLab
+           A repo is owner/repo on GitHub, through gh (on a GitHub Enterprise Server,
+           github://host/owner/repo, or github: before its pasted address, with gh
+           logged in to that host: gh auth login --hostname host), or gitlab:group/repo on GitLab
            (gitlab.com, subgroups included), through glab; a project on a self-hosted
            GitLab is gitlab://host/group/repo, or gitlab: before its pasted address, with
            glab logged in to that host (glab auth login --hostname host).
@@ -277,7 +279,9 @@ function landingBook(dataDirectory: string): Promise<LandingCase[]> {
  * The owner's display name: the setting, else the GitHub account `gh` is
  * logged in as, else, for an owner without `gh`, the GitLab account `glab` is
  * logged in as on gitlab.com, then on each self-hosted GitLab host with a
- * repo that has a log, then on the host of `repo`, the repo being enrolled.
+ * repo that has a log, then on the host of `repo`, the repo being enrolled. An
+ * owner whose `gh` is logged in only to a GitHub Enterprise Server is asked on
+ * each such host the same way, after github.com.
  */
 async function ownerName(dataDirectory: string, repo?: string): Promise<string> {
   const set = settingsIn(dataDirectory).owner;
@@ -289,6 +293,12 @@ async function ownerName(dataDirectory: string, repo?: string): Promise<string> 
   } catch (error) {
     github = error;
   }
+  for (const host of enterpriseHosts(dataDirectory, repo)) {
+    const enterprise = await createForge({ forge: "github", host, path: "github/docs" })
+      .currentActor()
+      .catch(() => null);
+    if (enterprise !== null) return enterprise.username;
+  }
   for (const host of gitlabHosts(dataDirectory, repo)) {
     const gitlab = await createForge({ forge: "gitlab", host, path: "gitlab-org/gitlab" })
       .currentActor()
@@ -296,7 +306,17 @@ async function ownerName(dataDirectory: string, repo?: string): Promise<string> 
     if (gitlab !== null) return gitlab.username;
   }
   if (github !== null) throw github;
-  throw new Error("neither gh nor glab is logged in, and no name is set: run gh auth login (or glab auth login, with --hostname for a self-hosted GitLab), or entail settings --owner <your name>");
+  throw new Error("neither gh nor glab is logged in, and no name is set: run gh auth login (or glab auth login; either takes --hostname for a self-hosted host), or entail settings --owner <your name>");
+}
+
+/** The GitHub Enterprise Server hosts to ask `gh` about: those of the repos with a log, and of `repo`. */
+function enterpriseHosts(dataDirectory: string, repo?: string): string[] {
+  const hosts = new Set<string>();
+  for (const name of [...loggedRepos(dataDirectory), ...(repo === undefined ? [] : [repo])]) {
+    const setting = repoSetting(name);
+    if (setting.forge === "github" && setting.host !== forgeHost("github")) hosts.add(setting.host);
+  }
+  return [...hosts];
 }
 
 /** The GitLab hosts to ask `glab` about, gitlab.com first: those of the repos with a log, and of `repo`. */
@@ -317,12 +337,12 @@ function parse<const O extends ParseArgsOptionsConfig>(args: string[], options: 
   }
 }
 
-/** Reads `owner/name#number`, or `gitlab:group/name#number` or `gitlab://host/group/name#number` on GitLab. `path` is the repo's name. */
+/** Reads `owner/name#number`, `github://host/owner/name#number` on a GitHub Enterprise Server, or `gitlab:group/name#number` or `gitlab://host/group/name#number` on GitLab. `path` is the repo's name. */
 export function parseIssueReference(text: string): { path: string; number: number } {
   const match = /^([^#\s]+)#(\d+)$/u.exec(text);
   const number = Number(match?.[2]);
   if (match === null || !isRepo(match[1]!) || !Number.isSafeInteger(number) || number <= 0) {
-    throw new UsageError(`not an issue reference: ${text} (expected owner/repo#number, gitlab:group/repo#number, or gitlab://host/group/repo#number)`);
+    throw new UsageError(`not an issue reference: ${text} (expected owner/repo#number, github://host/owner/repo#number, gitlab:group/repo#number, or gitlab://host/group/repo#number)`);
   }
   return { path: match[1]!, number };
 }
@@ -340,7 +360,7 @@ async function openRepo(repo: string, dataDirectory: string): Promise<{ forge: F
 }
 
 function oneRepo(positionals: string[], command: string): string {
-  if (positionals.length !== 1) throw new UsageError(`${command} takes one repo, as owner/repo, gitlab:group/repo or gitlab://host/group/repo`);
+  if (positionals.length !== 1) throw new UsageError(`${command} takes one repo, as owner/repo, github://host/owner/repo, gitlab:group/repo or gitlab://host/group/repo`);
   return repoName(positionals[0]!);
 }
 

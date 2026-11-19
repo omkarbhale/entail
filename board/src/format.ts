@@ -24,8 +24,9 @@ export function forgeName(repo: string): string {
   return repo.startsWith("gitlab:") ? "GitLab" : "GitHub";
 }
 
-/** A repo's web page: `owner/name` on github.com, `gitlab:group/name` on gitlab.com, `gitlab://host/group/name` on that host. */
+/** A repo's web page: `owner/name` on github.com, `gitlab:group/name` on gitlab.com, `github://host/owner/name` or `gitlab://host/group/name` on that host. */
 export function repoHref(repo: string): string {
+  if (repo.startsWith("github://")) return `https://${repo.slice("github://".length)}`;
   if (repo.startsWith("gitlab://")) return `https://${repo.slice("gitlab://".length)}`;
   return repo.startsWith("gitlab:") ? `https://gitlab.com/${repo.slice("gitlab:".length)}` : `https://github.com/${repo}`;
 }

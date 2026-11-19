@@ -43,7 +43,10 @@ import {
 } from "./forge.ts";
 import { type ForgeMethod, type ForgeResponse, type Transport, TransportError } from "./transport.ts";
 
-/** The only GitHub host served; GitHub Enterprise Server is not. */
+/**
+ * github.com. Any other host is a GitHub Enterprise Server, whose REST API
+ * `gh api --hostname` reaches under `/api/v3` and which lags github.com's API.
+ */
 export const GITHUB_HOST = "github.com";
 
 const PAGE_SIZE = 100;
@@ -94,6 +97,26 @@ const CLOSED_BY_QUERY = `query ($owner: String!, $name: String!, $number: Int!, 
     issue(number: $number) {
       closedByPullRequestsReferences(first: 100, after: $after, includeClosedPrs: true) {
         nodes { number baseRefName repository { databaseId } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}`;
+
+/**
+ * The PRs of any repo an issue's timeline shows mentioning it or linked to it,
+ * for a server whose issues have no `closedByPullRequestsReferences`. A
+ * mention is a candidate only: what the PR closes is asked of the PR.
+ */
+const MENTIONED_BY_QUERY = `query ($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    databaseId
+    issue(number: $number) {
+      timelineItems(itemTypes: [CROSS_REFERENCED_EVENT, CONNECTED_EVENT], first: 100, after: $after) {
+        nodes {
+          ... on CrossReferencedEvent { source { ... on PullRequest { number repository { databaseId } } } }
+          ... on ConnectedEvent { subject { ... on PullRequest { number repository { databaseId } } } }
+        }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -154,6 +177,8 @@ export class GitHubForge implements Forge {
   readonly setting: ForgeSetting;
   readonly wording: ForgeWording = { pullRequest: "pull request" };
   readonly baseBranch: string | null;
+  /** Whether the host is a GitHub Enterprise Server rather than github.com. */
+  readonly #enterprise: boolean;
   readonly #transport: Transport;
   readonly #mergePollIntervalMs: number;
   readonly #mergeWaitMs: number;
@@ -162,13 +187,11 @@ export class GitHubForge implements Forge {
     if (setting.forge !== "github") {
       throw new Error(`the GitHub adapter cannot serve a ${setting.forge} repo`);
     }
-    if (setting.host !== GITHUB_HOST) {
-      throw new Error(`GitHub Enterprise Server is not supported: the GitHub host must be ${GITHUB_HOST}, not ${setting.host}`);
-    }
     if (!REPO_PATH.test(setting.path)) {
       throw new Error(`a GitHub repo path is owner/name, not ${JSON.stringify(setting.path)}`);
     }
     this.setting = setting;
+    this.#enterprise = setting.host.toLowerCase() !== GITHUB_HOST;
     this.#transport = transport;
     this.#mergePollIntervalMs = options.mergePollIntervalMs ?? MERGE_POLL_INTERVAL_MS;
     this.#mergeWaitMs = options.mergeWaitMs ?? MERGE_WAIT_MS;
@@ -217,7 +240,7 @@ export class GitHubForge implements Forge {
     const repo = await this.#getJson(path);
     if (isObject(repo) && typeof repo.visibility === "string") return repo.visibility === "public";
     if (isObject(repo) && typeof repo.private === "boolean") return !repo.private;
-    throw new ForgeRequestError(GITHUB_HOST, 200, "GET", path, "unexpected response: neither visibility nor private is set");
+    throw new ForgeRequestError(this.setting.host, 200, "GET", path, "unexpected response: neither visibility nor private is set");
   }
 
   /**
@@ -317,7 +340,7 @@ export class GitHubForge implements Forge {
       try {
         repository = await this.#graphqlRepository(BLOCKED_BY_QUERY, pathNumber(issueNumber), after);
       } catch (error) {
-        if (error instanceof ForgeRequestError && /\bblockedBy\b/u.test(error.message) && /doesn't exist|does not exist|undefined field/iu.test(error.message)) return null;
+        if (isMissingField(error, "blockedBy")) return null;
         throw error;
       }
       const connection = graphqlField(graphqlField(repository, "issue"), "blockedBy");
@@ -344,9 +367,21 @@ export class GitHubForge implements Forge {
     return raw.state;
   }
 
-  /** github.com is the only GitHub host, with no version to read, so it is always served. */
+  /**
+   * github.com has no version to read and is always served. A GitHub
+   * Enterprise Server reports its version in `meta`; a host that does not is
+   * not one, such as a mistyped name that answers as something else. entail
+   * sets no oldest version: what an older server lacks is worked around where
+   * it is used, as the merge and the links between issues and PRs are.
+   */
   async instance(): Promise<ForgeInstance> {
-    return { version: null, unsupported: null };
+    if (!this.#enterprise) return { version: null, unsupported: null };
+    const meta = await this.#getJson("meta");
+    const version = isObject(meta) && typeof meta.installed_version === "string" && meta.installed_version !== "" ? meta.installed_version : null;
+    return {
+      version,
+      unsupported: version === null ? `${this.setting.host} does not report a GitHub Enterprise Server version, so it does not look like one` : null,
+    };
   }
 
   async changesSince(cursor: ChangeCursor | null): Promise<ChangeBatch> {
@@ -421,7 +456,14 @@ export class GitHubForge implements Forge {
     const numbers: number[] = [];
     let after: string | null = null;
     for (;;) {
-      const repository = await this.#graphqlRepository(CLOSED_BY_QUERY, pathNumber(issueNumber), after);
+      let repository: Record<string, unknown>;
+      try {
+        repository = await this.#graphqlRepository(CLOSED_BY_QUERY, pathNumber(issueNumber), after);
+      } catch (error) {
+        // A server older than the field answers with a schema error; the PRs that mention the issue are then read, each asked what it closes.
+        if (this.#enterprise && isMissingField(error, "closedByPullRequestsReferences")) return this.#linkedByMentions(issueNumber);
+        throw error;
+      }
       const connection = graphqlField(graphqlField(repository, "issue"), "closedByPullRequestsReferences");
       const baseBranch = this.baseBranch ?? defaultBranchOf(repository);
       for (const node of graphqlNodes(connection)) {
@@ -439,12 +481,21 @@ export class GitHubForge implements Forge {
   }
 
   async linkedIssues(pullRequestNumber: number): Promise<number[]> {
+    const numbers = await this.#closingIssues(pullRequestNumber);
+    if (numbers === null) return [];
+    // GitHub may not link a PR into a branch other than its default to the issue it closes; its head branch can still name it.
+    if (numbers.length === 0 && this.baseBranch !== null) return this.#issuesInBranch((await this.pullRequest(pullRequestNumber)).headBranch);
+    return numbers.sort((a, b) => a - b);
+  }
+
+  /** The issues of this repo a PR's closing references name, or null when the PR does not merge into the base branch. */
+  async #closingIssues(pullRequestNumber: number): Promise<number[] | null> {
     const numbers: number[] = [];
     let after: string | null = null;
     for (;;) {
       const repository = await this.#graphqlRepository(CLOSING_ISSUES_QUERY, pathNumber(pullRequestNumber), after);
       const pull = graphqlField(repository, "pullRequest");
-      if (pull.baseRefName !== (this.baseBranch ?? defaultBranchOf(repository))) return [];
+      if (pull.baseRefName !== (this.baseBranch ?? defaultBranchOf(repository))) return null;
       const connection = graphqlField(pull, "closingIssuesReferences");
       for (const node of graphqlNodes(connection)) {
         if (!isObject(node) || !isObject(node.repository) || node.repository.databaseId !== repository.databaseId) continue;
@@ -453,9 +504,37 @@ export class GitHubForge implements Forge {
       after = nextGraphqlPage(connection);
       if (after === null) break;
     }
-    // GitHub may not link a PR into a branch other than its default to the issue it closes; its head branch can still name it.
-    if (numbers.length === 0 && this.baseBranch !== null) return this.#issuesInBranch((await this.pullRequest(pullRequestNumber)).headBranch);
-    return numbers.sort((a, b) => a - b);
+    return numbers;
+  }
+
+  /**
+   * The PRs that close an issue where the server has no `closedByPullRequestsReferences`:
+   * every PR of this repo the issue's timeline says mentions it or was linked
+   * to it, each kept only if its own closing references name the issue, which
+   * is what that field lists.
+   */
+  async #linkedByMentions(issueNumber: number): Promise<PullRequest[]> {
+    const candidates: number[] = [];
+    let after: string | null = null;
+    for (;;) {
+      const repository = await this.#graphqlRepository(MENTIONED_BY_QUERY, pathNumber(issueNumber), after);
+      const connection = graphqlField(graphqlField(repository, "issue"), "timelineItems");
+      for (const node of graphqlNodes(connection)) {
+        if (!isObject(node)) continue;
+        const pull = isObject(node.source) ? node.source : isObject(node.subject) ? node.subject : null;
+        if (pull === null || typeof pull.number !== "number" || !isObject(pull.repository) || pull.repository.databaseId !== repository.databaseId) continue;
+        if (!candidates.includes(pull.number)) candidates.push(pull.number);
+      }
+      after = nextGraphqlPage(connection);
+      if (after === null) break;
+    }
+    candidates.sort((a, b) => a - b);
+    const pullRequests: PullRequest[] = [];
+    for (const number of candidates) {
+      if (!(await this.#closingIssues(number))?.includes(issueNumber)) continue;
+      pullRequests.push(await this.pullRequest(number));
+    }
+    return pullRequests;
   }
 
   /** The issues in this repo a head branch name names, each read to make sure it is one. */
@@ -762,8 +841,11 @@ export class GitHubForge implements Forge {
    * bypasses no rules. GitHub may run the merge in the background, so a
    * pending merge is read again until it merges or fails, or until
    * {@link MERGE_WAIT_MS} has passed, which throws {@link MergePendingError}.
+   * A GitHub Enterprise Server has no `merge-async`: it is merged as
+   * {@link #mergeDirect} does.
    */
   async merge(prNumber: number, sha: string, method?: MergeMethod): Promise<MergeOutcome> {
+    if (this.#enterprise) return this.#mergeDirect(prNumber, sha, method);
     const path = `repos/${this.setting.path}/pulls/${prNumber}/merge-async`;
     const body: Record<string, unknown> = { sha, merge_action: "direct_merge", bypass_rules: false };
     if (method) body.merge_method = method;
@@ -791,6 +873,36 @@ export class GitHubForge implements Forge {
       if (this.#mergePollIntervalMs > 0) await sleep(this.#mergePollIntervalMs);
       result = await this.#getJson(`${path}/${encodeURIComponent(details.uuid)}`);
     }
+  }
+
+  /**
+   * The merge a GitHub Enterprise Server has: `PUT pulls/:number/merge`, which
+   * merges at once and pinned to `sha`, answering 409 if the head moved. It has
+   * no `bypass_rules: false`, and an administrator the base branch's rules
+   * leave out could merge past them, so a PR that is a draft or blocked by
+   * those rules is refused before it is asked for. With no method given it
+   * merges as the repo's default does on github.com, by a merge commit where
+   * the repo allows one and by the first method it allows where it does not,
+   * since the endpoint's own default is a merge commit.
+   */
+  async #mergeDirect(prNumber: number, sha: string, method?: MergeMethod): Promise<MergeOutcome> {
+    const pullPath = `repos/${this.setting.path}/pulls/${pathNumber(prNumber)}`;
+    const pull = await this.#getJson(pullPath);
+    if (isObject(pull) && pull.draft === true) return { merged: false, refusal: "GitHub refused the merge: the pull request is a draft" };
+    if (isObject(pull) && pull.mergeable_state === "blocked") {
+      return { merged: false, refusal: "GitHub refused the merge: the base branch's rules for it are not met yet (the pull request is blocked)" };
+    }
+    const allowed = method === undefined ? await this.mergeMethods() : [];
+    const chosen = method ?? (allowed.length === 0 || allowed.includes("merge") ? undefined : allowed[0]);
+    const path = `${pullPath}/merge`;
+    const response = await this.#send("PUT", path, { sha, ...(chosen === undefined ? {} : { merge_method: chosen }) });
+    const refusal = this.#refusal(response, path, "PUT");
+    if (refusal !== null) return { merged: false, refusal };
+    const result = parseJson(response, this.setting.host, path, "PUT");
+    if (!isObject(result) || result.merged !== true) {
+      return { merged: false, refusal: `GitHub reported that the merge failed${isObject(result) && typeof result.message === "string" ? `: ${result.message}` : ""}` };
+    }
+    return { merged: true, mergeCommitSha: typeof result.sha === "string" ? result.sha : null };
   }
 
   // Reads that settle writes
@@ -886,7 +998,10 @@ export class GitHubForge implements Forge {
     if (status >= 200 && status < 300) return;
     const resetAt = rateLimitReset(response);
     if (resetAt) throw new RateLimitedError(this.setting.host, resetAt);
-    if (status === 401) throw new ForgeLoggedOutError(this.setting.host, `${method} ${path} answered HTTP 401`);
+    if (status === 401) {
+      const login = this.#enterprise ? `; run gh auth login --hostname ${this.setting.host}` : "";
+      throw new ForgeLoggedOutError(this.setting.host, `${method} ${path} answered HTTP 401${login}`);
+    }
     throw new ForgeRequestError(this.setting.host, status, method, path, errorDetail(response));
   }
 
@@ -1106,10 +1221,20 @@ function nextPagePath(link: string | undefined): string | null {
     const match = /<([^>]+)>\s*;\s*rel="next"/.exec(part);
     if (match?.[1]) {
       const url = new URL(match[1]);
-      return `${url.pathname.replace(/^\//, "")}${url.search}`;
+      // A GitHub Enterprise Server's links carry the `/api/v3` that `gh api` adds to a path itself.
+      return `${url.pathname.replace(/^\/(?:api\/v3\/)?/, "")}${url.search}`;
     }
   }
   return null;
+}
+
+/** Whether an error is a GraphQL schema error saying the server has no `name` field, as an older GitHub Enterprise Server answers. */
+function isMissingField(error: unknown, name: string): boolean {
+  return (
+    error instanceof ForgeRequestError &&
+    new RegExp(`\\b${name}\\b`, "u").test(error.message) &&
+    /doesn't exist|does not exist|undefined field|doesn't accept argument/iu.test(error.message)
+  );
 }
 
 /** GitHub's refusal of a feature the repo's plan does not have, such as rulesets on a private repo on GitHub Free. */

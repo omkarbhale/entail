@@ -9,7 +9,10 @@ import type { ForgeKind, ForgeSetting } from "./forge/forge.ts";
  * GitLab is `gitlab://host/namespace/name`, such as
  * `gitlab://git.example.com/acme/tally`: the `//` after the prefix names the
  * host, and can never start a gitlab.com name, whose path segments are never
- * empty. The prefix keeps the forges apart: `:` never appears in a GitHub
+ * empty. A repo on a GitHub Enterprise Server is
+ * `github://host/owner/name`, such as `github://ghe.example.com/acme/tally`,
+ * the same way; `owner/name` still means github.com, and github.com keeps that
+ * one name. The prefixes keep the forges apart: `:` never appears in a GitHub
  * name.
  *
  * Everything above the forge layer reaches a forge through
@@ -21,6 +24,8 @@ import type { ForgeKind, ForgeSetting } from "./forge/forge.ts";
 export const GITLAB_PREFIX = "gitlab:";
 /** What starts the name of a project on a self-hosted GitLab, before its host. */
 export const SELF_HOSTED_PREFIX = "gitlab://";
+/** What starts the name of a repo on a GitHub Enterprise Server, before its host. */
+export const ENTERPRISE_PREFIX = "github://";
 
 const HOSTS: Record<ForgeKind, string> = { github: "github.com", gitlab: "gitlab.com" };
 const TITLES: Record<ForgeKind, string> = { github: "GitHub", gitlab: "GitLab" };
@@ -30,7 +35,7 @@ const CLIS: Record<ForgeKind, "gh" | "glab"> = { github: "gh", gitlab: "glab" };
 const PART = /^(?!\.{1,2}$)[\w.-]+$/u;
 /** GitLab nests subgroups at most 20 deep, so a project path has at most 21 segments. */
 const GITLAB_MAX_SEGMENTS = 21;
-/** A self-hosted GitLab's host, as `glab api --hostname` takes it: a host name only, with no scheme, port or path. */
+/** A self-hosted forge's host, as `glab api --hostname` and `gh api --hostname` take it: a host name only, with no scheme, port or path. */
 const HOST = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/iu;
 
 /**
@@ -39,6 +44,18 @@ const HOST = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/iu;
  * @throws {RangeError} when `repo` is not a repo name.
  */
 export function repoSetting(repo: string): ForgeSetting {
+  if (repo.startsWith(ENTERPRISE_PREFIX)) {
+    const rest = repo.slice(ENTERPRISE_PREFIX.length);
+    const slash = rest.indexOf("/");
+    const host = (slash < 0 ? rest : rest.slice(0, slash)).toLowerCase();
+    if (!HOST.test(host)) throw new RangeError(`not a repo: ${repo} (expected github://host/owner/name, with a host name and no scheme or port)`);
+    // github.com has its own name, so one repo never has two; gitlab.com is never a GitHub.
+    if (host === HOSTS.github) throw new RangeError(`not a repo: ${repo} (a repo on github.com is named owner/name)`);
+    if (host === HOSTS.gitlab) throw new RangeError(`not a repo: ${repo} (gitlab.com is not a GitHub host)`);
+    const parts = (slash < 0 ? "" : rest.slice(slash + 1)).split("/");
+    if (parts.length !== 2 || !parts.every((part) => PART.test(part))) throw new RangeError(`not a repo: ${repo} (expected github://host/owner/name)`);
+    return { forge: "github", host, path: parts.join("/") };
+  }
   if (repo.startsWith(SELF_HOSTED_PREFIX)) {
     const rest = repo.slice(SELF_HOSTED_PREFIX.length);
     const slash = rest.indexOf("/");
@@ -51,7 +68,7 @@ export function repoSetting(repo: string): ForgeSetting {
   }
   if (repo.startsWith(GITLAB_PREFIX)) return { forge: "gitlab", host: HOSTS.gitlab, path: gitlabPath(repo.slice(GITLAB_PREFIX.length), repo) };
   const parts = repo.split("/");
-  if (parts.length !== 2 || !parts.every((part) => PART.test(part))) throw new RangeError(`not a repo: ${repo} (expected owner/name, gitlab:group/name, or gitlab://host/group/name)`);
+  if (parts.length !== 2 || !parts.every((part) => PART.test(part))) throw new RangeError(`not a repo: ${repo} (expected owner/name, gitlab:group/name, gitlab://host/group/name, or github://host/owner/name)`);
   return { forge: "github", host: HOSTS.github, path: repo };
 }
 
@@ -64,7 +81,7 @@ function gitlabPath(path: string, repo: string): string {
   return path;
 }
 
-/** Whether `text` is a repo name: `owner/name`, `gitlab:group/name` or `gitlab://host/group/name`. */
+/** Whether `text` is a repo name: `owner/name`, `github://host/owner/name`, `gitlab:group/name` or `gitlab://host/group/name`. */
 export function isRepo(text: string): boolean {
   try {
     repoSetting(text);
@@ -79,9 +96,12 @@ export function isSelfHostedHost(host: string): boolean {
   return HOST.test(host) && host.toLowerCase() !== HOSTS.gitlab && host.toLowerCase() !== HOSTS.github;
 }
 
-/** The repo name for a forge setting: the inverse of {@link repoSetting}. A GitLab setting with no host is on gitlab.com. */
+/** The repo name for a forge setting: the inverse of {@link repoSetting}. A setting with no host is on github.com or gitlab.com. */
 export function repoOf(setting: Pick<ForgeSetting, "forge" | "path"> & { host?: string }): string {
-  if (setting.forge !== "gitlab") return setting.path;
+  if (setting.forge !== "gitlab") {
+    const host = (setting.host ?? HOSTS.github).toLowerCase();
+    return host === HOSTS.github ? setting.path : `${ENTERPRISE_PREFIX}${host}/${setting.path}`;
+  }
   const host = (setting.host ?? HOSTS.gitlab).toLowerCase();
   return host === HOSTS.gitlab ? `${GITLAB_PREFIX}${setting.path}` : `${SELF_HOSTED_PREFIX}${host}/${setting.path}`;
 }
@@ -92,17 +112,23 @@ export function repoOf(setting: Pick<ForgeSetting, "forge" | "path"> & { host?: 
  * trailing slash taken off. A github.com or gitlab.com web address is taken as
  * its repo. A self-hosted GitLab's address is taken with `gitlab:` written
  * before it, such as `gitlab:https://git.example.com/acme/tally`, since only
- * the owner can say which forge a host runs. Anything after a GitLab
+ * the owner can say which forge a host runs; a GitHub Enterprise Server's is
+ * taken the same way, with `github:` before it. Anything after a GitLab
  * project's `/-/`, such as its issues, is taken off.
  */
 export function canonicalRepo(text: string): string | null {
   let repo = text.trim();
   const web = /^https:\/\/(github\.com|gitlab\.com)\/(.+)$/iu.exec(repo);
   const selfHosted = /^gitlab:(?:https?:)?\/\/([^/]+)\/(.+)$/iu.exec(repo);
+  const enterprise = /^github:(?:https?:)?\/\/([^/]+)\/(.+)$/iu.exec(repo);
   if (web !== null) repo = web[1]!.toLowerCase() === HOSTS.gitlab ? `${GITLAB_PREFIX}${projectPart(web[2]!)}` : web[2]!;
   else if (selfHosted !== null) {
     const host = selfHosted[1]!.toLowerCase();
     repo = host === HOSTS.gitlab ? `${GITLAB_PREFIX}${projectPart(selfHosted[2]!)}` : `${SELF_HOSTED_PREFIX}${host}/${projectPart(selfHosted[2]!)}`;
+  } else if (enterprise !== null) {
+    const host = enterprise[1]!.toLowerCase();
+    const path = enterprise[2]!.replace(/\/$/u, "").replace(/\.git$/u, "");
+    repo = host === HOSTS.github ? path : `${ENTERPRISE_PREFIX}${host}/${path}`;
   }
   repo = repo.replace(/\/$/u, "").replace(/\.git$/u, "").toLowerCase();
   return isRepo(repo) ? repo : null;

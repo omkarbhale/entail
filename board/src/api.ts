@@ -82,8 +82,8 @@ export interface SettingsChange {
   backup?: string | null;
 }
 
-/** A repo in the API's paths: `owner/name` for GitHub; a GitLab project, whose path can hold subgroups, as one encoded segment. */
-const repoPath = (repo: string) => (repo.startsWith("gitlab:") ? encodeURIComponent(repo) : repo.split("/").map(encodeURIComponent).join("/"));
+/** A repo in the API's paths: `owner/name` for GitHub; a GitLab project, whose path can hold subgroups, and a repo on a GitHub Enterprise Server, as one encoded segment. */
+const repoPath = (repo: string) => (repo.startsWith("gitlab:") || repo.startsWith("github://") ? encodeURIComponent(repo) : repo.split("/").map(encodeURIComponent).join("/"));
 
 export const api = {
   status: () => request<StatusView>("GET", "/api/status"),
