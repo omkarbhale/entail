@@ -55,7 +55,7 @@ import { forgeTitle, isSelfHostedHost } from "./repo-ref.ts";
  *   POST   /api/calls/:id/confirm             {}
  *   POST   /api/calls/:id/override            {"call": "go"|"plan"|"no", "reason": "...", "differently"?: true}  on an issue's call
  *                                             {"call": "merge"|"send-back", "reason": "..."}              on a PR's call
- *   POST   /api/calls/:id/answer              {"call": "go"|"plan"|"no", "answer": "..."}     on an issue's call
+ *   POST   /api/calls/:id/answer              {"call": "go"|"plan"|"no", "answer": "...", "accept": [0, 2]?}     on an issue's call; accept takes only those parts of it, by position from 0, and the call is no
  *                                             {"call": "merge"|"send-back", "answer": "..."}  on a PR's call
  *   POST   /api/calls/:id/undo                {}: undoes the owner's action on the call while it is held
  *   GET    /api/repos[?all=1]                 enrolled repos (all=1: every repo with a log)
@@ -238,7 +238,7 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
           ? await confirmCall(dataDirectory, id, by, now(), hold)
           : action === "override"
             ? await overrideCall(dataDirectory, id, by, body.call, body.reason, now(), { ...hold, differently: body.differently === true })
-            : await answerCall(dataDirectory, id, by, body.call, body.answer, now(), hold);
+            : await answerCall(dataDirectory, id, by, body.call, body.answer, now(), { ...hold, ...(body.accept === undefined ? {} : { accept: body.accept }) });
       if (recorded.holdUntil !== undefined) options.loop?.schedule(new Date(recorded.holdUntil));
       options.events?.emit({ type: "changed" });
       return send(response, 200, recorded);

@@ -13,6 +13,7 @@ import { EventBus } from "../src/events.ts";
 import { ForgeUntrustedCertificateError } from "../src/forge/forge.ts";
 import { appendEntry, loggedRepos, readLog, readSettings, type CallEntry, type LandingEntry } from "../src/records.ts";
 import { SuggestionRuns, type SuggestionOutcome } from "../src/suggest.ts";
+import type { IssueCall } from "../src/judgment.ts";
 
 const NOON = Date.parse("2026-11-12T12:00:00Z");
 
@@ -206,6 +207,21 @@ test("an answer is recorded at once and held ten seconds: it can be undone until
     ["confirmed", "undone", "confirmed"],
   );
   assert.equal(again.body.holdUntil, "2026-11-12T12:00:19.000Z");
+});
+
+test("the board takes some of an issue's parts through the answer path: held, recorded under the owner's name, and refused when it cannot be taken", async (t) => {
+  const api = await serve(t);
+  await api.call("POST", "/api/repos", { repo: "acme/tally" });
+  const ask = { call: "ask", reason: "Unsure.", restsOn: { visionLines: [], cases: [] }, question: "Which?", why: "They differ.", large: false, criteria: [] } satisfies IssueCall;
+  const bundle = aCall(api.dataDirectory, true, { call: ask, issueText: "# Ideas\n\n- Footnotes\n- Endnotes\n- Upload\n" });
+  assert.deepEqual((await api.call("GET", `/api/calls/${bundle.id}`)).body.parts, ["Footnotes", "Endnotes", "Upload"]);
+  assert.equal((await api.call("POST", `/api/calls/${bundle.id}/answer`, { call: "no", answer: "x", accept: [] })).status, 400);
+  assert.equal((await api.call("POST", `/api/calls/${bundle.id}/answer`, { call: "go", answer: "x", accept: [0] })).status, 400);
+  assert.equal((await api.call("POST", `/api/calls/${bundle.id}/answer`, { call: "no", answer: "x", accept: [3] })).status, 400);
+  const taken = await api.call("POST", `/api/calls/${bundle.id}/answer`, { call: "no", answer: "Footnotes and upload.", accept: [0, 2] });
+  assert.equal(taken.status, 200);
+  assert.deepEqual([taken.body.type, taken.body.by, taken.body.to, taken.body.parts.declined], ["answered", "Omkar", "no", ["Endnotes"]]);
+  assert.ok(taken.body.holdUntil, "held for the undo window like any answer");
 });
 
 test("an override needs a reason, a go can be made differently with the owner's line, and an answer needs words", async (t) => {

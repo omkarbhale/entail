@@ -5,6 +5,7 @@ import type { ForgeFacts, LandingOwnerCall, OwnerCall } from "./case-book.ts";
 import { scopeOf, type Criterion, type GoScope, type IssueCall } from "./judgment.ts";
 import type { LandingCall } from "./landing.ts";
 import type { GrowthDecision } from "./vision-growth.ts";
+import type { AnswerParts } from "./parts.ts";
 import { DEFAULT_EFFORT, EFFORTS, type Effort } from "./model-runner.ts";
 import { forgeHost, isSelfHostedHost, repoOf, repoSetting } from "./repo-ref.ts";
 import type { IssueRef } from "./forge/forge.ts";
@@ -360,6 +361,11 @@ export interface AnsweredEntry extends EntryBase, ByOwner, Held {
   /** Set when the owner's go clears the ticket for planning; missing means a go to implement. */
   scope?: "plan";
   answer: string;
+  /**
+   * Set when the owner took only some of the parts of an issue that bundles several: the call is no on the
+   * issue itself, which closes once one new issue is filed for each part accepted.
+   */
+  parts?: AnswerParts;
 }
 
 /** The owner undid one of their actions while it was held: entail acts on it neither on the forge nor in the case book. */
@@ -395,6 +401,8 @@ export interface ActedEntry extends EntryBase {
   start?: { command: string; handoff: Handoff };
   /** For a call a vision change moved: the comment posted on each open PR that relied on the old text. */
   flagged?: { pr: number; comment: { id: number; url: string } }[];
+  /** For a partial answer: the issue filed for each part accepted, by the part's position among the accepted, and whether it was found already filed. */
+  filed?: { index: number; number: number; url: string; already: boolean }[];
 }
 
 /**

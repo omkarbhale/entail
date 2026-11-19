@@ -158,24 +158,29 @@ export function overrideChoices(item: CallView): OverrideChoice[] {
   return [NO_CHOICE, DIFFERENTLY_CHOICE, PLAN_CHOICE];
 }
 
-export type AnswerChoice = { to: OwnerCallName; label: string; note: string; lean: boolean };
+export type AnswerChoice = { key: string; to: OwnerCallName; label: string; note: string; lean: boolean; parts?: true };
 
 /** The answers to a question, and what each does: on an issue, go, go for planning, or don't. */
 export function answerChoices(item: CallView): AnswerChoice[] {
   const n = refNumber(item);
   if (item.pr !== null) {
     return [
-      { to: "merge", label: "Merge it", note: `entail merges #${item.pr.number} at the head it judged, with your answer as the reason.`, lean: false },
-      { to: "send-back", label: "Send it back", note: `entail comments your answer on #${item.pr.number} as what needs to change.`, lean: false },
+      { key: "merge", to: "merge", label: "Merge it", note: `entail merges #${item.pr.number} at the head it judged, with your answer as the reason.`, lean: false },
+      { key: "send-back", to: "send-back", label: "Send it back", note: `entail comments your answer on #${item.pr.number} as what needs to change.`, lean: false },
     ];
   }
   // A question asked only because the change is large carries the criteria a go would have: entail leans to go.
   const leansGo = item.question?.large === true && item.criteria.length > 0;
-  return [
-    { to: "go", label: "Go ahead", note: `entail runs the call on #${n} again with your answer as your word, and posts the go with its criteria.`, lean: leansGo },
-    { to: "plan", label: "Go, for planning", note: `entail runs the call on #${n} again with your answer, and posts a go for planning: your workflow writes the plan and files the smaller tickets.`, lean: false },
-    { to: "no", label: "Don’t go ahead", note: `entail closes #${n} with your answer as the reason.`, lean: false },
+  const choices: AnswerChoice[] = [
+    { key: "go", to: "go", label: "Go ahead", note: `entail runs the call on #${n} again with your answer as your word, and posts the go with its criteria.`, lean: leansGo },
+    { key: "plan", to: "plan", label: "Go, for planning", note: `entail runs the call on #${n} again with your answer, and posts a go for planning: your workflow writes the plan and files the smaller tickets.`, lean: false },
+    { key: "no", to: "no", label: "Don’t go ahead", note: `entail closes #${n} with your answer as the reason.`, lean: false },
   ];
+  // An issue that lists several suggestions can be taken in part: one new issue for each part accepted.
+  if (item.parts.length > 0) {
+    choices.push({ key: "parts", to: "no", label: "Take only some of the parts", note: `entail files one new issue for each part you pick, and closes #${n} with links to them and the parts you turned down.`, lean: false, parts: true });
+  }
+  return choices;
 }
 
 /** What a receipt says the owner did, and what entail does when the window closes. */
@@ -203,6 +208,15 @@ export function receiptText(item: CallView, action: ActionView): { head: string;
     const to = ownerCallOf(action);
     const label = action.differently === true ? "Go, but differently" : to === "plan" ? "Go, for planning" : to === "go" ? "Go instead" : "No, close it";
     return { head: "Overridden.", text: `${label}. It goes on the issue and into the case book.`, quote: action.reason ?? null, call: action.to === undefined ? null : to };
+  }
+  if (action.parts !== undefined) {
+    const total = action.parts.accepted.length + action.parts.declined.length;
+    return {
+      head: "Answered.",
+      text: `Took ${action.parts.accepted.length} of ${total} parts. entail files an issue for each and closes #${n}, naming the ${action.parts.declined.length === 1 ? "part" : "parts"} turned down.`,
+      quote: action.answer ?? null,
+      call: "no",
+    };
   }
   const to = ownerCallOf(action);
   const text =

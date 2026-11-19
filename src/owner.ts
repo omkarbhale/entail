@@ -23,6 +23,7 @@ import { ciGreen } from "./landing.ts";
 import { outcomeWords, scopeOf, type Ruling } from "./judgment.ts";
 import { isBranchName } from "./git.ts";
 import { EFFORTS, type Effort } from "./model-runner.ts";
+import { issueParts, pickParts, type AnswerParts } from "./parts.ts";
 import { addPin, normalizePin, parsePins, pinsFile, removePin } from "./pins.ts";
 import {
   appendEntry,
@@ -324,6 +325,7 @@ export function callView(repo: string, entry: CallEntry, status: CallStatus, ent
     issue: entry.issue,
     issueText: entry.issueText,
     body: issueBody(entry.issueText),
+    parts: issueParts(issueBody(entry.issueText)).map((part) => part.title),
     visionCommit: entry.vision?.commit ?? null,
     call: entry.call.call,
     ...(entry.call.call === "go" && scopeOf(entry.call) === "plan" ? { scope: "plan" as const } : {}),
@@ -394,6 +396,7 @@ export function landingView(repo: string, entry: LandingEntry, status: CallStatu
     issue: entry.issue === null ? null : { ...entry.issue, author: "" },
     issueText: entry.issueText,
     body: issueBody(entry.prText),
+    parts: [],
     visionCommit: entry.vision?.commit ?? null,
     call: call.call,
     reason: call.reason,
@@ -1026,12 +1029,24 @@ export async function overrideCall(dataDirectory: string, id: number, by: string
   return record(dataDirectory, repo, { type: "overridden", by, call: id, to: owner, ...(scope === undefined ? {} : { scope }), reason: words }, now, options);
 }
 
+export interface AnswerOptions extends ActOptions {
+  /**
+   * The parts of the issue the owner accepts, by position among its parts, instead of a whole yes or no: entail
+   * then files one new issue for each and closes the issue. For a question on an issue that lists several
+   * suggestions, answered no; the rest of the parts are turned down.
+   */
+  accept?: unknown;
+}
+
 /**
  * Answers a call's question with the owner's call and words: go or no on an
  * issue, where a go runs the judgment again with the answer; merge or
- * send-back on a PR.
+ * send-back on a PR. On an issue that lists several suggestions the owner can
+ * instead accept some of its parts: that is a no on the issue itself, with the
+ * accepted parts to be filed as issues of their own, recorded here like any
+ * other answer.
  */
-export async function answerCall(dataDirectory: string, id: number, by: string, to: unknown, answer: unknown, now = new Date(), options: ActOptions = {}): Promise<AnsweredEntry> {
+export async function answerCall(dataDirectory: string, id: number, by: string, to: unknown, answer: unknown, now = new Date(), options: AnswerOptions = {}): Promise<AnsweredEntry> {
   const found = findItem(dataDirectory, id);
   if (found.entry.type === "landing") {
     const owner = landingOwnerCall(to);
@@ -1039,6 +1054,7 @@ export async function answerCall(dataDirectory: string, id: number, by: string, 
     const status = landingStatuses(found.entries).get(id)!;
     if (found.entry.call.call !== "ask") throw new OwnerError(409, `call ${id} is a ${found.entry.call.call}, not a question: confirm or override it`);
     if (status.status !== "waiting") throw new OwnerError(409, `call ${id} is not waiting for an answer (${status.status})`);
+    if (options.accept !== undefined) throw new OwnerError(400, "parts are taken from an issue, not a PR");
     return record(dataDirectory, found.repo, { type: "answered", by, call: id, to: owner, answer: words }, now, options);
   }
   const { repo, entries, entry: call } = found;
@@ -1048,7 +1064,16 @@ export async function answerCall(dataDirectory: string, id: number, by: string, 
   if (call.call.call !== "ask") throw new OwnerError(409, `call ${id} is a ${call.call.call}, not a question: confirm or override it`);
   if (status.status === "superseded") throw new OwnerError(409, `the issue was edited and entail judged it again: read the new question`);
   if (status.status !== "waiting") throw new OwnerError(409, `call ${id} is not waiting for an answer (${status.status})`);
-  return record(dataDirectory, repo, { type: "answered", by, call: id, to: owner, ...(scope === undefined ? {} : { scope }), answer: words }, now, options);
+  let parts: AnswerParts | undefined;
+  if (options.accept !== undefined) {
+    if (owner !== "no" || scope !== undefined) throw new OwnerError(400, "taking some parts of an issue answers no to the issue itself: the call is no");
+    try {
+      parts = pickParts(issueParts(issueBody(call.issueText)), options.accept);
+    } catch (error) {
+      throw new OwnerError(400, error instanceof Error ? error.message : String(error));
+    }
+  }
+  return record(dataDirectory, repo, { type: "answered", by, call: id, to: owner, ...(scope === undefined ? {} : { scope }), answer: words, ...(parts === undefined ? {} : { parts }) }, now, options);
 }
 
 /**
@@ -1104,6 +1129,11 @@ export function caseFor(repo: string, call: CallEntry, action: OwnerAction): Cas
   }
   const words = action.type === "overridden" ? action.reason : action.answer;
   const notes = [`## ${action.by}'s words\n\n${quote(words)}`];
+  if (action.type === "answered" && action.parts !== undefined) {
+    const accepted = action.parts.accepted.map((part) => `- ${part.title}`).join("\n");
+    const declined = action.parts.declined.length === 0 ? "" : `\n\nTurned down:\n\n${action.parts.declined.map((title) => `- ${title}`).join("\n")}`;
+    notes.push(`## The parts ${action.by} took\n\n${action.by} took only some of the issue's parts: entail files one issue for each and closes this one.\n\nAccepted:\n\n${accepted}${declined}`);
+  }
   if (action.to === "go" && action.scope === "plan") notes.push(`## A go for planning\n\n${action.by} cleared the ticket for planning: their workflow writes the plan, files the smaller tickets and closes this issue.`);
   if (action.type === "overridden" && action.differently === true) {
     notes.push(`## entail's go, made differently\n\nentail called go: ${call.call.reason}\n\n${action.by} kept the go and replaced its criteria with their line above, word for word.`);
@@ -1216,7 +1246,13 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         const issue = item.pr?.number ?? item.issue?.number ?? null;
         if (action.type === "confirmed") lines.push(`${at}  ${where(issue)}  CONFIRMED by ${action.by} (call ${action.call})`);
         if (action.type === "overridden") lines.push(`${at}  ${where(issue)}  OVERRIDDEN by ${action.by} to ${action.differently === true ? "go, differently" : toWords(action)} (call ${action.call})`, `      ${oneLine(action.reason)}`);
-        if (action.type === "answered") lines.push(`${at}  ${where(issue)}  ANSWERED by ${action.by}: ${toWords(action)} (call ${action.call})`, `      ${oneLine(action.answer)}`);
+        if (action.type === "answered") {
+          lines.push(`${at}  ${where(issue)}  ANSWERED by ${action.by}: ${action.parts === undefined ? toWords(action) : `took ${action.parts.accepted.length} of ${action.parts.accepted.length + action.parts.declined.length} parts`} (call ${action.call})`, `      ${oneLine(action.answer)}`);
+          if (action.parts !== undefined) {
+            for (const part of action.parts.accepted) lines.push(`      accepted: ${part.title}`);
+            for (const title of action.parts.declined) lines.push(`      turned down: ${title}`);
+          }
+        }
         break;
       }
       case "acted":
@@ -1371,6 +1407,10 @@ export function formatWaiting(items: readonly CallView[]): string {
     if (item.ruling !== null) lines.push(...rulingViewLines(item.ruling, "  "));
     if (item.pr !== null) lines.push(...prLines(item.pr, "  "));
     else for (const criterion of item.criteria) lines.push(`  criterion [${criterion.source}]: ${criterion.criterion}`);
+    if (item.call === "ask" && item.parts.length > 0) {
+      lines.push(`  parts you can take some of (entail answer ${item.repo}#${item.issue!.number} no "<words>" --accept 1,3):`);
+      item.parts.forEach((title, index) => lines.push(`    ${index + 1}. ${title}`));
+    }
     return lines.join("\n");
   });
   return blocks.join("\n\n");

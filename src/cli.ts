@@ -89,7 +89,7 @@ const USAGE = `usage:
   entail waiting [<owner/repo>] [--json]
   entail confirm <owner/repo>#<n>
   entail override <owner/repo>#<n> go|plan|no|merge|send-back <reason>
-  entail answer <owner/repo>#<n> go|plan|no|merge|send-back <answer>
+  entail answer <owner/repo>#<n> go|plan|no|merge|send-back <answer> [--accept <parts>]
   entail calls [<owner/repo>] [--json]
   entail judge <owner/repo>#<n> [--model <model>] [--effort <level>] [--json]
   entail land <owner/repo>#<pr> [--issue <n>] [--model <model>] [--effort <level>] [--json]
@@ -151,7 +151,10 @@ override   replace the latest call on an issue (go, plan or no) or a PR (merge o
            command gets the handoff with scope "plan", to write the plan and file the
            smaller tickets; go alone is a go to implement.
 answer     answer the question on an issue (go, plan or no) or a PR (merge or send-back)
-           with your call and words.
+           with your call and words. On an issue that lists several suggestions, --accept
+           1,3 takes only those parts of it (counted from 1, as waiting lists them): the
+           call is no, and entail files one new issue for each part you accept and closes
+           the issue with links to them and the parts turned down.
 calls      the log: every call with its reason, and every confirmation, override,
            answer and post, for one repo or all.
 judge      make the call on one issue and print it. It posts nothing.
@@ -877,7 +880,9 @@ async function waitingCommand(args: string[]): Promise<number> {
 }
 
 async function ownerCommand(command: "confirm" | "override" | "answer", args: string[]): Promise<number> {
-  const { positionals } = parse(args, {});
+  const { positionals, values } = parse(args, { accept: { type: "string" } });
+  if (values.accept !== undefined && command !== "answer") throw new UsageError("--accept belongs to answer");
+  const accept = values.accept === undefined ? undefined : acceptedParts(values.accept);
   const expected = command === "confirm" ? 1 : 3;
   if (positionals.length !== expected) {
     throw new UsageError(
@@ -894,9 +899,16 @@ async function ownerCommand(command: "confirm" | "override" | "answer", args: st
   const onPullRequest = findItem(dataDirectory, id).entry.type === "landing";
   if (command === "confirm") await confirmCall(dataDirectory, id, by);
   else if (command === "override") await overrideCall(dataDirectory, id, by, positionals[1], positionals[2]);
-  else await answerCall(dataDirectory, id, by, positionals[1], positionals[2]);
+  else await answerCall(dataDirectory, id, by, positionals[1], positionals[2], new Date(), accept === undefined ? {} : { accept });
   console.log(`${name}: your ${command === "confirm" ? "confirmation" : command === "override" ? "override" : "answer"} is recorded under ${by}; entail writes it to the case book and acts on the ${onPullRequest ? "PR" : "issue"} on its next pass.`);
   return 0;
+}
+
+/** `--accept 1,3`: the parts of an issue, counted from 1 as `entail waiting` lists them, as positions from 0. */
+function acceptedParts(text: string): number[] {
+  const numbers = text.split(",").map((part) => (/^\s*\d+\s*$/u.test(part) ? Number(part) - 1 : NaN));
+  if (numbers.some((number) => !Number.isSafeInteger(number) || number < 0)) throw new UsageError("--accept takes the numbers of the parts to take, counted from 1, such as 1,3");
+  return numbers;
 }
 
 async function callsCommand(args: string[]): Promise<number> {

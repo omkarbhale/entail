@@ -28,7 +28,8 @@ import type { OperationalLog } from "./operational-log.ts";
 import { caseFor, landingCaseFor, runSettings } from "./owner.ts";
 import { readPins } from "./pins.ts";
 import { knownKinds, settleByRuling, type Settlement } from "./rulings.ts";
-import { BLOCKED_LABEL, postFor, pullRequestPostFor, type MergeResult } from "./posts.ts";
+import type { AnswerParts } from "./parts.ts";
+import { BLOCKED_LABEL, markedParts, partBody, postFor, pullRequestPostFor, type FiledPart, type MergeResult } from "./posts.ts";
 import {
   appendEntry,
   clearedGoOn,
@@ -49,6 +50,7 @@ import {
   pendingWork,
   readLog,
   type ActedEntry,
+  type AnsweredEntry,
   type BlockedEntry,
   repoState,
   SEND_BACK_LIMIT,
@@ -148,6 +150,8 @@ export type WatchForge = Pick<
   | "removeLabel"
   | "access"
   | "closeIssue"
+  | "createIssue"
+  | "openIssues"
   | "reopenIssue"
   | "pullRequest"
   | "openPullRequests"
@@ -823,7 +827,11 @@ async function act(
   entries: () => Entry[],
   cannotLabel: () => Promise<string | null>,
 ): Promise<boolean> {
-  const post = postFor(pending, options.owner, repo, forge.baseBranch);
+  // An answer that took only some of an issue's parts files each as an issue before the original is closed.
+  const taking = pending.kind === "owner-no" && pending.action.type === "answered" ? pending.action : null;
+  const filing = taking?.parts === undefined ? null : { action: taking, parts: taking.parts };
+  const filed = filing === null ? [] : await filePartIssues(options, repo, forge, pending.kind === "owner-no" ? pending.call : null, filing.action, filing.parts);
+  const post = postFor(pending, options.owner, repo, forge.baseBranch, filed);
   if (post === null) return false;
   const command = options.settings.start ?? null;
   const handoff = command === null ? null : handoffFor(repo, pending, forge.baseBranch);
@@ -835,7 +843,7 @@ async function act(
   if (options.dryRun) {
     options.print(`would post on ${name}${post.close ? " and close it" : post.reopen ? " and reopen it if closed" : ""}${post.label === null ? "" : `, labelled ${post.label}`}:\n${indent(body)}`);
     if (pending.kind === "call") for (const pr of pending.entry.recheck?.pullRequests ?? []) options.print(`would tell ${repo}#${pr.number} that it relied on the old vision`);
-    record({ type: "acted", for: post.markerFor, issue: post.issue, comment: { id: 0, url: "(dry run)" }, closed: post.close, ...start });
+    record({ type: "acted", for: post.markerFor, issue: post.issue, comment: { id: 0, url: "(dry run)" }, closed: post.close, ...start, ...(filing === null ? {} : { filed: [] }) });
     return true;
   }
   // A call that waits to be confirmed puts on no label, but the hold it ends takes its label off.
@@ -850,12 +858,37 @@ async function act(
   if (post.close) await forge.closeIssue(post.issue, "not-planned");
   const reopened = post.reopen && live?.state === "closed";
   if (reopened) await forge.reopenIssue(post.issue);
-  record({ type: "acted", for: post.markerFor, issue: post.issue, comment, closed: post.close, ...(label === null ? {} : { label }), ...start, ...(flagged.length === 0 ? {} : { flagged }) });
+  record({ type: "acted", for: post.markerFor, issue: post.issue, comment, closed: post.close, ...(label === null ? {} : { label }), ...start, ...(flagged.length === 0 ? {} : { flagged }), ...(filing === null ? {} : { filed: filed.flatMap((one) => (one.number === null ? [] : [{ index: one.index, number: one.number, url: one.url, already: one.already }])) }) });
   options.log?.info("acted", { repo, issue: post.issue, for: post.markerFor, comment: comment.url, closed: post.close, alreadyPosted: already !== undefined, ...(label === null ? {} : { label: label.label, labelRemoved: label.removed }) });
   if (label?.failed !== undefined) options.log?.warn("label-failed", { repo, issue: post.issue, label: label.label, error: label.failed });
   const labelled = label === null || label.already ? "" : label.failed === undefined ? `, labelled it ${label.label}` : `, could not label it ${label.label} (${label.failed})`;
   options.print(`${name}: ${already === undefined ? "posted" : "found already posted"} ${comment.url}${post.close ? ", closed the issue" : reopened ? ", reopened the issue" : ""}${labelled}`);
   return true;
+}
+
+/**
+ * Files one issue for each part the owner accepted, labelled with nothing so it
+ * goes through ordinary intake: it is judged when the next pass reads it, like
+ * any issue filed since the repo was enrolled. A part whose marker an open
+ * issue already carries (filed before a crash could record it) is found, not
+ * filed again. A dry run files nothing.
+ */
+async function filePartIssues(options: PassOptions, repo: string, forge: WatchForge, call: CallEntry | null, action: AnsweredEntry, parts: AnswerParts): Promise<(FiledPart & { url: string; already: boolean })[]> {
+  const issue = call?.issue.number ?? 0;
+  if (options.dryRun) {
+    options.print(`would file ${parts.accepted.length} issue${parts.accepted.length === 1 ? "" : "s"} from ${repo}#${issue}:\n${indent(parts.accepted.map((part) => `- ${part.title}`).join("\n"))}`);
+    return parts.accepted.map((_, index) => ({ index, number: null, url: "(dry run)", already: false }));
+  }
+  const marked = new Map<number, Issue>();
+  for (const open of await forge.openIssues()) for (const index of markedParts(open.body, action.id)) if (!marked.has(index)) marked.set(index, open);
+  const filed: (FiledPart & { url: string; already: boolean })[] = [];
+  for (const [index, part] of parts.accepted.entries()) {
+    const found = marked.get(index);
+    const made = found ?? (await forge.createIssue(part.title, partBody(options.owner, issue, action.id, index, part), []));
+    filed.push({ index, number: made.number, url: made.url, already: found !== undefined });
+    options.log?.info("part-filed", { repo, issue, for: action.id, index, filed: made.url, alreadyFiled: found !== undefined });
+  }
+  return filed;
 }
 
 /**

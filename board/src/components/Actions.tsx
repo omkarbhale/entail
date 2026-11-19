@@ -11,7 +11,7 @@ import { Chip, Spinner } from "./Verdict.tsx";
 export type OwnerRequest =
   | { kind: "confirm" }
   | { kind: "override"; to: OwnerCallName; reason: string; differently: boolean }
-  | { kind: "answer"; to: OwnerCallName; answer: string };
+  | { kind: "answer"; to: OwnerCallName; answer: string; accept?: number[] };
 
 export function useAct(item: CallView, onRecorded?: (action: ActionView) => void) {
   const client = useQueryClient();
@@ -19,7 +19,7 @@ export function useAct(item: CallView, onRecorded?: (action: ActionView) => void
     mutationFn: (request: OwnerRequest): Promise<ActionView> => {
       if (request.kind === "confirm") return api.confirm(item.id);
       if (request.kind === "override") return api.override(item.id, request.to, request.reason, request.differently);
-      return api.answer(item.id, request.to, request.answer);
+      return api.answer(item.id, request.to, request.answer, request.accept);
     },
     onSuccess: (action) => {
       if (action.holdUntil !== undefined) client.setQueryData(WAITING, (data: Parameters<typeof holdInCache>[0]) => holdInCache(data, { item, action, holdUntil: action.holdUntil! }));
@@ -127,20 +127,29 @@ export function AnswerForm({ item, act, inputRef }: { item: CallView; act: Retur
   const key = issueKey(item);
   const [pick, setPick] = useDraft(`ans-pick:${key}`);
   const [note, setNote] = useDraft(`ans:${key}`);
+  // The parts ticked, as positions in the issue's list, kept as a draft like the rest.
+  const [ticked, setTicked] = useDraft(`ans-parts:${key}`);
   const choices = answerChoices(item);
-  const choice = choices.find((candidate) => candidate.to === pick);
+  const choice = choices.find((candidate) => candidate.key === pick);
   const pending = act.isPending;
+  const accepted = ticked === "" ? [] : ticked.split(",").map(Number).filter((position) => position < item.parts.length);
+  const toggle = (position: number) => setTicked((accepted.includes(position) ? accepted.filter((one) => one !== position) : [...accepted, position]).sort((a, b) => a - b).join(","));
+  const incomplete = choice?.parts === true && accepted.length === 0;
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (choice === undefined) return;
+    if (choice === undefined || incomplete) return;
+    if (choice.parts === true) {
+      act.mutate({ kind: "answer", to: choice.to, answer: note.trim() === "" ? `Took ${accepted.length} of ${item.parts.length} parts.` : note.trim(), accept: accepted });
+      return;
+    }
     act.mutate({ kind: "answer", to: choice.to, answer: note.trim() === "" ? `${choice.label}.` : note.trim() });
   };
   return (
     <form onSubmit={submit}>
       <div className="readings" role="radiogroup" aria-label="Your answer">
         {choices.map((candidate) => (
-          <label className="reading" key={candidate.to}>
-            <input type="radio" name={`ans-${item.id}`} value={candidate.to} checked={pick === candidate.to} onChange={() => setPick(candidate.to)} disabled={pending} />
+          <label className="reading" key={candidate.key}>
+            <input type="radio" name={`ans-${item.id}`} value={candidate.key} checked={pick === candidate.key} onChange={() => setPick(candidate.key)} disabled={pending} />
             <span>
               <b>{candidate.label}</b>
               {candidate.lean && <span className="lean">entail leans here</span>}
@@ -149,6 +158,17 @@ export function AnswerForm({ item, act, inputRef }: { item: CallView; act: Retur
           </label>
         ))}
       </div>
+      {choice?.parts === true && (
+        <fieldset className="parts" disabled={pending}>
+          <legend>The parts you take; the rest are turned down</legend>
+          {item.parts.map((title, position) => (
+            <label className="part" key={position}>
+              <input type="checkbox" checked={accepted.includes(position)} onChange={() => toggle(position)} />
+              <span>{title}</span>
+            </label>
+          ))}
+        </fieldset>
+      )}
       <input
         ref={inputRef}
         className="field"
@@ -160,7 +180,7 @@ export function AnswerForm({ item, act, inputRef }: { item: CallView; act: Retur
         autoComplete="off"
       />
       <div className="actions">
-        <button className="btn primary" type="submit" disabled={pending || choice === undefined}>
+        <button className="btn primary" type="submit" disabled={pending || choice === undefined || incomplete}>
           {pending ? (
             <>
               <Spinner />

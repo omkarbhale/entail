@@ -1,6 +1,7 @@
 import { outcomeWords, scopeOf, type Criterion, type GoScope, type IssueCall, type Ruling } from "./judgment.ts";
 import type { LandingCall } from "./landing.ts";
 import { refsText } from "./blockers.ts";
+import type { AnswerParts } from "./parts.ts";
 import {
   criteriaOf,
   goScope,
@@ -57,7 +58,7 @@ export const BLOCKED_LABEL = "entail:blocked";
  * a post (a judgment still to run). `repo` is the issue's repo, `owner/name`,
  * so a blocker there is named by its number alone.
  */
-export function postFor(pending: Pending, owner: string, repo: string, baseBranch: string | null = null): Post | null {
+export function postFor(pending: Pending, owner: string, repo: string, baseBranch: string | null = null, filed: readonly FiledPart[] = []): Post | null {
   switch (pending.kind) {
     case "rerun":
       return null;
@@ -98,6 +99,9 @@ export function postFor(pending: Pending, owner: string, repo: string, baseBranc
     }
     case "owner-no": {
       const { call, action } = pending;
+      if (action.type === "answered" && action.parts !== undefined) {
+        return { issue: call.issue.number, markerFor: action.id, text: partsText(owner, action.answer, action.parts, filed), close: true, reopen: false, label: "entail:no" };
+      }
       const head = action.type === "overridden" ? `**No**, by ${owner}, overriding entail's call on the board.` : `**No**, on ${owner}'s answer on the board.`;
       const words = action.type === "overridden" ? action.reason : action.answer;
       return { issue: call.issue.number, markerFor: action.id, text: join(head, escape(words), "Closing the issue as not planned."), close: true, reopen: false, label: "entail:no" };
@@ -118,6 +122,59 @@ export function postFor(pending: Pending, owner: string, repo: string, baseBranc
       };
     }
   }
+}
+
+/** An issue filed for a part the owner accepted: its position among the accepted parts, and its number (null in a dry run, where none is filed). */
+export interface FiledPart {
+  index: number;
+  number: number | null;
+}
+
+/**
+ * What entail posts when the owner took only some of an issue's parts: that
+ * the answer is theirs, the issue each accepted part was filed as, and the
+ * parts turned down by name, then that the issue closes. The new issues are
+ * named by number, which both forges turn into a link.
+ */
+export function partsText(owner: string, answer: string, parts: AnswerParts, filed: readonly FiledPart[]): string {
+  const head = `**Some of it**, on ${owner}'s answer on the board: ${owner} took ${parts.accepted.length} of the ${parts.accepted.length + parts.declined.length} parts of this issue and turned down the rest.`;
+  const taken = parts.accepted.map((part, index) => {
+    const number = filed.find((one) => one.index === index)?.number ?? null;
+    return `- ${number === null ? "(to be filed)" : `#${number}`} ${escape(part.title).replace(/\n+/gu, " ")}`;
+  });
+  const turned = parts.declined.map((title) => `- ${escape(title).replace(/\n+/gu, " ")}`);
+  return join(
+    head,
+    escape(answer),
+    `Taken, each filed as an issue of its own that entail judges like any other:\n\n${taken.join("\n")}`,
+    turned.length === 0 ? "" : `Turned down:\n\n${turned.join("\n")}`,
+    "Closing this issue: what was taken lives on in the issues above.",
+  );
+}
+
+const PART_MARKER = /<!-- entail part (\d+)\.(\d+) -->/gu;
+
+/** The hidden marker an issue filed for an accepted part ends with: the owner's answer (a log entry) and the part's position among the accepted. */
+export function partMarker(action: number, index: number): string {
+  return `<!-- entail part ${action}.${index} -->`;
+}
+
+/** The positions of the parts of the owner's answer `action` that an issue body marks as filed. */
+export function markedParts(body: string, action: number): number[] {
+  return [...body.matchAll(PART_MARKER)].filter((match) => Number(match[1]) === action).map((match) => Number(match[2]));
+}
+
+/**
+ * The body an accepted part is filed with: a line saying where it came from
+ * and whose answer took it, so its words never read as the owner's; the part
+ * as the original issue wrote it; and the hidden marker. No line starts with
+ * `/`, so none is an `/entail` mention or a quick action.
+ */
+export function partBody(owner: string, from: number, action: number, index: number, part: { title: string; body: string }): string {
+  return join(`Filed by entail from #${from}, which lists several suggestions: ${owner} took this one on entail's board. It goes through entail's usual call like any issue.`, part.body, partMarker(action, index))
+    .split("\n")
+    .map((line) => line.replace(/^([ \t]*)\//u, "$1\\/"))
+    .join("\n");
 }
 
 /** The note on a held issue: what it waits on, and what makes entail pick it up again. */
