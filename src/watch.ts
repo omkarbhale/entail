@@ -363,8 +363,10 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
     if (reopen !== undefined && reopen.by?.owner === true && work.mentions.length === 0) {
       // The owner reopened what entail closed: the issue comes to them as a question, with no model run.
       const asked = await askAboutReopen(context, issue, reopen, current());
-      if (asked !== null) record(asked);
-      continue;
+      if (asked !== null) {
+        record(asked);
+        continue;
+      }
     }
     if (held !== undefined && issue.state !== "open" && work.mentions.length === 0) {
       // Closed while held: nothing is left to wait for.
