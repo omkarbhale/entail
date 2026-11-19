@@ -73,6 +73,29 @@ test("with confirm mode off a go starts work at once, with the handoff on standa
   assert.match(log, /#12 {2}started work with: my-executor --queue/u);
 });
 
+test("with a base branch set, the go tells the implementer to open the PR into it from a branch named for the issue, and the handoff names it", async (t) => {
+  const h = harness(t, { confirm: false, settings: { start: "my-executor" } });
+  h.forge.baseBranch = "develop";
+  const start = recorder();
+  h.forge.file(12, "Count words in footnotes", "Footnotes are skipped today.");
+  h.script(12, verdict({ criteria: [CRITERION] }));
+  await h.pass({ startWork: start.startWork });
+  const link = linkCriterion(12, "develop");
+  assert.match(link.criterion, /^Open the PR into `develop` from a branch whose name carries this issue's number, such as `12-short-name`, and link it to this issue/u);
+  assert.match(h.forge.posted[0]!.body, /\n- Open the PR into `develop` from a branch whose name carries this issue's number, such as `12-short-name`, and link it to this issue/u, "the posted go carries the same line");
+  assert.equal(start.handoffs[0]!.handoff.baseBranch, "develop");
+  assert.deepEqual(start.handoffs[0]!.handoff.criteria, [CRITERION, link]);
+});
+
+test("with no base branch set, the handoff has no baseBranch, exactly as before", async (t) => {
+  const h = harness(t, { confirm: false, settings: { start: "my-executor" } });
+  const start = recorder();
+  h.forge.file(12, "Count words in footnotes", "Footnotes are skipped today.");
+  h.script(12, verdict({ criteria: [CRITERION] }));
+  await h.pass({ startWork: start.startWork });
+  assert.equal("baseBranch" in start.handoffs[0]!.handoff, false);
+});
+
 test("no and ask never start work, and nothing starts without a start command", async (t) => {
   const h = harness(t, { confirm: false, settings: { start: "my-executor" } });
   const start = recorder();

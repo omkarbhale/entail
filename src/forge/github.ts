@@ -26,6 +26,7 @@ import {
   type ForgeWording,
   type Issue,
   type IssueComment,
+  issueNumbersInBranch,
   type MergeMethod,
   type MergeOutcome,
   type PostedComment,
@@ -57,6 +58,8 @@ export interface GitHubForgeOptions {
   mergePollIntervalMs?: number;
   /** How long a background merge is waited for. */
   mergeWaitMs?: number;
+  /** The base branch the owner set for the repo; the default branch when unset or null. */
+  baseBranch?: string | null;
 }
 
 /** Where one ETag-conditional list read got to. */
@@ -146,6 +149,7 @@ const TRANSFERRED_QUERY = `query ($owner: String!, $name: String!, $number: Int!
 export class GitHubForge implements Forge {
   readonly setting: ForgeSetting;
   readonly wording: ForgeWording = { pullRequest: "pull request" };
+  readonly baseBranch: string | null;
   readonly #transport: Transport;
   readonly #mergePollIntervalMs: number;
   readonly #mergeWaitMs: number;
@@ -164,6 +168,7 @@ export class GitHubForge implements Forge {
     this.#transport = transport;
     this.#mergePollIntervalMs = options.mergePollIntervalMs ?? MERGE_POLL_INTERVAL_MS;
     this.#mergeWaitMs = options.mergeWaitMs ?? MERGE_WAIT_MS;
+    this.baseBranch = options.baseBranch ?? null;
   }
 
   async currentActor(): Promise<Actor | null> {
@@ -191,12 +196,14 @@ export class GitHubForge implements Forge {
   async project(): Promise<Project> {
     const path = `repos/${this.setting.path}`;
     const repo = await this.#getJson(path);
+    const defaultBranch = field(repo, "default_branch", "string", path);
     return {
       forge: "github",
       host: this.setting.host,
       id: field(repo, "id", "number", path),
       path: this.setting.path,
-      defaultBranch: field(repo, "default_branch", "string", path),
+      defaultBranch,
+      baseBranch: this.baseBranch ?? defaultBranch,
     };
   }
 
@@ -432,10 +439,10 @@ export class GitHubForge implements Forge {
     for (;;) {
       const repository = await this.#graphqlRepository(CLOSED_BY_QUERY, pathNumber(issueNumber), after);
       const connection = graphqlField(graphqlField(repository, "issue"), "closedByPullRequestsReferences");
-      const defaultBranch = defaultBranchOf(repository);
+      const baseBranch = this.baseBranch ?? defaultBranchOf(repository);
       for (const node of graphqlNodes(connection)) {
         if (!isObject(node) || !isObject(node.repository) || node.repository.databaseId !== repository.databaseId) continue;
-        if (node.baseRefName !== defaultBranch || typeof node.number !== "number") continue;
+        if (node.baseRefName !== baseBranch || typeof node.number !== "number") continue;
         if (!numbers.includes(node.number)) numbers.push(node.number);
       }
       after = nextGraphqlPage(connection);
@@ -453,7 +460,7 @@ export class GitHubForge implements Forge {
     for (;;) {
       const repository = await this.#graphqlRepository(CLOSING_ISSUES_QUERY, pathNumber(pullRequestNumber), after);
       const pull = graphqlField(repository, "pullRequest");
-      if (pull.baseRefName !== defaultBranchOf(repository)) return [];
+      if (pull.baseRefName !== (this.baseBranch ?? defaultBranchOf(repository))) return [];
       const connection = graphqlField(pull, "closingIssuesReferences");
       for (const node of graphqlNodes(connection)) {
         if (!isObject(node) || !isObject(node.repository) || node.repository.databaseId !== repository.databaseId) continue;
@@ -462,18 +469,27 @@ export class GitHubForge implements Forge {
       after = nextGraphqlPage(connection);
       if (after === null) break;
     }
+    // GitHub may not link a PR into a branch other than its default to the issue it closes; its head branch can still name it.
+    if (numbers.length === 0 && this.baseBranch !== null) return this.#issuesInBranch((await this.pullRequest(pullRequestNumber)).headBranch);
+    return numbers.sort((a, b) => a - b);
+  }
+
+  /** The issues in this repo a head branch name names, each read to make sure it is one. */
+  async #issuesInBranch(branch: string): Promise<number[]> {
+    const numbers: number[] = [];
+    for (const number of issueNumbersInBranch(branch)) if ((await this.issue(number)) !== null) numbers.push(number);
     return numbers.sort((a, b) => a - b);
   }
 
   /**
    * Check runs and commit statuses at the sha together, with the checks the
-   * default branch's rules require: its rulesets and its branch protection.
+   * base branch's rules require: its rulesets and its branch protection.
    * GitHub's checks belong to the commit, so the PR number is not needed.
    */
   async checks(_pullRequestNumber: number, sha: string, named: readonly string[]): Promise<CheckReport> {
     const at = checkedSha(sha);
-    const { defaultBranch } = await this.project();
-    const required = await this.#requiredChecks(defaultBranch);
+    const { baseBranch } = await this.project();
+    const required = await this.#requiredChecks(baseBranch);
     const reported = await this.#checksAt(at);
     return {
       sha,
@@ -483,8 +499,8 @@ export class GitHubForge implements Forge {
   }
 
   async recentDefaultBranchChecks(commits: number): Promise<CommitChecks[]> {
-    const { defaultBranch } = await this.project();
-    const path = `repos/${this.setting.path}/commits?${new URLSearchParams({ sha: defaultBranch, per_page: String(pageCount(commits)) })}`;
+    const { baseBranch } = await this.project();
+    const path = `repos/${this.setting.path}/commits?${new URLSearchParams({ sha: baseBranch, per_page: String(pageCount(commits)) })}`;
     const list = await this.#getJson(path);
     if (!Array.isArray(list)) throw this.#malformed(200, path, "expected a list");
     const recent: CommitChecks[] = [];
@@ -954,6 +970,7 @@ export class GitHubForge implements Forge {
       conflicts: known ? mergeable === false || mergeableState === "dirty" : null,
       headSha: field(head, "sha", "string", `${where} head`),
       baseBranch: field(base, "ref", "string", `${where} base`),
+      headBranch: field(head, "ref", "string", `${where} head`),
       author: this.#actor(isObject(raw) ? raw.user : undefined, `${where} user`),
       createdAt: isoTime(field(raw, "created_at", "string", where)),
       updatedAt: isoTime(field(raw, "updated_at", "string", where)),

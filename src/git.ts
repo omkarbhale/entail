@@ -130,3 +130,19 @@ function runGit(fullArgs: string[], shownArgs: string[], options: GitRunOptions)
     });
   });
 }
+
+/**
+ * Whether `name` is a branch name git accepts, as `git check-ref-format
+ * --branch` would judge it, and one that cannot be read as an option: no
+ * leading `-`, no whitespace or control characters, none of `~^:?*[\`, no
+ * `..`, `@{`, `//` or a lone `@`, no component that starts with `.` or ends
+ * with `.lock`, and no leading or trailing `/` or trailing `.`.
+ */
+export function isBranchName(name: string): boolean {
+  if (name === "" || name === "@" || name.length > 255) return false;
+  if (name.startsWith("-") || name.startsWith("/") || name.endsWith("/") || name.endsWith(".")) return false;
+  // Whitespace, control characters and the characters git reserves.
+  if (/[\s\x00-\x1f\x7f~^:?*[\\]/u.test(name)) return false;
+  if (name.includes("..") || name.includes("@{") || name.includes("//")) return false;
+  return name.split("/").every((component) => !component.startsWith(".") && !component.endsWith(".lock"));
+}

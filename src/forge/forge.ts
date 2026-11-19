@@ -50,7 +50,15 @@ export interface Project {
   id: number;
   /** The path it was read through; it can change, the id does not. */
   path: string;
+  /** The forge's default branch. */
   defaultBranch: string;
+  /**
+   * The branch entail works against: the base branch the owner set for the
+   * repo, or the forge's default branch when none is set. entail reads the
+   * repo there, follows only the PRs that merge into it, diffs a PR against
+   * it and reads the checks its rules require.
+   */
+  baseBranch: string;
 }
 
 /** The key anything kept about a project is filed under. */
@@ -128,6 +136,8 @@ export interface PullRequest {
   headSha: string;
   /** The branch the PR would merge into. */
   baseBranch: string;
+  /** The branch the PR's head is on, as the forge reports it. */
+  headBranch: string;
   author: Actor;
   /** ISO time. */
   createdAt: string;
@@ -172,7 +182,7 @@ export interface Check {
 }
 
 /**
- * Something the forge requires before it merges into the default branch: a
+ * Something the forge requires before it merges into the base branch: a
  * required check on GitHub, or GitLab's pipeline when "pipelines must
  * succeed" is on.
  */
@@ -190,7 +200,7 @@ export interface CheckReport {
   required: RequiredCheck[];
 }
 
-/** The checks that reported on one commit of the default branch. */
+/** The checks that reported on one commit of the base branch. */
 export interface CommitChecks {
   sha: string;
   /** One entry per check name, sorted by name. */
@@ -237,7 +247,7 @@ export const MERGE_METHODS: readonly MergeMethod[] = ["squash", "merge", "rebase
 export interface RepoAccess {
   /** Why the account cannot add labels to issues and comment on them, or null when it can. */
   cannotLabelAndComment: string | null;
-  /** Why the account may lack permission to merge into the default branch, or null when it has it. */
+  /** Why the account may lack permission to merge into the base branch, or null when it has it. */
   mayLackMerge: string | null;
 }
 
@@ -331,6 +341,12 @@ export interface Forge {
   readonly wording: ForgeWording;
 
   /**
+   * The base branch the owner set for the repo, or null to work against the
+   * forge's default branch. {@link Project.baseBranch} is the branch in use.
+   */
+  readonly baseBranch: string | null;
+
+  /**
    * The account the owner's CLI is logged in as for this host, or null when
    * it reports none. Compare it with {@link sameActor}, never by username.
    */
@@ -342,7 +358,7 @@ export interface Forge {
    */
   actorByUsername(username: string): Promise<Actor | null>;
 
-  /** The repo's numeric project id and default branch. */
+  /** The repo's numeric project id, its default branch and the base branch entail works against. */
   project(): Promise<Project>;
 
   /**
@@ -473,28 +489,50 @@ export interface Forge {
    * The issue's PRs, each read live: the PRs in this repo that the forge's own
    * linked-issue data says close the issue (closing issue references on
    * GitHub, the merge requests that close it on GitLab) and whose base is the
-   * default branch. PR text is never parsed, so a PR that only mentions the
-   * issue is not one of them. Closed and merged PRs are included.
+   * base branch ({@link Project.baseBranch}). PR text is never parsed, so a PR
+   * that only mentions the issue is not one of them. Closed and merged PRs are
+   * included.
    */
   linkedPullRequests(issueNumber: number): Promise<PullRequest[]>;
 
   /**
-   * The numbers of the issues in this repo that the forge's own linked-issue
-   * data says the PR closes, or none when the PR's base is not the default
-   * branch.
+   * The numbers of the issues in this repo that the PR closes, or none when
+   * the PR's base is not the base branch ({@link Project.baseBranch}). They
+   * come from the forge's own linked-issue data. When the owner set a base
+   * branch and the forge links the PR to no issue, as GitHub and GitLab may
+   * not for a PR into a branch other than their default, they are the issues
+   * in this repo that the PR's head branch name names
+   * ({@link issueNumbersInBranch}), a fact the forge reports. PR text is never
+   * parsed.
    */
   linkedIssues(pullRequestNumber: number): Promise<number[]>;
 
   /**
    * The checks at `sha` on a PR, and what the forge requires before merging
-   * into the default branch. Each name in `named` that has not reported is a
+   * into the base branch. Each name in `named` that has not reported is a
    * pending check. On GitLab the checks are the jobs of the pipeline attached
    * to the PR's current head, used only when its sha is `sha`.
    */
   checks(pullRequestNumber: number, sha: string, named: readonly string[]): Promise<CheckReport>;
 
-  /** The checks that reported on the default branch's most recent commits, newest first. */
+  /** The checks that reported on the base branch's most recent commits, newest first. */
   recentDefaultBranchChecks(commits: number): Promise<CommitChecks[]>;
+}
+
+/**
+ * The issue numbers a branch name names: each run of digits that a branch
+ * name's separators (`/`, `-`, `_`, `.`, `#`) or its ends set apart, in the
+ * order they appear, each once. `235-base-branch`, `fix/issue-235` and
+ * `fm/entail-235-base-branch` name 235; `v2-docs` and `utf8` name nothing.
+ */
+export function issueNumbersInBranch(branch: string): number[] {
+  const numbers: number[] = [];
+  for (const segment of branch.split(/[/_.#-]+/u)) {
+    if (!/^[0-9]+$/u.test(segment)) continue;
+    const number = Number(segment);
+    if (Number.isSafeInteger(number) && number > 0 && !numbers.includes(number)) numbers.push(number);
+  }
+  return numbers;
 }
 
 /**

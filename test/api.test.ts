@@ -48,7 +48,7 @@ async function serve(t: TestContext, overrides: Partial<ApiOptions> = {}) {
       project: async () => {
         opened.push(repo);
         if (repo === "acme/missing") throw new Error("gh: Not Found (HTTP 404)");
-        return { forge: "github", host: "github.com", id: 77, path: repo, defaultBranch: "main" };
+        return { forge: "github", host: "github.com", id: 77, path: repo, defaultBranch: "main", baseBranch: "main" };
       },
       instance: async () => (repo.startsWith("gitlab://old.example.com/") ? { version: "15.6.2", unsupported: "GitLab 15.6.2 is older than 15.7, the oldest version entail serves" } : { version: null, unsupported: null }),
       openIssueNumbers: async () => [3, 5, 8],
@@ -123,6 +123,9 @@ test("the board enrolls a repo it can read on GitHub, changes its settings and u
   assert.equal(patched.status, 200);
   assert.equal(patched.body.confirm, false);
   assert.equal((await api.call("PATCH", "/api/repos/acme/tally", { effort: "huge" })).status, 400);
+  assert.equal((await api.call("PATCH", "/api/repos/acme/tally", { baseBranch: "develop" })).body.baseBranch, "develop");
+  assert.equal((await api.call("PATCH", "/api/repos/acme/tally", { baseBranch: "a..b" })).status, 400);
+  assert.equal((await api.call("PATCH", "/api/repos/acme/tally", { baseBranch: null })).body.baseBranch, null);
 
   const { body } = await api.call("GET", "/api/repos");
   const [repo] = body.repos;
@@ -137,10 +140,13 @@ test("the board enrolls a repo it can read on GitHub, changes its settings and u
     [
       ["enrolled", "Omkar"],
       ["settings", "Omkar"],
+      ["settings", "Omkar"],
+      ["settings", "Omkar"],
       ["unenrolled", "Omkar"],
     ],
+    "every change to the base branch is logged under the owner's name, like the other settings",
   );
-  assert.equal(api.woken(), 3);
+  assert.equal(api.woken(), 5);
 });
 
 test("an answer is recorded at once and held ten seconds: it can be undone until entail acts, and is acted on when the window closes", async (t) => {

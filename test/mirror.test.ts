@@ -72,6 +72,22 @@ test("the default branch head is checked with ls-remote, and the mirror fetches 
   ]);
 });
 
+test("a base branch set in place of the default branch is the one checked and fetched, and a missing one is an error", async (t) => {
+  const repo = new FixtureRepo(t);
+  const main = repo.write("VISION.md", VISION).commit("vision");
+  repo.push();
+  const develop = repo.write("VISION.md", `${VISION}It counts in develop.\n`).commit("develop vision");
+  repo.push("develop");
+  const mirror = await openMirror(t, repo);
+
+  assert.deepEqual(await mirror.remoteBranch("develop"), { branch: "develop", commit: develop });
+  assert.deepEqual(await mirror.updateBranch("develop"), { branch: "develop", commit: develop, fetched: true });
+  assert.equal(git(mirror.directory, "rev-parse", "HEAD"), develop, "the mirror's HEAD is the base branch's head");
+  assert.deepEqual(await mirror.updateBranch(null), { branch: "main", commit: main, fetched: false }, "null is the default branch, whose head came with develop");
+  await assert.rejects(mirror.updateBranch("release"), /the remote has no branch release/u);
+  await assert.rejects(mirror.updateBranch("--upload-pack=x"), RangeError, "a name git would read as an option is never passed");
+});
+
 test("a default branch moved back to a commit the mirror holds needs no fetch", async (t) => {
   const repo = new FixtureRepo(t);
   const first = repo.write("VISION.md", VISION).commit("vision");

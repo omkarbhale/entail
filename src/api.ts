@@ -59,7 +59,7 @@ import { forgeTitle } from "./repo-ref.ts";
  *   POST   /api/calls/:id/undo                {}: undoes the owner's action on the call while it is held
  *   GET    /api/repos[?all=1]                 enrolled repos (all=1: every repo with a log)
  *   POST   /api/repos                         {"repo": "owner/name", "confirm"?: bool, "since"?: ISO time}
- *   PATCH  /api/repos/:owner/:name            {"confirm"?: bool, "model"?: string|null, "effort"?: string|null}
+ *   PATCH  /api/repos/:owner/:name            {"confirm"?: bool, "model"?: string|null, "effort"?: string|null, "baseBranch"?: string|null}
  *   DELETE /api/repos/:owner/:name            unenrolls
  *   POST   /api/repos/:owner/:name/check      checks the repo now, and answers with what the check did
  *   POST   /api/repos/:owner/:name/backlog    judges the issues open on the forge that have no call yet

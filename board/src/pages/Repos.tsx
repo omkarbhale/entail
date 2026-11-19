@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, type CheckResponse, type EnrollResponse, type RepoView, type SettingsView, type SuggestingView } from "../api.ts";
 import { ENROLLED, EnrollForm, Welcome } from "../components/Enroll.tsx";
 import { EFFORTS, MODELS, options, Saved, useSave } from "../components/Save.tsx";
@@ -204,6 +204,7 @@ function RepoCard({ repo, settings, showRepo }: { repo: RepoView; settings: Sett
           <Saved pending={model.mutation.isPending} saved={model.saved} />
         </span>
       </div>
+      <BaseBranch repo={repo} />
       <SuggestWork repo={repo} now={now} showLog={() => showRepo(repo.repo, "log")} />
       <div className="rrow">
         <span className="lbl">Vision</span>
@@ -376,6 +377,37 @@ function checkText(outcome: { ok: true; result: CheckResponse } | { ok: false; e
   if (result.judged > 0) parts.push(`${result.judged} new call${result.judged === 1 ? "" : "s"}`);
   if (result.posted > 0) parts.push(`${result.posted} post${result.posted === 1 ? "" : "s"} on ${forgeName(repo)}`);
   return `Checked just now: ${parts.join(", ")}.`;
+}
+
+/**
+ * The repo's base branch: the branch entail reads the repo and its vision on,
+ * follows and merges PRs into and diffs them against. Empty is the forge's
+ * default branch.
+ */
+function BaseBranch({ repo }: { repo: RepoView }) {
+  const [branch, setBranch] = useState(repo.baseBranch ?? "");
+  useEffect(() => setBranch(repo.baseBranch ?? ""), [repo.baseBranch]);
+  const base = useSave((value: string | null) => api.changeRepo(repo.repo, { baseBranch: value }));
+  const wanted = branch.trim() === "" ? null : branch.trim();
+  const save = (event: FormEvent) => {
+    event.preventDefault();
+    if (wanted !== repo.baseBranch) base.mutation.mutate(wanted);
+  };
+  return (
+    <form className="rrow" onSubmit={save}>
+      <label className="lbl" htmlFor={`base-${repo.repo}`}>
+        Base branch
+      </label>
+      <span className="val">
+        <input id={`base-${repo.repo}`} className="field" placeholder={`${forgeName(repo.repo)}’s default branch`} value={branch} onChange={(event) => setBranch(event.target.value)} autoComplete="off" spellCheck={false} />
+        <button className="btn sm" type="submit" disabled={base.mutation.isPending || wanted === repo.baseBranch}>
+          {wanted === null && repo.baseBranch !== null ? "Use the default" : "Save"}
+        </button>
+        <Saved pending={base.mutation.isPending} saved={base.saved} />
+        <span className="small muted">Where entail reads the repo and its vision, and which PRs it judges and merges.</span>
+      </span>
+    </form>
+  );
 }
 
 /** Where the settings for every repo are, now that this page holds only each repo's own. */

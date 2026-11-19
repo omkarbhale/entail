@@ -292,7 +292,7 @@ export interface ForgeFacts {
  *
  * - `issue.md`: the issue the PR closes, as {@link renderIssue} writes it;
  *   absent for a PR with no cleared ticket behind it;
- * - `vision.md`: VISION.md on the default branch the PR was judged against;
+ * - `vision.md`: VISION.md on the base branch the PR was judged against;
  * - `criteria.md`: the criteria entail set for the issue at intake, one
  *   `- ` item each, with an indented `Basis:` line when one is known; absent
  *   or empty when there are none, as for a PR with no cleared ticket;
@@ -313,7 +313,7 @@ export interface LandingCase {
   pr: number;
   /** The PR's head commit the call was made at. */
   head: string;
-  /** The default branch's commit the PR was diffed against. */
+  /** The base branch's commit the PR was diffed against. */
   base: string;
   /** The issue as judged; empty with no issue. */
   issueText: string;

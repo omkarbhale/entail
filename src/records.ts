@@ -48,12 +48,13 @@ export interface UnenrolledEntry extends EntryBase, ByOwner {
   type: "unenrolled";
 }
 
-/** A change to the repo's settings. A model or effort of null means the default. */
+/** A change to the repo's settings. A model or effort of null means the default; a base branch of null, the forge's default branch. */
 export interface SettingsEntry extends EntryBase, ByOwner {
   type: "settings";
   confirm?: boolean;
   model?: string | null;
   effort?: Effort | null;
+  baseBranch?: string | null;
 }
 
 /**
@@ -99,7 +100,7 @@ export interface CallEntry extends EntryBase {
   /** The issue as the judgment read it. */
   issueText: string;
   vision: { commit: string; text: string } | null;
-  /** The default branch's commit the repo was read at. */
+  /** The base branch's commit the repo was read at. */
   sha: string;
   call: IssueCall;
   /** Whether the repo was in confirm mode, so a go or no waits for the owner. */
@@ -133,7 +134,7 @@ export interface VisionRecheck {
 }
 
 /**
- * VISION.md on the default branch as a pass last saw it, recorded when it
+ * VISION.md on the base branch as a pass last saw it, recorded when it
  * changed from what entail saw before. `from` is the commit of the vision it
  * replaced. The open issues entail called against the earlier text are
  * re-checked once per change.
@@ -257,7 +258,7 @@ export interface LandingEntry extends EntryBase {
   prText: string;
   /** The PR's head commit judged; a merge happens at it and nowhere else. */
   head: string;
-  /** The default branch's commit the diff was taken against. */
+  /** The base branch's commit the diff was taken against. */
   base: string;
   vision: { commit: string; text: string } | null;
   /** With no issue: the issues the forge linked the PR to, and where each stood, as the judgment read them. */
@@ -434,7 +435,7 @@ export interface LeftOut {
  */
 export interface SuggestedEntry extends EntryBase, ByOwner {
   type: "suggested";
-  /** The default branch's commit the repo was read at. */
+  /** The base branch's commit the repo was read at. */
   sha: string;
   visionCommit: string | null;
   suggestions: Suggestion[];
@@ -661,12 +662,18 @@ export interface RepoState {
   /** The repo's own model and effort, or null for the default. */
   model: string | null;
   effort: Effort | null;
+  /**
+   * The branch entail works against in place of the forge's default branch,
+   * or null for the forge's default: what it reads, which PRs it follows, what
+   * it diffs against and where it merges.
+   */
+  baseBranch: string | null;
   /** The VISION.md a pass last recorded seeing change, or null when none was recorded. */
   vision: { entry: number; commit: string | null; text: string | null } | null;
 }
 
 export function repoState(repo: string, entries: readonly Entry[]): RepoState {
-  const state: RepoState = { repo, enrolled: false, since: null, confirm: true, model: null, effort: null, vision: null };
+  const state: RepoState = { repo, enrolled: false, since: null, confirm: true, model: null, effort: null, baseBranch: null, vision: null };
   for (const entry of entries) {
     if (entry.type === "enrolled") {
       state.enrolled = true;
@@ -678,6 +685,7 @@ export function repoState(repo: string, entries: readonly Entry[]): RepoState {
       if (entry.confirm !== undefined) state.confirm = entry.confirm;
       if (entry.model !== undefined) state.model = entry.model;
       if (entry.effort !== undefined) state.effort = entry.effort;
+      if (entry.baseBranch !== undefined) state.baseBranch = entry.baseBranch;
     } else if (entry.type === "vision-seen") {
       state.vision = { entry: entry.id, commit: entry.commit, text: entry.text };
     }
@@ -880,7 +888,15 @@ export function criteriaOf(call: IssueCall): Criterion[] {
  * PR only through the forge's own link data, never the PR's claim. It is a
  * rendering rule, not stored in the log, and never given to the landing call.
  */
-export function linkCriterion(issue: number): { criterion: string; source: "entail"; basis: string } {
+export function linkCriterion(issue: number, baseBranch: string | null = null): { criterion: string; source: "entail"; basis: string } {
+  if (baseBranch !== null) {
+    // The forge may not link a PR into a branch other than its default, so the head branch's name carries the issue.
+    return {
+      criterion: `Open the PR into \`${baseBranch}\` from a branch whose name carries this issue's number, such as \`${issue}-short-name\`, and link it to this issue, for example with \`Closes #${issue}\` in the PR description; a PR into \`${baseBranch}\` that is neither linked nor named for this issue is judged on the vision alone, without this issue's criteria.`,
+      source: "entail",
+      basis: `entail judges a PR against an issue's criteria only when the forge's own link data says it closes that issue or, as the forge may not link a PR into ${baseBranch}, its head branch's name names it.`,
+    };
+  }
   return {
     criterion: `Link the PR to this issue so GitHub lists it under the PR's Development section, for example with \`Closes #${issue}\` in the PR description; a PR that is not linked is judged on the vision alone, without this issue's criteria.`,
     source: "entail",

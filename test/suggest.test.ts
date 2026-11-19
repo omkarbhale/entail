@@ -139,6 +139,7 @@ test("a filed suggestion says whose entail suggested it, never starts a line wit
 /** A forge that files issues in memory. */
 class FakeForge implements SuggestForge {
   readonly setting = { forge: "github", host: "github.com", path: REPO } as const;
+  readonly baseBranch = null;
   readonly issues: Issue[] = [];
   readonly created: { title: string; body: string; labels: readonly string[] }[] = [];
   failAfter: number | null = null;
@@ -148,7 +149,7 @@ class FakeForge implements SuggestForge {
   }
 
   async project() {
-    return { forge: "github" as const, host: "github.com", id: 5001, path: REPO, defaultBranch: "main" };
+    return { forge: "github" as const, host: "github.com", id: 5001, path: REPO, defaultBranch: "main", baseBranch: "main" };
   }
 
   async openIssues() {

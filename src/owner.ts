@@ -20,6 +20,7 @@ import { caseSlug, LANDING_CALLS, landingCaseSlug, OWNER_CALLS, type Case, type 
 import { refsText, refText } from "./blockers.ts";
 import { ciGreen } from "./landing.ts";
 import { scopeOf } from "./judgment.ts";
+import { isBranchName } from "./git.ts";
 import { EFFORTS, type Effort } from "./model-runner.ts";
 import { parsePins, pinsFile } from "./pins.ts";
 import {
@@ -132,13 +133,15 @@ export interface RepoSettingsChange {
   model?: string | null;
   /** An effort level, or null for the default. */
   effort?: Effort | null;
+  /** A branch name, or null for the forge's default branch. */
+  baseBranch?: string | null;
 }
 
 /** Checks a settings change as it arrives from the board or the command line. */
 export function checkSettingsChange(change: Record<string, unknown>): RepoSettingsChange {
   const checked: RepoSettingsChange = {};
   for (const key of Object.keys(change)) {
-    if (!["confirm", "model", "effort"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
+    if (!["confirm", "model", "effort", "baseBranch"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
   }
   if (change.confirm !== undefined) {
     if (typeof change.confirm !== "boolean") throw new OwnerError(400, "confirm is true or false");
@@ -152,6 +155,11 @@ export function checkSettingsChange(change: Record<string, unknown>): RepoSettin
     if (change.effort !== null && !(EFFORTS as readonly unknown[]).includes(change.effort)) throw new OwnerError(400, `effort is one of ${EFFORTS.join(", ")}, or null for the default`);
     checked.effort = change.effort as Effort | null;
   }
+  if (change.baseBranch !== undefined) {
+    const branch = typeof change.baseBranch === "string" ? change.baseBranch.trim() : change.baseBranch;
+    if (branch !== null && (typeof branch !== "string" || !isBranchName(branch))) throw new OwnerError(400, "baseBranch is a branch name, or null for the forge's default branch");
+    checked.baseBranch = branch as string | null;
+  }
   return checked;
 }
 
@@ -163,6 +171,7 @@ export function changeRepoSettings(dataDirectory: string, repoText: string, by: 
   if (change.confirm !== undefined && change.confirm !== state.confirm) changed.confirm = change.confirm;
   if (change.model !== undefined && change.model !== state.model) changed.model = change.model;
   if (change.effort !== undefined && change.effort !== state.effort) changed.effort = change.effort;
+  if (change.baseBranch !== undefined && change.baseBranch !== state.baseBranch) changed.baseBranch = change.baseBranch;
   if (Object.keys(changed).length > 0) appendEntry(dataDirectory, repo, { type: "settings", by, ...changed }, now);
   return repoState(repo, readLog(dataDirectory, repo));
 }
@@ -1235,6 +1244,7 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
             entry.confirm === undefined ? null : `confirm mode ${entry.confirm ? "on" : "off"}`,
             entry.model === undefined ? null : `model ${entry.model ?? "the default"}`,
             entry.effort === undefined ? null : `effort ${entry.effort ?? "the default"}`,
+            entry.baseBranch === undefined ? null : `base branch ${entry.baseBranch ?? `the default (${forgeTitle(item.repo)}'s)`}`,
           ].filter((change) => change !== null);
           lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} set ${changes.join(", ")}`);
         }
