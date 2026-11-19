@@ -141,7 +141,7 @@ A ruling never settles more than it earned:
 - The owner's own word is never replaced: an override or an answer to go runs the judgment again as the owner's call, not a ruling's.
 - A ruling is derived from the repo's log each time and is never written to `VISION.md` or anywhere else; the vision grows only as [the vision is the record](../VISION.md) says.
 
-Questions logged before kinds were named have none and earn nothing. Rulings are per repo; the three answers are `RULING_MIN_ANSWERS` in `src/rulings.ts`. A vision change re-checks a call a ruling settled like any other, and a question it would send to the owner is settled by the ruling the same way. Replaying the case book reads no answer history, so it never settles by a ruling: it replays the judgment as it stands.
+Questions logged before kinds were named have none and earn nothing. Rulings are per repo; the three answers are `RULING_MIN_ANSWERS` in `src/rulings.ts`. A vision change re-checks a call a ruling settled like any other, and a question it would send to the owner is settled by the ruling the same way, unless the call being re-checked was the owner's own. Replaying the case book reads no answer history, so it never settles by a ruling: it replays the judgment as it stands.
 
 ## Backing up
 
