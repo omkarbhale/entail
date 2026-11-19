@@ -1,4 +1,3 @@
-import type { Criterion } from "./judgment.ts";
 import type { LandingEntry, LandingPending, PullRequestRef } from "./records.ts";
 
 /**
@@ -37,7 +36,7 @@ export interface SendBackHandoff {
   /** The criteria the issue's go set, each marked met or unmet at the head, with the evidence. */
   checklist: { criterion: string; met: boolean; evidence: string }[];
   /** The criteria with where each comes from; empty with no issue. */
-  criteria: Criterion[];
+  criteria: LandingEntry["criteria"];
   /** The owner's words, when the owner's override is what sent the PR back. */
   ownerWords?: string;
 }
