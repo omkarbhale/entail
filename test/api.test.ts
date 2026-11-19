@@ -10,6 +10,7 @@ import { createApi, type ApiOptions, type BoardLoop } from "../src/api.ts";
 import type { BoardEvent } from "../src/api-types.ts";
 import { OWNER_CASE_BOOK, readCaseBook } from "../src/case-book.ts";
 import { EventBus } from "../src/events.ts";
+import { ForgeUntrustedCertificateError } from "../src/forge/forge.ts";
 import { appendEntry, loggedRepos, readLog, readSettings, type CallEntry, type LandingEntry } from "../src/records.ts";
 import { SuggestionRuns, type SuggestionOutcome } from "../src/suggest.ts";
 
@@ -632,4 +633,65 @@ test("a PR's question is answered merge or send-back, and a merge call is confir
       ["confirmed", merge.id],
     ],
   );
+});
+
+test("a self-hosted GitLab whose certificate glab does not trust is explained on enrolling, offering the fix, and writes nothing until the owner confirms it", async (t) => {
+  const applied: string[][] = [];
+  let trusted = false;
+  const api = await serve(t, {
+    trust: { caCertificate: async (host) => (host === "git.example.com" ? "/etc/ca/team.pem" : null), apply: async (host, file) => void (applied.push([host, file]), (trusted = true)) },
+    forgeFor: () => ({
+      project: async () => {
+        if (!trusted) throw new ForgeUntrustedCertificateError("git.example.com", "glab", "x509: certificate signed by unknown authority");
+        return { forge: "gitlab", host: "git.example.com", id: 5, path: "acme/tally", defaultBranch: "main", baseBranch: "main" };
+      },
+      instance: async () => ({ version: null, unsupported: null }),
+      openIssueNumbers: async () => [],
+    }),
+  });
+  const refused = await api.call("POST", "/api/repos", { repo: "gitlab://git.example.com/acme/tally" });
+  assert.equal(refused.status, 502);
+  assert.match(refused.body.error, /glab does not trust the certificate of git\.example\.com/u);
+  assert.match(refused.body.error, /glab config set ca_cert \/etc\/ca\/team\.pem --host git\.example\.com/u);
+  assert.deepEqual(refused.body.untrustedCertificate, { host: "git.example.com", cli: "glab", fixable: true, caCertificate: "/etc/ca/team.pem", command: "glab config set ca_cert /etc/ca/team.pem --host git.example.com" });
+  assert.deepEqual(applied, [], "reading and failing never write glab's setting");
+  assert.deepEqual(readLog(api.dataDirectory, "gitlab://git.example.com/acme/tally"), []);
+
+  const confirmed = await api.call("POST", "/api/trust", { cli: "glab", host: "Git.Example.com", caCertificate: "/etc/ca/team.pem" });
+  assert.equal(confirmed.status, 200);
+  assert.deepEqual(applied, [["git.example.com", "/etc/ca/team.pem"]]);
+  const retried = await api.call("POST", "/api/repos", { repo: "gitlab://git.example.com/acme/tally" });
+  assert.equal(retried.status, 201);
+});
+
+test("trusting a certificate is only for glab, a self-hosted host and an absolute file, and a refusal from glab is reported without changing anything else", async (t) => {
+  const applied: string[][] = [];
+  const api = await serve(t, { trust: { caCertificate: async () => null, apply: async (host, file) => void (applied.push([host, file]), (() => { if (file.endsWith("bad.pem")) throw new Error("bad.pem is not a certificate file"); })()) } });
+  const ok = { cli: "glab", host: "git.example.com", caCertificate: "/etc/ca/team.pem" };
+  assert.equal((await api.call("POST", "/api/trust", { ...ok, cli: "gh" })).status, 400);
+  assert.equal((await api.call("POST", "/api/trust", { ...ok, host: "gitlab.com" })).status, 400);
+  assert.equal((await api.call("POST", "/api/trust", { ...ok, host: "github.com" })).status, 400);
+  assert.equal((await api.call("POST", "/api/trust", { ...ok, host: "git.example.com --host other" })).status, 400);
+  assert.equal((await api.call("POST", "/api/trust", { ...ok, caCertificate: "team.pem" })).status, 400);
+  assert.equal((await api.call("GET", "/api/trust")).status, 405);
+  assert.deepEqual(applied, []);
+  const refused = await api.call("POST", "/api/trust", { ...ok, caCertificate: "/etc/ca/bad.pem" });
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.error, /bad\.pem is not a certificate file/u);
+});
+
+test("an untrusted certificate on a CLI with no per-host setting is explained but offers no fix", async (t) => {
+  const api = await serve(t, {
+    forgeFor: () => ({
+      project: async () => {
+        throw new ForgeUntrustedCertificateError("github.com", "gh", "x509: certificate signed by unknown authority");
+      },
+      instance: async () => ({ version: null, unsupported: null }),
+      openIssueNumbers: async () => [],
+    }),
+  });
+  const refused = await api.call("POST", "/api/repos", { repo: "acme/tally" });
+  assert.equal(refused.status, 502);
+  assert.match(refused.body.error, /SSL_CERT_FILE/u);
+  assert.equal(refused.body.untrustedCertificate.fixable, false);
 });

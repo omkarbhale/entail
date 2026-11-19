@@ -4,7 +4,8 @@
  * interface names a forge; repository content comes from git, not from here.
  */
 
-import type { ForgeResponse } from "./transport.ts";
+import type { ForgeCli, ForgeResponse } from "./transport.ts";
+import { untrustedCertificateMessage } from "./trust.ts";
 
 /** Which forge a repo lives on. It is stated by the owner, never guessed from the host. */
 export type ForgeKind = "github" | "gitlab";
@@ -624,6 +625,26 @@ export class ForgeLoggedOutError extends Error {
     super(`the CLI for ${host} is not logged in: ${detail}`);
     this.name = "ForgeLoggedOutError";
     this.host = host;
+  }
+}
+
+/**
+ * The host's CLI refused its certificate as signed by an authority it does not
+ * know, as a private certificate authority's is. The message says so in plain
+ * words and gives the steps that make the CLI trust the host.
+ */
+export class ForgeUntrustedCertificateError extends Error {
+  readonly host: string;
+  readonly cli: ForgeCli;
+  /** The CLI's own error, as it said it. */
+  readonly detail: string;
+
+  constructor(host: string, cli: ForgeCli, detail: string) {
+    super(untrustedCertificateMessage(host, cli, detail));
+    this.name = "ForgeUntrustedCertificateError";
+    this.host = host;
+    this.cli = cli;
+    this.detail = detail;
   }
 }
 

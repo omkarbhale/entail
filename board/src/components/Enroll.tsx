@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
-import { api, ApiError, type EnrollResponse } from "../api.ts";
+import { api, ApiError, type EnrollResponse, type UntrustedCertificate } from "../api.ts";
 import { forgeName } from "../format.ts";
 import { REPOS } from "../queries.ts";
 import { useDraft, useToast } from "../state.tsx";
@@ -33,22 +33,42 @@ export function EnrollForm({ primary }: { primary?: boolean }) {
   const toast = useToast();
   const [value, setValue] = useDraft("enroll");
   const [message, setMessage] = useState<{ text: string; bad: boolean } | null>(null);
+  const [untrusted, setUntrusted] = useState<{ repo: string; found: UntrustedCertificate } | null>(null);
+  const [file, setFile] = useState("");
   const enroll = useMutation({
     mutationFn: (repo: string) => api.enroll(repo),
     onSuccess: (response: EnrollResponse) => {
       client.setQueryData(ENROLLED, response);
       setValue("");
       setMessage(null);
+      setUntrusted(null);
       toast(`Enrolled ${response.repo.repo}. Confirm mode is on.`);
       void client.invalidateQueries({ queryKey: REPOS });
       void client.invalidateQueries();
       if (window.location.hash !== "#/repos") window.location.hash = "#/repos";
     },
-    onError: (error) => {
+    onError: (error, repo) => {
+      if (error instanceof ApiError && error.untrustedCertificate !== null) {
+        setUntrusted({ repo, found: error.untrustedCertificate });
+        setFile(error.untrustedCertificate.caCertificate ?? "");
+        setMessage({ text: `${error.message.charAt(0).toUpperCase()}${error.message.slice(1)}. Nothing was enrolled.`, bad: true });
+        return;
+      }
+      setUntrusted(null);
       setMessage({
         text: error instanceof ApiError && !error.network ? `${error.message.charAt(0).toUpperCase()}${error.message.slice(1)}. Nothing was enrolled.` : "entail did not answer, so nothing was enrolled. Try again.",
         bad: true,
       });
+    },
+  });
+  // Only after the owner confirms this host and this file does entail write glab's setting, and then it tries the enroll again.
+  const trust = useMutation({
+    mutationFn: ({ host, caCertificate }: { host: string; caCertificate: string }) => api.trustCertificate(host, caCertificate),
+    onSuccess: () => {
+      if (untrusted !== null) enroll.mutate(untrusted.repo);
+    },
+    onError: (error) => {
+      setMessage({ text: error instanceof ApiError && !error.network ? `${error.message.charAt(0).toUpperCase()}${error.message.slice(1)}. glab was not changed.` : "entail did not answer, so glab was not changed. Try again.", bad: true });
     },
   });
   const submit = (event: FormEvent) => {
@@ -59,6 +79,7 @@ export function EnrollForm({ primary }: { primary?: boolean }) {
       return;
     }
     setMessage(null);
+    setUntrusted(null);
     enroll.mutate(repo);
   };
   return (
@@ -82,6 +103,21 @@ export function EnrollForm({ primary }: { primary?: boolean }) {
       <p className={`form-msg${message?.bad ? " bad" : ""}`} role="status">
         {message?.text}
       </p>
+      {untrusted?.found.fixable === true && (
+        <div className="trust-offer" role="group" aria-label="Trust this host's certificate">
+          <p>
+            entail can set <code>glab</code> to trust <strong>{untrusted.found.host}</strong> for you, then enroll again. It changes <code>glab</code>’s own configuration for that host only, and only if you confirm.
+          </p>
+          <label htmlFor="trust-file">CA certificate file to trust for {untrusted.found.host}</label>
+          <input id="trust-file" className="field" value={file} onChange={(event) => setFile(event.target.value)} placeholder="/path/to/ca.pem" autoComplete="off" spellCheck={false} disabled={trust.isPending || enroll.isPending} />
+          <p className="small">
+            {untrusted.found.caCertificate === null ? "git names no CA certificate file for this host, so give the absolute path of the file." : "This is the file git is set to trust for this host."} It runs <code>glab config set ca_cert {file.trim() === "" ? "<file>" : file.trim()} --host {untrusted.found.host}</code>.
+          </p>
+          <button className="btn primary" type="button" disabled={file.trim() === "" || trust.isPending || enroll.isPending} onClick={() => trust.mutate({ host: untrusted.found.host, caCertificate: file.trim() })}>
+            Trust {untrusted.found.host} with this file and enroll
+          </button>
+        </div>
+      )}
     </>
   );
 }

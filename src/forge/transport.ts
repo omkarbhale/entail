@@ -47,13 +47,19 @@ export class TransportError extends Error {
    * body ended, as a server or a proxy in front of it may do to a long one.
    */
   readonly cutOff: boolean;
+  /**
+   * True when the CLI refused the host's certificate as signed by an
+   * authority it does not know, as a private certificate authority's is.
+   */
+  readonly untrustedCertificate: boolean;
 
-  constructor(message: string, loggedOut: boolean, cliMissing = false, cutOff = false) {
+  constructor(message: string, loggedOut: boolean, cliMissing = false, cutOff = false, untrustedCertificate = false) {
     super(message);
     this.name = "TransportError";
     this.loggedOut = loggedOut;
     this.cliMissing = cliMissing;
     this.cutOff = cutOff;
+    this.untrustedCertificate = untrustedCertificate;
   }
 }
 
@@ -77,6 +83,14 @@ const GH_EXIT_AUTH_REQUIRED = 4;
  * token, and the forge's 401 says so instead.
  */
 const GLAB_AUTH_REQUIRED = /glab auth login|glab is not authenticated/;
+/**
+ * What Go's TLS stack, under both CLIs, says of a certificate signed by an
+ * authority it does not know: "x509: certificate signed by unknown authority",
+ * and on macOS "x509: “host” certificate is not trusted". An expired
+ * certificate or one for another name is a different failure, which a trusted
+ * authority would not fix.
+ */
+const UNTRUSTED_CERTIFICATE = /x509: (?:certificate signed by unknown authority|[^\n]{0,200}certificate is not trusted)/;
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_OUTPUT_BYTES = 256 * 1024 * 1024;
 
@@ -162,8 +176,9 @@ export class CliTransport implements Transport {
           const loggedOut =
             code !== null && (this.#cli === "gh" ? code === GH_EXIT_AUTH_REQUIRED : GLAB_AUTH_REQUIRED.test(stderr));
           const cliMissing = error !== null && (error as NodeJS.ErrnoException).code === "ENOENT";
+          const untrustedCertificate = !timedOut && UNTRUSTED_CERTIFICATE.test(stderr);
           reject(
-            new TransportError(`${this.#cli} api ${request.method} ${request.path} on ${request.host}: ${detail}`, loggedOut, cliMissing),
+            new TransportError(`${this.#cli} api ${request.method} ${request.path} on ${request.host}: ${detail}`, loggedOut, cliMissing, false, untrustedCertificate),
           );
         },
       );
