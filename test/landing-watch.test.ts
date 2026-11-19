@@ -717,3 +717,16 @@ test("a go confirmed but still in its undo window is not cleared yet: a PR linke
   await h.pass({ now: () => at(HOLD_MS + 2) });
   assert.equal(landings(h).at(-1)!.issue?.number, 1);
 });
+
+test("a PR with no ticket on a repo with no VISION.md gets no model run and no call, and the skip is said once", async (t) => {
+  const h = harness(t, { confirm: false, noVision: true });
+  h.forge.openPull(9, "Read standard input", { head: HEAD1, closes: [], body: "Adds stdin." });
+  h.forge.report(HEAD1, ["test", "passed"]);
+  h.scriptLanding(9, better());
+  for (let i = 0; i < 3; i++) await h.pass();
+  assert.equal(h.runner.requests.filter((r) => r.kind === "pr-call").length, 0);
+  assert.equal(landings(h).length, 0);
+  assert.equal(readLog(h.dataDirectory, REPO).filter((e) => e.type === "landing-failed").length, 0);
+  assert.deepEqual(h.forge.merges, []);
+  assert.equal(h.printed.filter((line) => /has no VISION\.md/u.test(line)).length, 1);
+});

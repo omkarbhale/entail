@@ -1106,6 +1106,14 @@ async function passPullRequests(
         continue;
       }
       const entry = await judgePullRequest(context, pr, go, { checks: report.checks, required: report.required }, entries, go === null ? linkedNow.map((one) => ({ number: one, standing: linkedStanding(entries, one) })) : []);
+      if ("skipped" in entry) {
+        // Nothing is recorded, so the PR is read again next pass; the reason is said once, when the PR changed.
+        if (changed.has(number)) {
+          options.log?.info("landing-skipped", { repo, pr: number, head: pr.headSha, why: "no-vision" });
+          options.print(`${name}: ${entry.skipped}`);
+        }
+        continue;
+      }
       if ("waiting" in entry) {
         options.log?.info("checks-awaited", { repo, pr: number, head: pr.headSha, why: entry.waiting });
         if (changed.has(number)) options.print(`${name}: ${entry.waiting}; not judged yet`);
@@ -1151,7 +1159,9 @@ function pullRequestRef(pr: PullRequest): LandingEntry["pr"] {
  * Makes the landing call on a PR's head, against the criteria of the go it
  * closes, or on the vision alone when `go` is null: no cleared ticket is
  * behind it. `failed` with the reason when the run gave none, or `waiting`
- * when CI has not reported at the head.
+ * when CI has not reported at the head, or `skipped` with the reason when the
+ * PR has no ticket and the repo no VISION.md: there is nothing to judge it
+ * against, so it gets no model run and is left to the owner.
  */
 async function judgePullRequest(
   context: JudgeContext,
@@ -1160,7 +1170,7 @@ async function judgePullRequest(
   checks: Pick<LandingEntry["facts"], "checks" | "required">,
   entries: readonly Entry[],
   linked: LinkedIssue[],
-): Promise<NewEntry | { failed: string } | { waiting: string }> {
+): Promise<NewEntry | { failed: string } | { waiting: string } | { skipped: string }> {
   const { options, state, forge } = context;
   const { repo } = state;
   const name = `${repo}#${pr.number}`;
@@ -1168,6 +1178,9 @@ async function judgePullRequest(
   const facts = { ...checks, files };
   const reading = await options.prReader(repo, forge, pr.number, pr.headSha);
   try {
+    if (go === null && reading.vision === null) {
+      return { skipped: `no cleared ticket is behind this pull request and ${repo} has no VISION.md on ${forge.baseBranch}, so there is nothing to judge it against; entail leaves it to the owner to merge` };
+    }
     if (checks.checks.length === 0 && checks.required.length === 0) {
       const age = (options.now?.() ?? new Date()).getTime() - Date.parse(reading.committedAt);
       if (age < CHECKS_WINDOW_MS) return { waiting: `no checks have reported at ${pr.headSha.slice(0, 7)} yet, which was committed ${Math.max(0, Math.round(age / 60_000))} minutes ago` };
