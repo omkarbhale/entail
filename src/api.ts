@@ -71,7 +71,7 @@ import { forgeTitle, isSelfHostedHost } from "./repo-ref.ts";
  *                                             self-hosted host, after the owner confirmed both on the board; enrolling a host glab does not trust answers 502
  *                                             with `untrustedCertificate` (host, cli, fixable, caCertificate, command) for the board to offer it
  *   GET    /api/settings                      the owner's name, the default model and effort, the notice and start commands and the backup remote with how its last push went
- *   PATCH  /api/settings                      {"owner"?: string, "model"?: string, "effort"?: string, "notice"?: string|null, "start"?: string|null, "backup"?: string|null},
+ *   PATCH  /api/settings                      {"owner"?: string, "model"?: string, "effort"?: string, "notice"?: string|null, "start"?: string|null, "sendBack"?: string|null, "backup"?: string|null},
  *                                             checked as `entail settings` checks them
  *
  * A GitLab project is addressed by its whole name as one encoded segment in
@@ -400,7 +400,7 @@ function status(options: ApiOptions): StatusView {
 }
 
 function settingsView(settings: GlobalSettings, dataDirectory: string): SettingsView {
-  return { owner: settings.owner, model: settings.model, effort: settings.effort, notice: settings.notice ?? null, start: settings.start ?? null, backup: backupView(dataDirectory, settings.backup ?? null) };
+  return { owner: settings.owner, model: settings.model, effort: settings.effort, notice: settings.notice ?? null, start: settings.start ?? null, sendBack: settings.sendBack ?? null, backup: backupView(dataDirectory, settings.backup ?? null) };
 }
 
 /** The backup as the board shows it: the remote, with any password in its URL hidden, and how its last push went. */
@@ -428,7 +428,7 @@ function events(options: ApiOptions, request: IncomingMessage, response: ServerR
 export function changeSettings(dataDirectory: string, defaultModel: string, change: Record<string, unknown>): GlobalSettings {
   const settings = readSettings(dataDirectory, { model: defaultModel });
   for (const key of Object.keys(change)) {
-    if (!["owner", "model", "effort", "notice", "start", "backup"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
+    if (!["owner", "model", "effort", "notice", "start", "sendBack", "backup"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
   }
   if (change.owner !== undefined) {
     if (typeof change.owner !== "string" || change.owner.trim() === "" || /[\r\n]/u.test(change.owner)) throw new OwnerError(400, "owner is the owner's name, on one line");
@@ -449,6 +449,10 @@ export function changeSettings(dataDirectory: string, defaultModel: string, chan
   if (change.start !== undefined) {
     if (change.start !== null && (typeof change.start !== "string" || /[\r\n]/u.test(change.start))) throw new OwnerError(400, "start is a command on one line, or null to start nothing");
     settings.start = change.start === null || change.start.trim() === "" ? null : change.start.trim();
+  }
+  if (change.sendBack !== undefined) {
+    if (change.sendBack !== null && (typeof change.sendBack !== "string" || /[\r\n]/u.test(change.sendBack))) throw new OwnerError(400, "sendBack is a command on one line, or null to hand nothing back");
+    settings.sendBack = change.sendBack === null || change.sendBack.trim() === "" ? null : change.sendBack.trim();
   }
   if (change.backup !== undefined) {
     const remote = typeof change.backup === "string" ? checkRemote(change.backup) : null;

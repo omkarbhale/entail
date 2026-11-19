@@ -366,6 +366,8 @@ export interface SettingsView {
   notice: string | null;
   /** The command run when a go acts, with the handoff on its standard input. */
   start: string | null;
+  /** The command run when entail sends a PR back or cancels it, with the handoff on its standard input. */
+  sendBack: string | null;
   /** Where the records are backed up. */
   backup: BackupView;
 }

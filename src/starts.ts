@@ -104,7 +104,7 @@ export interface StartResult {
  * timeout is stopped, with everything it started that is still in its process
  * group, or on Windows in its process tree.
  */
-export function runStart(command: string, handoff: Handoff, timeoutMs = START_TIMEOUT_MS, killGraceMs = START_KILL_GRACE_MS): Promise<StartResult> {
+export function runStart(command: string, handoff: object, timeoutMs = START_TIMEOUT_MS, killGraceMs = START_KILL_GRACE_MS): Promise<StartResult> {
   return new Promise((resolve) => {
     let stderr = "";
     const windows = process.platform === "win32";

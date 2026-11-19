@@ -44,8 +44,10 @@ import {
   mentionKey,
   newEntryId,
   pendingLanding,
+  interruptedHandoffs,
   interruptedStarts,
   pendingGrowth,
+  pendingHandoffs,
   pendingStarts,
   pendingWork,
   readLog,
@@ -74,7 +76,8 @@ import {
   type BaseBranchSeenEntry,
   workStarted,
 } from "./records.ts";
-import { handoffFor, runStart } from "./starts.ts";
+import { sendBackHandoffFor, type SendBackHandoff } from "./send-backs.ts";
+import { handoffFor, runStart, type Handoff, type StartResult } from "./starts.ts";
 import { SUGGESTED_LABEL, TITLE_LIMIT, type SuggestReader } from "./suggest.ts";
 import { collapseWhitespace, readVision, VISION_PATH, visionTextChange, type VisionChange } from "./vision.ts";
 import { addVisionLine, decideGrowth, VISION_GROWTH_PROMPT_VERSION, type GrowthDecision } from "./vision-growth.ts";
@@ -228,7 +231,9 @@ export interface PassOptions {
   /** Told when a repo has been checked for changes, with what the check did. */
   onChecked?: (repo: string, outcome: CheckOutcome) => void;
   /** Runs the start command; {@link runStart} unless replaced in tests. */
-  startWork?: typeof runStart;
+  startWork?: (command: string, handoff: Handoff) => Promise<StartResult>;
+  /** Runs the send-back command; {@link runStart} unless replaced in tests. */
+  handBack?: (command: string, handoff: SendBackHandoff) => Promise<StartResult>;
 }
 
 /** What a check on one repo did; `failure` is the last step that failed, if any did. */
@@ -467,6 +472,20 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
   for (const acted of pendingStarts([...readLog(options.dataDirectory, repo), ...planned])) {
     options.signal?.throwIfAborted();
     await startWork(options, repo, acted, record);
+  }
+
+  // The send-back command runs after the comment that sent the PR back was posted and recorded; a crash before it begins runs it at the next pass.
+  // One that began and has no outcome was cut off with the command possibly already at work: it is logged as interrupted, never run again.
+  for (const begun of interruptedHandoffs([...readLog(options.dataDirectory, repo), ...planned])) {
+    if (options.dryRun) continue;
+    const error = "entail stopped while the send-back command was running; it may have taken effect, so it was not run again";
+    record({ type: "handed-back", for: begun.for, pr: begun.pr, command: begun.command, exit: null, error, interrupted: true });
+    options.log?.warn("hand-back-interrupted", { repo, pr: begun.pr, command: begun.command, error });
+    options.print(`${repo}#${begun.pr}: ${error}`);
+  }
+  for (const acted of pendingHandoffs([...readLog(options.dataDirectory, repo), ...planned])) {
+    options.signal?.throwIfAborted();
+    await handBack(options, repo, acted, record);
   }
 
   if (ok && !options.dryRun && key !== null) options.cursors.set(key, batch.cursor);
@@ -973,6 +992,31 @@ async function startWork(options: PassOptions, repo: string, acted: ReturnType<t
   }
 }
 
+/**
+ * Runs the send-back command for a PR that was sent back or cancelled and
+ * records by which command and with what exit status. A command that fails or
+ * times out is recorded and logged and is not run again: the call and its
+ * comment stand either way, and nothing here changes them.
+ */
+async function handBack(options: PassOptions, repo: string, acted: ReturnType<typeof pendingHandoffs>[number], record: (entry: NewEntry) => Entry): Promise<void> {
+  const { command, handoff } = acted.handoff;
+  const name = `${repo}#${acted.pr}`;
+  if (options.dryRun) {
+    options.print(`would hand ${name} to the send-back command: ${command}\n${indent(JSON.stringify(handoff, null, 2))}`);
+    return;
+  }
+  record({ type: "handing-back", for: acted.id, pr: acted.pr, command });
+  const result = await (options.handBack ?? runStart)(command, handoff);
+  record({ type: "handed-back", for: acted.id, pr: acted.pr, command, exit: result.exit, ...(result.error === undefined ? {} : { error: result.error }) });
+  if (result.exit === 0) {
+    options.log?.info("handed-back", { repo, pr: acted.pr, command });
+    options.print(`${name}: handed it to ${command}`);
+  } else {
+    options.log?.warn("hand-back-failed", { repo, pr: acted.pr, command, exit: result.exit, error: result.error });
+    options.print(`${name}: the send-back command failed (${result.error ?? `exit ${result.exit}`}); the call stands`);
+  }
+}
+
 // Vision changes.
 
 /**
@@ -1460,13 +1504,16 @@ async function actOnPullRequest(
   const landing = pending.kind === "landing" ? pending.entry : pending.landing;
   const post = pullRequestPostFor(pending, options.owner, forge.wording.pullRequest);
   const name = `${repo}#${post.pr}`;
+  const sendBackCommand = options.settings.sendBack ?? null;
+  const sendBackHandoff = sendBackCommand === null ? null : sendBackHandoffFor(repo, pending, post);
+  const handoff = sendBackCommand !== null && sendBackHandoff !== null ? { handoff: { command: sendBackCommand, handoff: sendBackHandoff } } : {};
   const productQuestion = post.close && landing.call.productCall && landing.call.question !== null;
   if (options.dryRun) {
     const merge: MergeResult | null = post.merge ? { merged: true, sha: landing.head, commit: null } : null;
     const body = composeComment(options.owner, post.markerFor, post.text(merge));
     const what = [post.merge ? `merge at ${landing.head}` : "", post.close ? "close it unmerged" : "", productQuestion && landing.issue !== null ? `raise #${landing.issue.number}'s question to ${options.owner}` : ""].filter((part) => part !== "");
     options.print(`would post on ${name}${what.length > 0 ? `, then ${what.join(" and ")}` : ""}:\n${indent(body)}`);
-    record({ type: "pr-acted", for: post.markerFor, pr: post.pr, comment: { id: 0, url: "(dry run)" }, merged: null, refused: null, sentBack: post.sentBack, closed: post.close });
+    record({ type: "pr-acted", for: post.markerFor, pr: post.pr, comment: { id: 0, url: "(dry run)" }, merged: null, refused: null, sentBack: post.sentBack, closed: post.close, ...handoff });
     return true;
   }
   // The owner's action reaches the case book as its window closes, before anything is posted or merged for it.
@@ -1486,6 +1533,7 @@ async function actOnPullRequest(
     refused: merge !== null && !merge.merged ? merge.refusal : null,
     sentBack: post.sentBack,
     closed: post.close,
+    ...handoff,
   });
   if (merge?.merged) record({ type: "unfollowed", pr: post.pr, state: "merged" });
   if (post.close) {

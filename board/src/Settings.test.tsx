@@ -44,7 +44,7 @@ describe("Settings", () => {
     expect((screen.getByRole("textbox", { name: /Your name\./u }) as HTMLInputElement).value).toBe("Omkar");
     expect(document.getElementById("notice-command")!.textContent).toBe("examples/notice-to-file.sh");
     expect(document.getElementById("start-command")!.textContent).toBe("examples/start-to-file.sh 'a b'");
-    expect(screen.getAllByText("entail runs it with the shell, as you, on this machine.")).toHaveLength(2);
+    expect(screen.getAllByText("entail runs it with the shell, as you, on this machine.")).toHaveLength(3);
     expect(screen.queryByRole("textbox", { name: "Notices command" })).toBeNull();
     expect(within(document.querySelector("main")!).getByRole("link", { name: "Repos" }).getAttribute("href")).toBe("#/repos");
     expect(screen.getByText(/is not a setting: it stays on the command line/u)).toBeTruthy();
@@ -93,6 +93,17 @@ describe("Settings", () => {
     await waitFor(() => expect(document.getElementById("start-command")!.textContent).toBe("examples/start-to-file.sh"));
     expect(api.sent(/PATCH \/api\/settings/u).map((one) => one.body)).toEqual([{ start: "examples/start-to-file.sh" }]);
     expect(screen.queryByRole("textbox", { name: "Starting work command" })).toBeNull();
+  });
+
+  it("sets the send-back command on a second click", async () => {
+    const api = settingsApi();
+    renderBoard("#/settings");
+    await userEvent.click(await screen.findByRole("button", { name: "Edit the sending back command" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Sending back command" }), "examples/send-back-to-file.sh");
+    await userEvent.click(screen.getByRole("button", { name: "Save…" }));
+    await userEvent.click(screen.getByRole("button", { name: "Yes, run it as me" }));
+    await waitFor(() => expect(document.getElementById("sendBack-command")!.textContent).toBe("examples/send-back-to-file.sh"));
+    expect(api.sent(/PATCH \/api\/settings/u).map((one) => one.body)).toEqual([{ sendBack: "examples/send-back-to-file.sh" }]);
   });
 
   it("turns a command off with an empty value, confirmed the same way", async () => {

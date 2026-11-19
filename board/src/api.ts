@@ -79,6 +79,7 @@ export interface SettingsChange {
   effort?: SettingsView["effort"];
   notice?: string | null;
   start?: string | null;
+  sendBack?: string | null;
   backup?: string | null;
 }
 
