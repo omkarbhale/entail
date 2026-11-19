@@ -97,6 +97,8 @@ test("the prompt has the repo searched for the places an issue's list leaves out
   const prompt = judgmentPrompt(inputs());
   assert.match(prompt, /When the issue asks for a change everywhere something is done, or lists the places in the repo a change touches, do not trust its list\./u);
   assert.match(prompt, /search the repo \(Grep\) for every place that does the thing the issue changes, not only the files it names/u);
+  assert.match(prompt, /search for the plain words as well as the code's names for it/u);
+  assert.match(prompt, /go through the product's features \(each command, run and page\) to see which of them do it, even when they reach it through another file/u);
   assert.match(prompt, /name it by its path in a reading criterion/u);
   assert.match(prompt, /Places the issue already names are not restated, and an issue that names no places gets no criterion listing files\./u);
   assert.match(prompt, /search it for the places an issue's list leaves out \(see Criteria\)/u);
