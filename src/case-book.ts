@@ -15,7 +15,10 @@ import type { ChangedFile, Check, RequiredCheck } from "./forge/forge.ts";
  * - `vision.md`: VISION.md at the commit the call was made against, empty
  *   when the repo had none;
  * - `call.md`: the owner's call, its one-line reason and where that reason
- *   comes from, the date, and the vision commit, as front matter and a body.
+ *   comes from, the date, and the vision commit, as front matter and a body;
+ *   for a go, an optional `must-name:` line lists, comma-separated, what the
+ *   go's criteria must name, such as a place in the repo the issue's own list
+ *   of places left out, which the owner said the go should have carried.
  *
  * A landing case, the owner's call on a PR, is told apart by `kind: landing`
  * in its call.md, and holds two more files (see {@link LandingCase}). Each
@@ -60,6 +63,12 @@ export interface Case {
   date: string;
   /** Anything call.md holds after the reason, such as the owner's words quoted. */
   notes: string;
+  /**
+   * What a go's criteria must name, by the owner's word, such as a place in the
+   * repo the issue left out; replay checks each one appears in a criterion.
+   * Missing or empty when the owner named none.
+   */
+  mustName?: string[];
 }
 
 /** An issue as the judgment reads it. */
@@ -200,6 +209,8 @@ export function parseCall(text: string): Omit<Case, "slug" | "issueText" | "visi
   if (!Number.isSafeInteger(issue) || issue <= 0) throw new Error(`call.md's issue is not an issue number`);
   const [reason = "", ...rest] = match[2]!.trim().split(/\n\s*\n/u);
   if (reason.trim() === "") throw new Error("call.md has no reason");
+  const mustName = (fields.get("must-name") ?? "").split(",").map((name) => name.trim()).filter((name) => name !== "");
+  if (mustName.length > 0 && call !== "go") throw new Error("call.md's must-name is for a go");
   return {
     repo: need("repo"),
     issue,
@@ -209,6 +220,7 @@ export function parseCall(text: string): Omit<Case, "slug" | "issueText" | "visi
     reasonFrom: need("reason-from"),
     reason: reason.trim(),
     notes: rest.join("\n\n").trim(),
+    ...(mustName.length === 0 ? {} : { mustName }),
   };
 }
 
@@ -221,6 +233,7 @@ export function renderCall(call: Omit<Case, "slug" | "issueText" | "vision">): s
     `date: ${call.date}`,
     `vision-commit: ${call.visionCommit}`,
     `reason-from: ${call.reasonFrom}`,
+    ...(call.mustName === undefined || call.mustName.length === 0 ? [] : [`must-name: ${call.mustName.join(", ")}`]),
   ];
   const body = [call.reason, ...(call.notes === "" ? [] : [call.notes])];
   return `---\n${front.join("\n")}\n---\n\n${body.join("\n\n")}\n`;

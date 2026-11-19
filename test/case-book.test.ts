@@ -30,7 +30,7 @@ function temporary(t: TestContext): string {
   return dir;
 }
 
-test("the seeded case book holds the owner's eight calls on this repo", async () => {
+test("the seeded case book holds the owner's nine calls on this repo", async () => {
   const book = await readCaseBook(DEFAULT_CASE_BOOK);
   assert.deepEqual(
     book.map((past) => [past.repo, past.issue, past.call]),
@@ -43,6 +43,7 @@ test("the seeded case book holds the owner's eight calls on this repo", async ()
       ["omkarbhale/entail", 182, "go"],
       ["omkarbhale/entail", 200, "go"],
       ["omkarbhale/entail", 201, "go"],
+      ["omkarbhale/entail", 235, "go"],
     ],
   );
   for (const past of book) {
@@ -52,6 +53,9 @@ test("the seeded case book holds the owner's eight calls on this repo", async ()
     assert.notEqual(past.reason, "", `${past.slug} has a reason`);
     assert.notEqual(past.reasonFrom, "", `${past.slug} says where its reason comes from`);
   }
+  // The owner said on #237 that the go on #235 should have named the suggestion runs the issue's list left out.
+  assert.deepEqual(book.find((past) => past.issue === 235)!.mustName, ["src/suggest.ts"]);
+  assert.ok(book.filter((past) => past.issue !== 235).every((past) => past.mustName === undefined));
   // The owner's edit on #169 asks for React; the case keeps it.
   assert.match(book.find((past) => past.issue === 169)!.issueText, /React/u);
 });
@@ -69,6 +73,10 @@ test("call.md reads back what was written", () => {
   };
   assert.deepEqual(parseCall(renderCall(call)), call);
   assert.deepEqual(parseCall(renderCall({ ...call, notes: "" })), { ...call, notes: "" });
+  const go = { ...call, call: "go" as const, mustName: ["src/suggest.ts", "the board's Repos page"] };
+  assert.match(renderCall(go), /\nmust-name: src\/suggest\.ts, the board's Repos page\n/u);
+  assert.deepEqual(parseCall(renderCall(go)), go);
+  assert.doesNotMatch(renderCall({ ...go, mustName: [] }), /must-name/u);
 });
 
 test("a call.md without a call the owner makes, a reason or a field is refused, naming what is wrong", () => {
@@ -77,6 +85,7 @@ test("a call.md without a call the owner makes, a reason or a field is refused, 
   assert.throws(() => parseCall(good.replace("\nr\n", "\n")), /no reason/u);
   assert.throws(() => parseCall(good.replace(/reason-from: f\n/u, "")), /no reason-from/u);
   assert.throws(() => parseCall("just text"), /no front matter/u);
+  assert.throws(() => parseCall(good.replace("call: go", "call: no\nmust-name: src/x.ts")), /must-name is for a go/u);
 });
 
 test("a malformed case is named when the book is read", async (t) => {

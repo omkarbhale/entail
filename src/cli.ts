@@ -153,7 +153,8 @@ land       make the landing call on one PR at its head and print it, against the
            on the vision alone when it closes none. It posts and merges nothing.
 replay     run every case in the case book through its judgment (issue cases through
            the call on an issue, landing cases through the call on a PR) and print
-           agreement with the owner's calls, disagreements first.
+           agreement with the owner's calls, disagreements first; a go agrees only
+           when its criteria name what its case says they must.
 suggest    suggest work for an enrolled repo from its vision and the product as it stands
            (the board's Suggest work does the same): file each suggestion as an issue
            labelled entail:suggested, which then gets the usual call like any issue, and
@@ -1032,7 +1033,7 @@ async function replayCommand(args: string[]): Promise<number> {
     console.log(
       JSON.stringify(
         [
-          ...results.map((result) => ({ kind: "issue", case: result.case.slug, owner: result.case.call, agrees: result.agrees, judgment: result.judgment })),
+          ...results.map((result) => ({ kind: "issue", case: result.case.slug, owner: result.case.call, agrees: result.agrees, missing: result.missing, judgment: result.judgment })),
           ...landed.map((result) => ({ kind: "landing", case: result.case.slug, owner: result.case.call, agrees: result.agrees, judgment: result.judgment })),
         ],
         null,

@@ -13,7 +13,7 @@ import { arrayOf, boolean, nullable, object, oneOf, string, type Infer } from ".
 export const JUDGMENT_KIND = "issue-call";
 
 /** Changes whenever the prompt or the answer's shape changes, so a call records what judged it. */
-export const JUDGMENT_PROMPT_VERSION = "issue-call-4";
+export const JUDGMENT_PROMPT_VERSION = "issue-call-5";
 
 /** The version a re-check after a vision change records: the judgment's prompt with the vision change added. */
 export const RECHECK_PROMPT_VERSION = `${JUDGMENT_PROMPT_VERSION}+vision-recheck-1`;
@@ -228,9 +228,11 @@ The past cases below are calls the owner actually made, with their reasons. Wher
 A go carries the criteria the PR must meet beyond solving the problem the issue describes, which is always required and never listed. A criterion earns its place only if an implementer who read just the issue could still deliver a PR that solves it and is wrong for this product. Each criterion has one source:
 
 - **vision**: a vision line that adds a requirement the issue did not state. For example, when a vision says new features are opt-in, a new feature's criterion is "it is behind a flag, off by default". Quote the line.
-- **reading**: the issue can be read more than one way, or states a problem and no solution, and you chose one; state the reading so the implementer builds what was approved.
+- **reading**: the issue can be read more than one way, or states a problem and no solution, and you chose one; state the reading so the implementer builds what was approved. A place the issue's own list of places leaves out (below) is a reading too.
 - **edge**: an edge you drew: what is out of this change.
 - **answer**: the owner's answer to a question on this issue, when the comments hold one.
+
+**Places the issue leaves out.** When the issue asks for a change everywhere something is done, or lists the places in the repo a change touches, do not trust its list. Before writing the criteria, search the repo (Grep) for every place that does the thing the issue changes, not only the files it names. Each place the issue's list leaves out is something an implementer working from that list would miss and the landing check would never look for: name it by its path in a reading criterion ("Read as: this also covers \`src/x.ts\`, which ..., and which the issue does not name"), one criterion for all of them when there are several. Places the issue already names are not restated, and an issue that names no places gets no criterion listing files.
 
 Restating the issue, "tests cover X", "VISION.md is not changed", and good practice any implementer would follow are not criteria. A clear bug fix often carries none. Most issues need between none and three.
 
@@ -240,7 +242,7 @@ Ask one question the owner can answer without reading anything else, and say wha
 
 ## The repo
 
-You are in a read-only checkout of ${inputs.repo} at ${inputs.sha}, its default branch. Read whatever helps you judge the product call, such as what exists today or what a change would replace. This is a product call, not a code review.
+You are in a read-only checkout of ${inputs.repo} at ${inputs.sha}, its default branch. Read whatever helps you judge the product call, such as what exists today or what a change would replace, and search it for the places an issue's list leaves out (see Criteria). This is a product call, not a code review.
 
 ## The vision
 
@@ -292,6 +294,7 @@ function precedent(past: Case): string {
     `${past.repo}#${past.issue}, decided ${past.date}. The owner's reason: ${past.reason}`,
   ];
   if (past.notes !== "") lines.push(past.notes);
+  if (past.mustName !== undefined && past.mustName.length > 0) lines.push(`By the owner's word, a go on it must name in its criteria: ${past.mustName.join(", ")}.`);
   lines.push(`The issue, "${issueTitle(past.issueText)}":`, `<past-issue>\n${clip(past.issueText.trim(), 2500)}\n</past-issue>`);
   return lines.join("\n\n");
 }
