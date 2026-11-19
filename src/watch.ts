@@ -78,6 +78,7 @@ import {
 } from "./records.ts";
 import { sendBackHandoffFor, type SendBackHandoff } from "./send-backs.ts";
 import { handoffFor, runStart, type Handoff, type StartResult } from "./starts.ts";
+import { DRIFT_LABEL, readMergedWork, type DriftReader } from "./drift.ts";
 import { SUGGESTED_LABEL, TITLE_LIMIT, type SuggestReader } from "./suggest.ts";
 import { collapseWhitespace, readVision, VISION_PATH, visionTextChange, type VisionChange } from "./vision.ts";
 import { addVisionLine, decideGrowth, VISION_GROWTH_PROMPT_VERSION, type GrowthDecision } from "./vision-growth.ts";
@@ -943,8 +944,8 @@ async function flagPullRequests(options: PassOptions, forge: WatchForge, entry: 
 async function putLabel(forge: WatchForge, issue: number, label: string, carried: readonly string[], cannotLabel: () => Promise<string | null>): Promise<LabelChange> {
   const removed: string[] = [];
   const already = carried.includes(label);
-  // `entail:suggested` says where the issue came from, not what was called on it, so it stays.
-  const others = carried.filter((other) => other !== label && other !== SUGGESTED_LABEL && other.startsWith(ENTAIL_LABEL_PREFIX) && isEntailLabel(other));
+  // `entail:suggested` and `entail:drift` say where the issue came from, not what was called on it, so they stay.
+  const others = carried.filter((other) => other !== label && other !== SUGGESTED_LABEL && other !== DRIFT_LABEL && other.startsWith(ENTAIL_LABEL_PREFIX) && isEntailLabel(other));
   if (already && others.length === 0) return { label, already, removed };
   const cannot = await cannotLabel();
   if (cannot !== null) return { label, already: false, removed, failed: cannot };
@@ -1657,7 +1658,7 @@ export function mirrorReader(dataDirectory: string): RepoReader {
 export function mirrorReaders(
   dataDirectory: string,
   options: { remote?: (setting: WatchForge["setting"]) => MirrorRemote } = {},
-): { reader: RepoReader; prReader: PullRequestReader; suggestReader: SuggestReader } {
+): { reader: RepoReader; prReader: PullRequestReader; suggestReader: SuggestReader; driftReader: DriftReader } {
   const mirrors = new Map<string, Promise<Mirror>>();
   const lastCommit = new Map<string, string>();
   /** The base branch commits a suggestion run is reading, with how many runs read each: their checkouts stay until released. */
@@ -1754,5 +1755,28 @@ export function mirrorReaders(
       throw error;
     }
   };
-  return { reader, prReader, suggestReader };
+  const driftReader: DriftReader = async (repo, forge, since) => {
+    const mirror = await mirrorOf(repo, forge);
+    const head = await updateBaseBranch(repo, mirror, forge);
+    held.set(head.commit, (held.get(head.commit) ?? 0) + 1);
+    let released = false;
+    const release = async () => {
+      if (released) return;
+      released = true;
+      const left = (held.get(head.commit) ?? 1) - 1;
+      if (left > 0) held.set(head.commit, left);
+      else held.delete(head.commit);
+      // The issue reader's own checkout is its to remove.
+      if (left <= 0 && ![...lastCommit.values()].includes(head.commit)) await mirror.removeCheckout(head.commit);
+    };
+    try {
+      const checkout = await mirror.checkout(head.commit);
+      const work = await readMergedWork(mirror.git, head.commit, since);
+      return { checkout: checkout.directory, sha: checkout.commit, vision: await visionAt(mirror, head.commit), ...work, release };
+    } catch (error) {
+      await release();
+      throw error;
+    }
+  };
+  return { reader, prReader, suggestReader, driftReader };
 }

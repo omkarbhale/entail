@@ -12,6 +12,7 @@ import type {
   PullRequestView,
   RepoView,
   StalledView,
+  DriftCheckView,
   SuggestingView,
   SuggestionRunView,
   TrailStep,
@@ -21,6 +22,7 @@ import { caseSlug, LANDING_CALLS, landingCaseSlug, OWNER_CALLS, type Case, type 
 import { refsText, refText } from "./blockers.ts";
 import { ciGreen } from "./landing.ts";
 import { outcomeWords, scopeOf, type Ruling } from "./judgment.ts";
+import { DEFAULT_DRIFT_EVERY_DAYS, driftDueAt, MAX_DRIFT_EVERY_DAYS } from "./drift.ts";
 import { isBranchName } from "./git.ts";
 import { EFFORTS, type Effort } from "./model-runner.ts";
 import { issueParts, pickParts, type AnswerParts } from "./parts.ts";
@@ -145,13 +147,17 @@ export interface RepoSettingsChange {
   /** A topic to add to the repo's pins, and one to take out; the pins file itself is the setting. */
   pin?: string;
   unpin?: string;
+  /** Whether merged work is checked against the vision on a schedule. */
+  drift?: boolean;
+  /** How often that check runs, in whole days, or null for the default. */
+  driftEveryDays?: number | null;
 }
 
 /** Checks a settings change as it arrives from the board or the command line. */
 export function checkSettingsChange(change: Record<string, unknown>): RepoSettingsChange {
   const checked: RepoSettingsChange = {};
   for (const key of Object.keys(change)) {
-    if (!["confirm", "model", "effort", "baseBranch", "pin", "unpin"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
+    if (!["confirm", "model", "effort", "baseBranch", "pin", "unpin", "drift", "driftEveryDays"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
   }
   if (change.confirm !== undefined) {
     if (typeof change.confirm !== "boolean") throw new OwnerError(400, "confirm is true or false");
@@ -176,6 +182,17 @@ export function checkSettingsChange(change: Record<string, unknown>): RepoSettin
     if (topic === null) throw new OwnerError(400, `${key} is one topic on one line, not starting with #`);
     checked[key] = topic;
   }
+  if (change.drift !== undefined) {
+    if (typeof change.drift !== "boolean") throw new OwnerError(400, "drift is true or false");
+    checked.drift = change.drift;
+  }
+  if (change.driftEveryDays !== undefined) {
+    const days = change.driftEveryDays;
+    if (days !== null && (typeof days !== "number" || !Number.isSafeInteger(days) || days < 1 || days > MAX_DRIFT_EVERY_DAYS)) {
+      throw new OwnerError(400, `driftEveryDays is a whole number of days from 1 to ${MAX_DRIFT_EVERY_DAYS}, or null for the default (${DEFAULT_DRIFT_EVERY_DAYS})`);
+    }
+    checked.driftEveryDays = days;
+  }
   return checked;
 }
 
@@ -188,6 +205,8 @@ export function changeRepoSettings(dataDirectory: string, repoText: string, by: 
   if (change.model !== undefined && change.model !== state.model) changed.model = change.model;
   if (change.effort !== undefined && change.effort !== state.effort) changed.effort = change.effort;
   if (change.baseBranch !== undefined && change.baseBranch !== state.baseBranch) changed.baseBranch = change.baseBranch;
+  if (change.drift !== undefined && change.drift !== state.drift) changed.drift = change.drift;
+  if (change.driftEveryDays !== undefined && change.driftEveryDays !== state.driftEveryDays) changed.driftEveryDays = change.driftEveryDays;
   // The pins file is the one record of the pins, edited by hand as well; a topic
   // already (or no longer) in it changes nothing and is not logged.
   const pins: { pinned?: string; unpinned?: string } = {};
@@ -226,6 +245,18 @@ export function suggestingView(entries: readonly Entry[], running: { since: stri
   if (last.type !== "suggested") return null;
   const filed = new Set(entries.flatMap((entry) => (entry.type === "suggestion-filed" && entry.for === last.id ? [entry.index] : [])));
   return { state: "done", at: last.at, run: last.id, suggested: last.suggestions.length, filed: filed.size };
+}
+
+/** A repo's drift check as its card shows it: when the next one is due, and how the last one ended; null while the check is off and none was ever made. */
+export function driftView(entries: readonly Entry[]): DriftCheckView | null {
+  const state = repoState("", entries);
+  const last = entries.findLast((entry) => entry.type === "drift-checked" || entry.type === "drift-failed");
+  if (last === undefined) return state.drift ? { nextAt: driftDueAt(entries)?.toISOString() ?? null, last: null } : null;
+  const nextAt = driftDueAt(entries)?.toISOString() ?? null;
+  if (last.type === "drift-failed") return { nextAt, last: { state: "failed", at: last.at, reason: last.reason } };
+  if (last.type !== "drift-checked") return null;
+  const filed = new Set(entries.flatMap((entry) => (entry.type === "drift-filed" && entry.for === last.id ? [entry.index] : [])));
+  return { nextAt, last: { state: "done", at: last.at, commits: last.commits, found: last.findings.length, filed: filed.size, skipped: last.skipped } };
 }
 
 /** Every suggestion run in a repo's log, oldest first, with the issues its suggestions were filed as. */
@@ -297,6 +328,7 @@ export function repoViews(dataDirectory: string, settings: GlobalSettings, optio
         backlogAsked: entries.some((entry) => entry.type === "backlog" && entry.at >= (state.since ?? "")),
         cannotLabel: labelProblem(entries),
         suggesting: suggestingView(entries, options.suggesting?.(repo) ?? null),
+        driftCheck: driftView(entries),
       },
     ];
   });
@@ -799,6 +831,10 @@ export type LogItem =
   | { kind: "suggestion"; repo: string; at: string; run: SuggestionRunView }
   /** One suggestion filed as an issue. */
   | { kind: "suggestion-filed"; repo: string; at: string; for: number; index: number; issue: { number: number; url: string }; already: boolean }
+  /** A scheduled (or `entail drift`) check of merged work against the vision: what it found and left out, or why it was not made. */
+  | { kind: "drift"; repo: string; at: string; entry: Extract<Entry, { type: "drift-checked" | "drift-failed" }> }
+  /** One drift finding filed as an issue. */
+  | { kind: "drift-filed"; repo: string; at: string; for: number; index: number; issue: { number: number; url: string }; already: boolean }
   /** entail held an issue on its open blockers, or let a held issue go when it closed. */
   | { kind: "held"; repo: string; at: string; entry: Extract<Entry, { type: "blocked" | "unblocked" }> };
 
@@ -827,6 +863,13 @@ export function logItems(dataDirectory: string, book: readonly Case[], repoFilte
         case "suggested":
         case "suggest-failed":
           items.push({ kind: "suggestion", repo, at: entry.at, run: runs.get(entry.id)! });
+          break;
+        case "drift-checked":
+        case "drift-failed":
+          items.push({ kind: "drift", repo, at: entry.at, entry });
+          break;
+        case "drift-filed":
+          items.push({ kind: "drift-filed", repo, at: entry.at, for: entry.for, index: entry.index, issue: entry.issue, already: entry.already });
           break;
         case "suggestion-filed":
           items.push({ kind: "suggestion-filed", repo, at: entry.at, for: entry.for, index: entry.index, issue: entry.issue, already: entry.already });
@@ -1295,6 +1338,25 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         for (const one of run.leftOut) lines.push(`      left out: ${one.item}: ${one.reason}`);
         break;
       }
+      case "drift": {
+        const { entry } = item;
+        const who = where(null) || item.repo;
+        if (entry.type === "drift-failed") {
+          lines.push(`${at}  ${who}  drift check${entry.trigger === "owner" ? " asked for" : ""} gave no answer: ${entry.reason}`);
+          break;
+        }
+        if (entry.skipped !== null) {
+          lines.push(`${at}  ${who}  drift check skipped: ${entry.skipped}`);
+          break;
+        }
+        lines.push(`${at}  ${who}  drift check of ${entry.commits} merged commit${entry.commits === 1 ? "" : "s"} against the vision: ${entry.findings.length === 0 ? "no drift" : `${entry.findings.length} finding${entry.findings.length === 1 ? "" : "s"}`} · ${entry.model} at ${entry.effort} effort · check ${entry.id}`);
+        for (const finding of entry.findings) lines.push(`      drift: ${finding.title}`, `        from the vision: > ${finding.visionLine}`);
+        for (const one of entry.leftOut) lines.push(`      left out: ${one.item}: ${one.reason}`);
+        break;
+      }
+      case "drift-filed":
+        lines.push(`${at}  ${where(item.issue.number)}  ${item.already ? "found already filed" : "filed"} drift finding ${item.index + 1} of check ${item.for}: ${item.issue.url}`);
+        break;
       case "vision": {
         const { entry } = item;
         if (entry.type === "vision-grown") {
@@ -1333,6 +1395,8 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
             entry.model === undefined ? null : `model ${entry.model ?? "the default"}`,
             entry.effort === undefined ? null : `effort ${entry.effort ?? "the default"}`,
             entry.baseBranch === undefined ? null : `base branch ${entry.baseBranch ?? `the default (${forgeTitle(item.repo)}'s)`}`,
+            entry.drift === undefined ? null : `drift check ${entry.drift ? "on" : "off"}`,
+            entry.driftEveryDays === undefined ? null : `drift check every ${entry.driftEveryDays === null ? `the default ${DEFAULT_DRIFT_EVERY_DAYS}` : entry.driftEveryDays} days`,
           ].filter((change) => change !== null);
           if (changes.length > 0) lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} set ${changes.join(", ")}`);
           if (entry.unpinned !== undefined) lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} took the pin "${entry.unpinned}" off`);

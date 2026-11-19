@@ -142,6 +142,17 @@ test("a dry run prints the label it would put on and writes none", async (t) => 
   assert.deepEqual(h.forge.labelWrites, []);
 });
 
+test("a drift finding entail filed goes through intake like any new issue and keeps its entail:drift label beside the call's", async (t) => {
+  const h = harness(t, { confirm: false });
+  h.forge.file(13, "Make cloud sync opt-in", "Found by Omkar's entail on a scheduled check of merged work against the vision.\n\nDrifts from the vision:\n> New features are opt-in.\n\n<!-- entail drift 77.0 -->");
+  h.forge.issues.get(13)!.labels = ["entail:drift"];
+  h.forge.edit(13, {});
+  h.script(13, verdict({ call: "no", reason: "Already handled." }));
+  await h.pass();
+  assert.deepEqual(h.forge.labelsOn(13), ["entail:drift", "entail:no"]);
+  assert.deepEqual(h.forge.labelWrites, ["+entail:no #13"], "nothing is taken off");
+});
+
 test("a suggestion entail filed goes through intake like any new issue and keeps its entail:suggested label beside the call's", async (t) => {
   const h = harness(t, { confirm: false });
   h.forge.file(12, "Count words in PDFs", "Suggested by Omkar's entail from the vision and the product as they stand.\n\n<!-- entail suggestion 77.0 -->");
