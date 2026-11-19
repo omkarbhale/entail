@@ -1,5 +1,6 @@
 import { landingPrecedentsFor, precedentsFor, type Case, type LandingCase } from "./case-book.ts";
 import { judge, scopeOf, type IssueCall, type JudgeOptions, type Judgment, type JudgmentInputs } from "./judgment.ts";
+import { GENERIC_BASIS } from "./records.ts";
 import { judgeLanding, type LandingInputs, type LandingJudgment } from "./landing.ts";
 import type { ModelRunner } from "./model-runner.ts";
 
@@ -100,7 +101,8 @@ export function landingCaseInputs(past: LandingCase, book: readonly LandingCase[
     base: past.base,
     // A case with no cleared ticket behind its PR has no issue and no criteria: it is judged on the vision alone, as it was.
     issue: past.issue === null ? null : { number: past.issue, text: past.issueText },
-    criteria: past.criteria,
+    criteria: past.criteria.filter((item) => item.basis !== GENERIC_BASIS),
+    generic: past.criteria.filter((item) => item.basis === GENERIC_BASIS).map((item) => item.criterion),
     vision: past.vision.trim() === "" ? null : { text: past.vision, commit: past.visionCommit },
     // Cases record no pins yet: the seeded repo had none.
     pins: [],
