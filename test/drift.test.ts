@@ -13,6 +13,8 @@ import {
   driftDue,
   driftDueAt,
   driftMarker,
+  fileUnfiledDrift,
+  lastCheckedSha,
   driftPrompt,
   FIRST_CHECK_COMMITS,
   formatDrift,
@@ -348,6 +350,7 @@ test("nothing is run when nothing merged since the last check or the repo has no
   assert.match(bare.check.skipped ?? "", /no VISION\.md/u);
   assert.equal(runner.requests.length, 0);
   assert.equal(driftDue(readLog(dataDirectory, REPO), new Date(NOW.getTime() + 60_000)), false, "a skipped check counts: the schedule moves on");
+  assert.equal(bare.check.sha, null, "a check skipped for want of a VISION.md checked no work");
   assert.match(formatDrift(quiet.check, []), /^Nothing checked: nothing has merged since the last check\.$/u);
 });
 
@@ -459,4 +462,29 @@ test("a check on a GitLab project reads its drift issues and files its findings 
   assert.deepEqual(sent.map((one) => [one.title, one.labels]), [["Make cloud sync opt-in", "entail:drift"]]);
   assert.ok(sent[0]!.description.includes(`<!-- entail drift ${outcome.check.id}.0 -->`));
   assert.equal(readLog(dataDirectory, REPO).filter((entry) => entry.type === "drift-filed").length, 1);
+});
+
+test("a check skipped for want of a VISION.md leaves the next check reading from where a first check would", async (t) => {
+  const { dataDirectory, runner, run, reads } = setup(t);
+  const bare = await run({ read: async (_repo, _forge, since) => ({ checkout: "/c", sha: SHA, vision: null, commits: inputs().commits, merged: 2, since, release: async () => {} }) });
+  assert.ok(bare.ok);
+  assert.equal(lastCheckedSha(readLog(dataDirectory, REPO)), null);
+  runner.script(DRIFT_KIND, REPO, { output: { findings: [], left_out: [] }, facts: { estimatedCostUsd: 0.1 } });
+  await run();
+  assert.deepEqual(reads, [null], "the next check reads with no since, as a first check does");
+});
+
+test("a finding whose vision line already has an open drift issue is recorded as filed as that issue, so it is not looked at again", async (t) => {
+  const { dataDirectory, forge } = setup(t);
+  forge.issues.push(forge.issue(30, "Sync must be opt-in", driftBody("Omkar", 1, 0, { title: "t", body: "b", visionLine: LINE_OPT_IN, commits: [] }), [DRIFT_LABEL]));
+  const check = appendEntry(
+    dataDirectory,
+    REPO,
+    { type: "drift-checked", trigger: "schedule", sha: SHA, since: null, commits: 1, visionCommit: SHA, findings: [{ title: "Opt in again", body: "b", visionLine: LINE_OPT_IN, commits: [] }], leftOut: [], skipped: null, model: "m", effort: "low", promptVersion: "x", costUsd: null },
+    NOW,
+  );
+  const filed = await fileUnfiledDrift(dataDirectory, REPO, forge, "Omkar", () => NOW);
+  assert.equal(forge.created.length, 0, "nothing new is filed");
+  assert.deepEqual(filed.map((entry) => [entry.for, entry.index, entry.issue.number, entry.already]), [[check.id, 0, 30, true]]);
+  assert.deepEqual(unfiledChecks(readLog(dataDirectory, REPO)), []);
 });

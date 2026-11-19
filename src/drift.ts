@@ -400,26 +400,24 @@ function filedIndexes(entries: readonly Entry[]): Map<number, Set<number>> {
  * Files each finding of a check that is not filed yet, as an issue labelled
  * {@link DRIFT_LABEL}. A finding the log records as filed, or whose marker an
  * issue already carries (filed before a crash could record it), is not filed
- * again; nor is one whose vision line has an open drift issue by now. Each
- * filing is recorded as it happens.
+ * again; one whose vision line has an open drift issue by now is recorded as
+ * filed as that issue (`already`). Each filing is recorded as it happens.
  */
 export async function fileDrift(dataDirectory: string, repo: string, forge: DriftForge, by: string, check: DriftCheckedEntry, now: () => Date = () => new Date()): Promise<DriftFiledEntry[]> {
   const filed = filedIndexes(readLog(dataDirectory, repo)).get(check.id) ?? new Set<number>();
   const missing = check.findings.flatMap((finding, index) => (filed.has(index) ? [] : [{ finding, index }]));
   if (missing.length === 0) return [];
   const marked = new Map<string, Issue>();
-  const openLines = new Set<string>();
+  const openLines = new Map<string, Issue>();
   for (const issue of await forge.labelledIssues(DRIFT_LABEL)) {
     for (const key of markedDrift(issue.body)) if (!marked.has(key)) marked.set(key, issue);
-    if (issue.state === "open") for (const key of markedLines(issue.body)) openLines.add(key);
+    if (issue.state === "open") for (const key of markedLines(issue.body)) if (!openLines.has(key)) openLines.set(key, issue);
   }
   const recorded: DriftFiledEntry[] = [];
   for (const { finding, index } of missing) {
-    const found = marked.get(`${check.id}.${index}`);
-    // Drift filed by another check since this one read the repo: its issue is the open one for the line.
-    if (found === undefined && openLines.has(lineKey(finding.visionLine))) continue;
+    const found = marked.get(`${check.id}.${index}`) ?? openLines.get(lineKey(finding.visionLine));
     const issue = found ?? (await forge.createIssue(finding.title, driftBody(by, check.id, index, finding), [DRIFT_LABEL]));
-    openLines.add(lineKey(finding.visionLine));
+    openLines.set(lineKey(finding.visionLine), issue);
     recorded.push(appendEntry(dataDirectory, repo, { type: "drift-filed", for: check.id, index, issue: { number: issue.number, url: issue.url }, already: found !== undefined }, now()));
   }
   return recorded;
@@ -500,7 +498,7 @@ export type DriftOutcome =
 
 /** The sha the last check that read a repo read, or null when none did. */
 export function lastCheckedSha(entries: readonly Entry[]): string | null {
-  return entries.findLast((entry): entry is DriftCheckedEntry => entry.type === "drift-checked")?.sha ?? null;
+  return entries.findLast((entry): entry is DriftCheckedEntry => entry.type === "drift-checked" && entry.sha !== null)?.sha ?? null;
 }
 
 /**
@@ -508,7 +506,8 @@ export function lastCheckedSha(entries: readonly Entry[]): string | null {
  * reads the repo, runs the judgment, records the answer as a `drift-checked`
  * entry and files each finding. Nothing is run when nothing merged since the
  * last check or the repo has no VISION.md: that is recorded as a check with
- * `skipped` saying why, so the schedule moves on. A check that gives no
+ * `skipped` saying why, so the schedule moves on; a check skipped for want of
+ * a VISION.md records no sha, so the next check reads from where it would have. A check that gives no
  * answer, or stops before one on a forge or git error, is recorded as
  * `drift-failed` with why; a forge error while filing is thrown, with the
  * check recorded.
@@ -554,7 +553,7 @@ export async function runDriftCheck(options: DriftCheckOptions): Promise<DriftOu
       {
         type: "drift-checked",
         trigger: options.trigger,
-        sha: reading.sha,
+        sha: reading.vision === null ? null : reading.sha,
         since: reading.since,
         commits: reading.merged,
         visionCommit: reading.vision?.commit ?? null,

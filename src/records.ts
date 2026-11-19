@@ -611,8 +611,8 @@ export interface DriftCheckedEntry extends EntryBase {
   type: "drift-checked";
   /** What started the check: the schedule, or the owner running `entail drift`. */
   trigger: "schedule" | "owner";
-  /** The base branch's commit the check read, and the one the previous check read (the work merged between them was checked). */
-  sha: string;
+  /** The base branch's commit the check read (null when the check was skipped for want of a VISION.md, so it did not check any work), and the one the previous check read (the work merged between them was checked). */
+  sha: string | null;
   since: string | null;
   /** How many commits had merged between them. */
   commits: number;
