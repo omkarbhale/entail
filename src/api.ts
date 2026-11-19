@@ -78,6 +78,8 @@ import { forgeTitle, isSelfHostedHost } from "./repo-ref.ts";
  * place of `:owner/:name`, such as `/api/repos/gitlab%3Aacme%2Ftally/check`,
  * or `/api/repos/gitlab%3A%2F%2Fgit.example.com%2Facme%2Ftally/check` on a
  * self-hosted GitLab.
+ * A repo on a GitHub Enterprise Server is addressed the same way, such as
+ * `/api/repos/github%3A%2F%2Fghe.example.com%2Facme%2Ftally/check`.
  *
  * A call is on an issue or on a PR: each item carries `kind` ("issue" or
  * "pr") and, on a PR's call, `pr` with the criteria checklist, the facts read
@@ -270,8 +272,9 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
     return send(response, 405, { error: `${method} is not allowed on ${path}` });
   }
   // A GitHub repo is addressed as owner/name; a GitLab project, whose path can
-  // hold subgroups, as its whole name in one encoded segment.
-  const repo = /^\/api\/repos\/(?:(gitlab(?::|%3A)[^/]+)|([^/]+)\/([^/]+))(?:\/(check|backlog|suggest))?$/iu.exec(path);
+  // hold subgroups, and a repo on a GitHub Enterprise Server, as its whole
+  // name in one encoded segment.
+  const repo = /^\/api\/repos\/(?:((?:gitlab|github)(?::|%3A)[^/]+)|([^/]+)\/([^/]+))(?:\/(check|backlog|suggest))?$/iu.exec(path);
   if (repo !== null) {
     const name = repoName(repo[1] !== undefined ? decodeURIComponent(repo[1]) : `${decodeURIComponent(repo[2]!)}/${decodeURIComponent(repo[3]!)}`);
     const action = repo[4];

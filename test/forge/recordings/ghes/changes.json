@@ -1,0 +1,797 @@
+{
+  "host": "ghe.example.com",
+  "exchanges": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues?state=all&sort=updated&direction=desc&per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"i1\"",
+          "Link": "<https://ghe.example.com/api/v3/repositories/5001/issues?state=all&sort=updated&direction=desc&per_page=100&page=2>; rel=\"next\", <https://ghe.example.com/api/v3/repositories/5001/issues?state=all&sort=updated&direction=desc&per_page=100&page=2>; rel=\"last\"",
+          "X-GitHub-Enterprise-Version": "3.17.2"
+        },
+        "body": [
+          {
+            "url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/2",
+            "repository_url": "https://ghe.example.com/api/v3/repos/acme/tally",
+            "comments_url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/2/comments",
+            "html_url": "https://ghe.example.com/acme/tally/issues/2",
+            "id": 9002,
+            "node_id": "I_9002",
+            "number": 2,
+            "title": "Word counts are sometimes one too high",
+            "user": {
+              "login": "reporter",
+              "id": 1002,
+              "node_id": "U_1002",
+              "url": "https://ghe.example.com/api/v3/users/reporter",
+              "html_url": "https://ghe.example.com/reporter",
+              "type": "User",
+              "site_admin": false
+            },
+            "labels": [],
+            "state": "open",
+            "locked": false,
+            "assignee": null,
+            "assignees": [],
+            "milestone": null,
+            "comments": 0,
+            "created_at": "2026-11-01T11:00:00Z",
+            "updated_at": "2026-11-01T11:00:00Z",
+            "closed_at": null,
+            "author_association": "OWNER",
+            "type": null,
+            "active_lock_reason": null,
+            "body": "Sometimes the count is one more than it should be.",
+            "state_reason": null
+          },
+          {
+            "url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/4",
+            "repository_url": "https://ghe.example.com/api/v3/repos/acme/tally",
+            "comments_url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/4/comments",
+            "html_url": "https://ghe.example.com/acme/tally/pull/4",
+            "id": 9004,
+            "node_id": "I_9004",
+            "number": 4,
+            "title": "Read standard input",
+            "user": {
+              "login": "reporter",
+              "id": 1002,
+              "node_id": "U_1002",
+              "url": "https://ghe.example.com/api/v3/users/reporter",
+              "html_url": "https://ghe.example.com/reporter",
+              "type": "User",
+              "site_admin": false
+            },
+            "labels": [],
+            "state": "open",
+            "locked": false,
+            "assignee": null,
+            "assignees": [],
+            "milestone": null,
+            "comments": 1,
+            "created_at": "2026-11-01T10:30:00Z",
+            "updated_at": "2026-11-01T10:45:00Z",
+            "closed_at": null,
+            "author_association": "OWNER",
+            "type": null,
+            "active_lock_reason": null,
+            "body": "Closes #1",
+            "state_reason": null,
+            "draft": false,
+            "pull_request": {
+              "url": "https://ghe.example.com/api/v3/repos/acme/tally/pulls/4",
+              "html_url": "https://ghe.example.com/acme/tally/pull/4",
+              "merged_at": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repositories/5001/issues?state=all&sort=updated&direction=desc&per_page=100&page=2"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "Link": "<https://ghe.example.com/api/v3/repositories/5001/issues?state=all&sort=updated&direction=desc&per_page=100&page=1>; rel=\"prev\", <https://ghe.example.com/api/v3/repositories/5001/issues?state=all&sort=updated&direction=desc&per_page=100&page=1>; rel=\"first\"",
+          "X-GitHub-Enterprise-Version": "3.17.2"
+        },
+        "body": [
+          {
+            "url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/1",
+            "repository_url": "https://ghe.example.com/api/v3/repos/acme/tally",
+            "comments_url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/1/comments",
+            "html_url": "https://ghe.example.com/acme/tally/issues/1",
+            "id": 9001,
+            "node_id": "I_9001",
+            "number": 1,
+            "title": "Read from standard input when no file is given",
+            "user": {
+              "login": "owner",
+              "id": 1001,
+              "node_id": "U_1001",
+              "url": "https://ghe.example.com/api/v3/users/owner",
+              "html_url": "https://ghe.example.com/owner",
+              "type": "User",
+              "site_admin": false
+            },
+            "labels": [],
+            "state": "open",
+            "locked": false,
+            "assignee": null,
+            "assignees": [],
+            "milestone": null,
+            "comments": 0,
+            "created_at": "2026-11-01T10:00:00Z",
+            "updated_at": "2026-11-01T10:00:00Z",
+            "closed_at": null,
+            "author_association": "OWNER",
+            "type": null,
+            "active_lock_reason": null,
+            "body": "tally should count standard input when it is given no file.",
+            "state_reason": null
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues/comments?sort=updated&direction=desc&per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"c1\"",
+          "X-GitHub-Enterprise-Version": "3.17.2"
+        },
+        "body": [
+          {
+            "url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/comments/7001",
+            "html_url": "https://ghe.example.com/acme/tally/issues/2#issuecomment-7001",
+            "issue_url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/2",
+            "id": 7001,
+            "node_id": "IC_7001",
+            "user": {
+              "login": "owner",
+              "id": 1001,
+              "node_id": "U_1001",
+              "url": "https://ghe.example.com/api/v3/users/owner",
+              "html_url": "https://ghe.example.com/owner",
+              "type": "User",
+              "site_admin": false
+            },
+            "created_at": "2026-11-01T11:05:00Z",
+            "updated_at": "2026-11-01T11:05:00Z",
+            "body": "/entail",
+            "author_association": "OWNER",
+            "performed_via_github_app": null
+          },
+          {
+            "url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/comments/7002",
+            "html_url": "https://ghe.example.com/acme/tally/pull/4#issuecomment-7002",
+            "issue_url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/4",
+            "id": 7002,
+            "node_id": "IC_7002",
+            "user": {
+              "login": "owner",
+              "id": 1001,
+              "node_id": "U_1001",
+              "url": "https://ghe.example.com/api/v3/users/owner",
+              "html_url": "https://ghe.example.com/owner",
+              "type": "User",
+              "site_admin": false
+            },
+            "created_at": "2026-11-01T10:45:00Z",
+            "updated_at": "2026-11-01T10:45:00Z",
+            "body": "Looks good.",
+            "author_association": "OWNER",
+            "performed_via_github_app": null
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/pulls?state=all&sort=updated&direction=desc&per_page=100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"p1\"",
+          "X-GitHub-Enterprise-Version": "3.17.2"
+        },
+        "body": [
+          {
+            "url": "https://ghe.example.com/api/v3/repos/acme/tally/pulls/4",
+            "id": 8004,
+            "node_id": "PR_8004",
+            "html_url": "https://ghe.example.com/acme/tally/pull/4",
+            "diff_url": "https://ghe.example.com/acme/tally/pull/4.diff",
+            "issue_url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/4",
+            "number": 4,
+            "state": "open",
+            "locked": false,
+            "title": "Read standard input",
+            "user": {
+              "login": "reporter",
+              "id": 1002,
+              "node_id": "U_1002",
+              "url": "https://ghe.example.com/api/v3/users/reporter",
+              "html_url": "https://ghe.example.com/reporter",
+              "type": "User",
+              "site_admin": false
+            },
+            "body": "Closes #1",
+            "created_at": "2026-11-01T10:30:00Z",
+            "updated_at": "2026-11-01T10:45:00Z",
+            "closed_at": null,
+            "merged_at": null,
+            "merge_commit_sha": null,
+            "assignee": null,
+            "assignees": [],
+            "requested_reviewers": [],
+            "labels": [],
+            "draft": false,
+            "head": {
+              "label": "acme:stdin",
+              "ref": "stdin",
+              "sha": "4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e",
+              "user": {
+                "login": "acme",
+                "id": 3001,
+                "node_id": "U_3001",
+                "url": "https://ghe.example.com/api/v3/users/acme",
+                "html_url": "https://ghe.example.com/acme",
+                "type": "User",
+                "site_admin": false
+              },
+              "repo": {
+                "id": 5001,
+                "node_id": "R_5001",
+                "name": "tally",
+                "full_name": "acme/tally",
+                "private": true,
+                "html_url": "https://ghe.example.com/acme/tally",
+                "default_branch": "main"
+              }
+            },
+            "base": {
+              "label": "acme:main",
+              "ref": "main",
+              "sha": "0000000000000000000000000000000000000000",
+              "user": {
+                "login": "acme",
+                "id": 3001,
+                "node_id": "U_3001",
+                "url": "https://ghe.example.com/api/v3/users/acme",
+                "html_url": "https://ghe.example.com/acme",
+                "type": "User",
+                "site_admin": false
+              },
+              "repo": {
+                "id": 5001,
+                "node_id": "R_5001",
+                "name": "tally",
+                "full_name": "acme/tally",
+                "private": true,
+                "html_url": "https://ghe.example.com/acme/tally",
+                "default_branch": "main"
+              }
+            },
+            "author_association": "CONTRIBUTOR",
+            "auto_merge": null,
+            "active_lock_reason": null
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues?state=all&sort=updated&direction=desc&per_page=100&since=2026-11-01T11%3A00%3A00Z"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"i2\"",
+          "X-GitHub-Enterprise-Version": "3.17.2"
+        },
+        "body": [
+          {
+            "url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/2",
+            "repository_url": "https://ghe.example.com/api/v3/repos/acme/tally",
+            "comments_url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/2/comments",
+            "html_url": "https://ghe.example.com/acme/tally/issues/2",
+            "id": 9002,
+            "node_id": "I_9002",
+            "number": 2,
+            "title": "Word counts are sometimes one too high",
+            "user": {
+              "login": "reporter",
+              "id": 1002,
+              "node_id": "U_1002",
+              "url": "https://ghe.example.com/api/v3/users/reporter",
+              "html_url": "https://ghe.example.com/reporter",
+              "type": "User",
+              "site_admin": false
+            },
+            "labels": [],
+            "state": "open",
+            "locked": false,
+            "assignee": null,
+            "assignees": [],
+            "milestone": null,
+            "comments": 0,
+            "created_at": "2026-11-01T11:00:00Z",
+            "updated_at": "2026-11-01T11:00:00Z",
+            "closed_at": null,
+            "author_association": "OWNER",
+            "type": null,
+            "active_lock_reason": null,
+            "body": "Sometimes the count is one more than it should be.",
+            "state_reason": null
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues/comments?sort=updated&direction=desc&per_page=100&since=2026-11-01T11%3A05%3A00Z"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"c2\"",
+          "X-GitHub-Enterprise-Version": "3.17.2"
+        },
+        "body": [
+          {
+            "url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/comments/7001",
+            "html_url": "https://ghe.example.com/acme/tally/issues/2#issuecomment-7001",
+            "issue_url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/2",
+            "id": 7001,
+            "node_id": "IC_7001",
+            "user": {
+              "login": "owner",
+              "id": 1001,
+              "node_id": "U_1001",
+              "url": "https://ghe.example.com/api/v3/users/owner",
+              "html_url": "https://ghe.example.com/owner",
+              "type": "User",
+              "site_admin": false
+            },
+            "created_at": "2026-11-01T11:05:00Z",
+            "updated_at": "2026-11-01T11:05:00Z",
+            "body": "/entail",
+            "author_association": "OWNER",
+            "performed_via_github_app": null
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/pulls?state=all&sort=updated&direction=desc&per_page=100",
+        "headers": {
+          "If-None-Match": "W/\"p1\""
+        }
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "ETag": "W/\"p1\"",
+          "X-RateLimit-Remaining": "4990",
+          "X-GitHub-Enterprise-Version": "3.17.2"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues?state=all&sort=updated&direction=desc&per_page=100&since=2026-11-01T11%3A00%3A00Z",
+        "headers": {
+          "If-None-Match": "W/\"i2\""
+        }
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"i2\"",
+          "X-GitHub-Enterprise-Version": "3.17.2"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues/comments?sort=updated&direction=desc&per_page=100&since=2026-11-01T11%3A05%3A00Z",
+        "headers": {
+          "If-None-Match": "W/\"c2\""
+        }
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"c2\"",
+          "X-GitHub-Enterprise-Version": "3.17.2"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/pulls?state=all&sort=updated&direction=desc&per_page=100",
+        "headers": {
+          "If-None-Match": "W/\"p1\""
+        }
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "ETag": "W/\"p1\"",
+          "X-RateLimit-Remaining": "4990",
+          "X-GitHub-Enterprise-Version": "3.17.2"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues?state=all&sort=updated&direction=desc&per_page=100&since=2026-11-01T11%3A00%3A00Z",
+        "headers": {
+          "If-None-Match": "W/\"i2\""
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"i3\"",
+          "X-GitHub-Enterprise-Version": "3.17.2"
+        },
+        "body": [
+          {
+            "url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/3",
+            "repository_url": "https://ghe.example.com/api/v3/repos/acme/tally",
+            "comments_url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/3/comments",
+            "html_url": "https://ghe.example.com/acme/tally/issues/3",
+            "id": 9003,
+            "node_id": "I_9003",
+            "number": 3,
+            "title": "Add a --json flag",
+            "user": {
+              "login": "owner-renamed",
+              "id": 1001,
+              "node_id": "U_1001",
+              "url": "https://ghe.example.com/api/v3/users/owner-renamed",
+              "html_url": "https://ghe.example.com/owner-renamed",
+              "type": "User",
+              "site_admin": false
+            },
+            "labels": [],
+            "state": "open",
+            "locked": false,
+            "assignee": null,
+            "assignees": [],
+            "milestone": null,
+            "comments": 0,
+            "created_at": "2026-11-02T09:30:00Z",
+            "updated_at": "2026-11-02T09:30:00Z",
+            "closed_at": null,
+            "author_association": "OWNER",
+            "type": null,
+            "active_lock_reason": null,
+            "body": "Print the counts as JSON.",
+            "state_reason": null
+          },
+          {
+            "url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/2",
+            "repository_url": "https://ghe.example.com/api/v3/repos/acme/tally",
+            "comments_url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/2/comments",
+            "html_url": "https://ghe.example.com/acme/tally/issues/2",
+            "id": 9002,
+            "node_id": "I_9002",
+            "number": 2,
+            "title": "Word counts are one too high after a leading space",
+            "user": {
+              "login": "reporter",
+              "id": 1002,
+              "node_id": "U_1002",
+              "url": "https://ghe.example.com/api/v3/users/reporter",
+              "html_url": "https://ghe.example.com/reporter",
+              "type": "User",
+              "site_admin": false
+            },
+            "labels": [
+              {
+                "id": 3001,
+                "node_id": "LA_3001",
+                "url": "https://ghe.example.com/api/v3/repos/acme/tally/labels/entail:deciding",
+                "name": "entail:deciding",
+                "color": "ededed",
+                "default": false,
+                "description": null
+              }
+            ],
+            "state": "open",
+            "locked": false,
+            "assignee": null,
+            "assignees": [],
+            "milestone": null,
+            "comments": 0,
+            "created_at": "2026-11-01T11:00:00Z",
+            "updated_at": "2026-11-02T09:00:00Z",
+            "closed_at": null,
+            "author_association": "OWNER",
+            "type": null,
+            "active_lock_reason": null,
+            "body": "Sometimes the count is one more than it should be.",
+            "state_reason": null
+          },
+          {
+            "url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/4",
+            "repository_url": "https://ghe.example.com/api/v3/repos/acme/tally",
+            "comments_url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/4/comments",
+            "html_url": "https://ghe.example.com/acme/tally/pull/4",
+            "id": 9004,
+            "node_id": "I_9004",
+            "number": 4,
+            "title": "Read standard input",
+            "user": {
+              "login": "reporter",
+              "id": 1002,
+              "node_id": "U_1002",
+              "url": "https://ghe.example.com/api/v3/users/reporter",
+              "html_url": "https://ghe.example.com/reporter",
+              "type": "User",
+              "site_admin": false
+            },
+            "labels": [],
+            "state": "open",
+            "locked": false,
+            "assignee": null,
+            "assignees": [],
+            "milestone": null,
+            "comments": 2,
+            "created_at": "2026-11-01T10:30:00Z",
+            "updated_at": "2026-11-02T09:20:00Z",
+            "closed_at": null,
+            "author_association": "OWNER",
+            "type": null,
+            "active_lock_reason": null,
+            "body": "Closes #1\n\nReads standard input when no file is given.",
+            "state_reason": null,
+            "draft": false,
+            "pull_request": {
+              "url": "https://ghe.example.com/api/v3/repos/acme/tally/pulls/4",
+              "html_url": "https://ghe.example.com/acme/tally/pull/4",
+              "merged_at": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/issues/comments?sort=updated&direction=desc&per_page=100&since=2026-11-01T11%3A05%3A00Z",
+        "headers": {
+          "If-None-Match": "W/\"c2\""
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"c3\"",
+          "X-GitHub-Enterprise-Version": "3.17.2"
+        },
+        "body": [
+          {
+            "url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/comments/7004",
+            "html_url": "https://ghe.example.com/acme/tally/pull/4#issuecomment-7004",
+            "issue_url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/4",
+            "id": 7004,
+            "node_id": "IC_7004",
+            "user": {
+              "login": "reporter",
+              "id": 1002,
+              "node_id": "U_1002",
+              "url": "https://ghe.example.com/api/v3/users/reporter",
+              "html_url": "https://ghe.example.com/reporter",
+              "type": "User",
+              "site_admin": false
+            },
+            "created_at": "2026-11-02T09:20:00Z",
+            "updated_at": "2026-11-02T09:20:00Z",
+            "body": "## entail evidence\n\nC1: ran `printf 'a b' | tally` \u2014 printed 2",
+            "author_association": "CONTRIBUTOR",
+            "performed_via_github_app": null
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "repos/acme/tally/pulls?state=all&sort=updated&direction=desc&per_page=100",
+        "headers": {
+          "If-None-Match": "W/\"p1\""
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, max-age=60, s-maxage=60",
+          "X-GitHub-Media-Type": "github.v3; format=json",
+          "X-RateLimit-Limit": "5000",
+          "X-RateLimit-Remaining": "4990",
+          "X-RateLimit-Reset": "1794139200",
+          "X-RateLimit-Resource": "core",
+          "ETag": "W/\"p2\"",
+          "X-GitHub-Enterprise-Version": "3.17.2"
+        },
+        "body": [
+          {
+            "url": "https://ghe.example.com/api/v3/repos/acme/tally/pulls/4",
+            "id": 8004,
+            "node_id": "PR_8004",
+            "html_url": "https://ghe.example.com/acme/tally/pull/4",
+            "diff_url": "https://ghe.example.com/acme/tally/pull/4.diff",
+            "issue_url": "https://ghe.example.com/api/v3/repos/acme/tally/issues/4",
+            "number": 4,
+            "state": "open",
+            "locked": false,
+            "title": "Read standard input",
+            "user": {
+              "login": "reporter",
+              "id": 1002,
+              "node_id": "U_1002",
+              "url": "https://ghe.example.com/api/v3/users/reporter",
+              "html_url": "https://ghe.example.com/reporter",
+              "type": "User",
+              "site_admin": false
+            },
+            "body": "Closes #1\n\nReads standard input when no file is given.",
+            "created_at": "2026-11-01T10:30:00Z",
+            "updated_at": "2026-11-02T09:20:00Z",
+            "closed_at": null,
+            "merged_at": null,
+            "merge_commit_sha": null,
+            "assignee": null,
+            "assignees": [],
+            "requested_reviewers": [],
+            "labels": [],
+            "draft": false,
+            "head": {
+              "label": "acme:stdin",
+              "ref": "stdin",
+              "sha": "4f1c0c3e9b2a7d6e5f4a3b2c1d0e9f8a7b6c5d4e",
+              "user": {
+                "login": "acme",
+                "id": 3001,
+                "node_id": "U_3001",
+                "url": "https://ghe.example.com/api/v3/users/acme",
+                "html_url": "https://ghe.example.com/acme",
+                "type": "User",
+                "site_admin": false
+              },
+              "repo": {
+                "id": 5001,
+                "node_id": "R_5001",
+                "name": "tally",
+                "full_name": "acme/tally",
+                "private": true,
+                "html_url": "https://ghe.example.com/acme/tally",
+                "default_branch": "main"
+              }
+            },
+            "base": {
+              "label": "acme:main",
+              "ref": "main",
+              "sha": "0000000000000000000000000000000000000000",
+              "user": {
+                "login": "acme",
+                "id": 3001,
+                "node_id": "U_3001",
+                "url": "https://ghe.example.com/api/v3/users/acme",
+                "html_url": "https://ghe.example.com/acme",
+                "type": "User",
+                "site_admin": false
+              },
+              "repo": {
+                "id": 5001,
+                "node_id": "R_5001",
+                "name": "tally",
+                "full_name": "acme/tally",
+                "private": true,
+                "html_url": "https://ghe.example.com/acme/tally",
+                "default_branch": "main"
+              }
+            },
+            "author_association": "CONTRIBUTOR",
+            "auto_merge": null,
+            "active_lock_reason": null
+          }
+        ]
+      }
+    }
+  ]
+}

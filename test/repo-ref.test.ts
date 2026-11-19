@@ -52,6 +52,58 @@ test("a project on a self-hosted GitLab is gitlab://host/namespace/name, on that
   }
 });
 
+test("a repo on a GitHub Enterprise Server is github://host/owner/name, on that host, and owner/name still means github.com", () => {
+  assert.deepEqual(repoSetting("github://ghe.example.com/acme/tally"), { forge: "github", host: "ghe.example.com", path: "acme/tally" });
+  assert.deepEqual(repoSetting("github://localhost/acme/tally"), { forge: "github", host: "localhost", path: "acme/tally" });
+  assert.deepEqual(repoSetting("acme/tally"), { forge: "github", host: "github.com", path: "acme/tally" });
+  assert.equal(repoOf({ forge: "github", host: "ghe.example.com", path: "acme/tally" }), "github://ghe.example.com/acme/tally");
+  assert.equal(repoOf({ forge: "github", host: "github.com", path: "acme/tally" }), "acme/tally");
+  assert.equal(repoOf({ forge: "github", path: "acme/tally" }), "acme/tally");
+  assert.equal(forgeTitle("github://ghe.example.com/acme/tally"), "GitHub");
+  assert.equal(repoUrl("github://ghe.example.com/acme/tally"), "https://ghe.example.com/acme/tally");
+  assert.equal(issueUrl("github://ghe.example.com/acme/tally", 7), "https://ghe.example.com/acme/tally/issues/7");
+  assert.equal(blobUrl("github://ghe.example.com/acme/tally", "abc", "VISION.md"), "https://ghe.example.com/acme/tally/blob/abc/VISION.md");
+  for (const bad of [
+    "github://ghe.example.com/tally",
+    "github://ghe.example.com",
+    "github://ghe.example.com/acme/tools/tally",
+    "github:///acme/tally",
+    "github://ghe.example.com:8443/acme/tally",
+    "github://-ghe.example.com/acme/tally",
+    "github://ghe.example.com/acme/..",
+    "github://github.com/acme/tally",
+    "github://gitlab.com/acme/tally",
+    "github:acme/tally",
+  ]) {
+    assert.equal(isRepo(bad), false, bad);
+  }
+});
+
+test("a GitHub Enterprise Server's repo as typed: its name, or github: before its address", () => {
+  assert.equal(canonicalRepo(" GitHub://GHE.Example.com/Acme/Tally "), "github://ghe.example.com/acme/tally");
+  assert.equal(canonicalRepo("github:https://ghe.example.com/acme/tally/"), "github://ghe.example.com/acme/tally");
+  assert.equal(canonicalRepo("github:https://ghe.example.com/acme/tally.git"), "github://ghe.example.com/acme/tally");
+  assert.equal(canonicalRepo("github:http://ghe.example.com/acme/tally"), "github://ghe.example.com/acme/tally");
+  // github.com keeps its one name, however it is typed.
+  assert.equal(canonicalRepo("github://github.com/acme/tally"), "acme/tally");
+  assert.equal(canonicalRepo("github:https://github.com/acme/tally.git"), "acme/tally");
+  assert.equal(canonicalRepo("https://github.com/acme/tally"), "acme/tally");
+  // Only the owner can say a host runs GitHub.
+  assert.equal(canonicalRepo("https://ghe.example.com/acme/tally"), null);
+  assert.equal(canonicalRepo("github:https://ghe.example.com:8443/acme/tally"), null);
+  assert.equal(canonicalRepo("github:https://gitlab.com/acme/tally"), null);
+  // Names that were already repos read as they did.
+  assert.equal(canonicalRepo("Acme/Tally"), "acme/tally");
+  assert.equal(canonicalRepo("gitlab:Acme/Tally"), "gitlab:acme/tally");
+});
+
+test("a GitHub Enterprise Server's pins and cases are kept under its host, apart from github.com's", () => {
+  assert.equal(pinsFile("/d", repoSetting("github://ghe.example.com/acme/tally")), join("/d", "pins", "ghe.example.com", "acme", "tally.md"));
+  assert.equal(caseSlug("github://ghe.example.com/acme/tally", 12), "github-ghe.example.com-acme-tally-12");
+  assert.equal(landingCaseSlug("github://ghe.example.com/acme/tally", 3), "github-ghe.example.com-acme-tally-pr-3");
+  assert.equal(caseSlug("acme/tally", 12), "acme-tally-12");
+});
+
 test("a gitlab.com name reads as before: a first group with dots in it is a group, not a host", () => {
   assert.deepEqual(repoSetting("gitlab:git.example.com/acme/tally"), { forge: "gitlab", host: "gitlab.com", path: "git.example.com/acme/tally" });
   assert.deepEqual(repoSetting("gitlab:a/b/c/d/e/f"), { forge: "gitlab", host: "gitlab.com", path: "a/b/c/d/e/f" });
@@ -97,7 +149,19 @@ test("each forge's logs are kept under its host, a GitLab project's subgroups as
   assert.equal(logFile(directory, "acme/tally"), join(directory, "log", "github.com", "acme", "tally.jsonl"));
   assert.equal(logFile(directory, "gitlab:acme/tools/tally"), join(directory, "log", "gitlab.com", "acme", "tools", "tally.jsonl"));
   assert.equal(logFile(directory, "gitlab://git.example.com/acme/tools/tally"), join(directory, "log", "git.example.com", "acme", "tools", "tally.jsonl"));
-  const repos = ["acme/tally", "gitlab:acme/tally", "gitlab:acme/tools/tally", "gitlab://git.example.com/acme/tally", "gitlab://git.example.com/acme/tools/tally", "gitlab://localhost/x/y"];
+  assert.equal(logFile(directory, "github://ghe.example.com/acme/tally"), join(directory, "log", "_github-enterprise", "ghe.example.com", "acme", "tally.jsonl"));
+  assert.equal(logFile(directory, "github://ghe.example.com/Acme/Tally"), logFile(directory, "github://ghe.example.com/acme/tally"));
+  const repos = [
+    "acme/tally",
+    "github://ghe.example.com/acme/tally",
+    "github://ghe.example.com/other/tool",
+    "github://localhost/x/y",
+    "gitlab:acme/tally",
+    "gitlab:acme/tools/tally",
+    "gitlab://git.example.com/acme/tally",
+    "gitlab://git.example.com/acme/tools/tally",
+    "gitlab://localhost/x/y",
+  ];
   for (const repo of repos) {
     mkdirSync(join(logFile(directory, repo), ".."), { recursive: true });
     writeFileSync(logFile(directory, repo), "");

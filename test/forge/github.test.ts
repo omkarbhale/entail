@@ -140,9 +140,9 @@ test("a transport failure that is not a logout is passed on, not taken for no ac
   await assert.rejects(forge.currentActor(), /error connecting/);
 });
 
-test("the adapter serves only github.com repos with an owner/name path", () => {
+test("the adapter serves github.com and a GitHub Enterprise Server's repos with an owner/name path", () => {
   const transport = new RecordedTransport({ host: "github.com", exchanges: [] });
-  assert.throws(() => new GitHubForge({ ...SETTING, host: "github.example.com" }, transport), /Enterprise Server/);
+  assert.doesNotThrow(() => new GitHubForge({ ...SETTING, host: "ghe.example.com" }, transport));
   assert.throws(() => new GitHubForge({ ...SETTING, path: "acme/tally/../x" }, transport), /owner\/name/);
   assert.throws(() => new GitHubForge({ ...SETTING, forge: "gitlab" }, transport), /gitlab/);
 });

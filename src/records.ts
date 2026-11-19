@@ -580,12 +580,25 @@ export type Entry =
 /** An entry as written, before it has an id and a time. */
 export type NewEntry = Entry extends infer E ? (E extends Entry ? Omit<E, "id" | "at"> : never) : never;
 
-/** The log file of a repo, `owner/name`, `gitlab:group/name` or `gitlab://host/group/name`: under its host, which keeps the forges and hosts apart. */
+/**
+ * Where the logs of the repos on GitHub Enterprise Servers are kept, a
+ * directory per host. No host name starts with `_`, so it cannot be one, and
+ * a GHES host's logs are never taken for a self-hosted GitLab's.
+ */
+export const ENTERPRISE_LOG_DIRECTORY = "_github-enterprise";
+
+/**
+ * The log file of a repo, `owner/name`, `github://host/owner/name`,
+ * `gitlab:group/name` or `gitlab://host/group/name`: under its host, which
+ * keeps the forges and hosts apart. A GitHub Enterprise Server's host is
+ * under {@link ENTERPRISE_LOG_DIRECTORY}; every other name is where it was.
+ */
 export function logFile(dataDirectory: string, repo: string): string {
-  const { host, path } = repoSetting(repo);
+  const { forge, host, path } = repoSetting(repo);
   const parts = path.split("/").map((part) => part.toLowerCase());
   const name = parts.pop()!;
-  return join(dataDirectory, LOG_DIRECTORY, host, ...parts, `${name}.jsonl`);
+  const under = forge === "github" && host !== forgeHost("github") ? [ENTERPRISE_LOG_DIRECTORY, host] : [host];
+  return join(dataDirectory, LOG_DIRECTORY, ...under, ...parts, `${name}.jsonl`);
 }
 
 export { isRepo } from "./repo-ref.ts";
@@ -649,7 +662,7 @@ export function readLog(dataDirectory: string, repo: string): Entry[] {
   return entries;
 }
 
-/** Every repo that has a log, enrolled or not, as `owner/name`, `gitlab:group/name` or `gitlab://host/group/name`. */
+/** Every repo that has a log, enrolled or not, as `owner/name`, `github://host/owner/name`, `gitlab:group/name` or `gitlab://host/group/name`. */
 export function loggedRepos(dataDirectory: string): string[] {
   const log = join(dataDirectory, LOG_DIRECTORY);
   const github = join(log, forgeHost("github"));
@@ -670,6 +683,16 @@ export function loggedRepos(dataDirectory: string): string[] {
   walk(forgeHost("gitlab"), join(log, forgeHost("gitlab")), []);
   for (const host of safeReaddir(log)) {
     if (isSelfHostedHost(host)) walk(host, join(log, host), []);
+  }
+  // A GitHub Enterprise Server's repos sit two deep under their host, as github.com's do.
+  const enterprise = join(log, ENTERPRISE_LOG_DIRECTORY);
+  for (const host of safeReaddir(enterprise)) {
+    if (!isSelfHostedHost(host)) continue;
+    for (const owner of safeReaddir(join(enterprise, host))) {
+      for (const file of safeReaddir(join(enterprise, host, owner))) {
+        if (file.endsWith(".jsonl")) repos.push(repoOf({ forge: "github", host, path: `${owner}/${file.slice(0, -".jsonl".length)}` }));
+      }
+    }
   }
   return repos.sort();
 }
