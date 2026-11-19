@@ -495,8 +495,9 @@ export function renderLandingCall(call: LandingCallFields): string {
 export async function writeLandingCase(directory: string, past: LandingCase): Promise<string> {
   parseLandingCall(renderLandingCall(past));
   return replaceCaseDirectory(directory, past.slug, {
-    // A PR with no cleared ticket behind it has no issue and no criteria to keep.
-    ...(past.issue === null ? {} : { "issue.md": past.issueText, "criteria.md": renderCriteria(past.criteria) }),
+    // A PR with no cleared ticket behind it has no issue; its criteria are the repo's generic ones, if any.
+    ...(past.issue === null ? {} : { "issue.md": past.issueText }),
+    ...(past.issue === null && past.criteria.length === 0 ? {} : { "criteria.md": renderCriteria(past.criteria) }),
     "vision.md": past.vision,
     "pr.md": past.prText,
     "facts.json": `${JSON.stringify(past.facts, null, 2)}\n`,
