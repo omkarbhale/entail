@@ -13,7 +13,7 @@ import { arrayOf, boolean, nullable, object, oneOf, string, type Infer } from ".
 export const JUDGMENT_KIND = "issue-call";
 
 /** Changes whenever the prompt or the answer's shape changes, so a call records what judged it. */
-export const JUDGMENT_PROMPT_VERSION = "issue-call-5";
+export const JUDGMENT_PROMPT_VERSION = "issue-call-6";
 
 /** The version a re-check after a vision change records: the judgment's prompt with the vision change added. */
 export const RECHECK_PROMPT_VERSION = `${JUDGMENT_PROMPT_VERSION}+vision-recheck-1`;
@@ -50,6 +50,9 @@ const VERDICT_FIELDS = {
     }),
     "For ask, the one question; null for go and no.",
   ),
+  question_kind: string(
+    "For ask, the name of the kind of question this is, as defined in the instructions: short, lowercase, words joined with hyphens, and the same name whenever the same kind of question comes up. Empty for go and no.",
+  ),
 };
 
 /** The answer the model gives, as JSON. */
@@ -77,6 +80,48 @@ export interface RestsOn {
   cases: string[];
 }
 
+/** One board answer a ruling rests on: who gave it, what it was, and the ticket it settled. */
+export interface RulingAnswer {
+  /** The owner's `answered` entry in the repo's log. */
+  action: number;
+  /** The ask call it answered. */
+  call: number;
+  issue: { number: number; title: string; url: string };
+  /** Whoever gave the answer, by name. */
+  by: string;
+  /** ISO time the answer was given. */
+  at: string;
+  /** What it settled: go, go for planning, or no. */
+  outcome: RulingOutcome;
+  /** The answer's own words. */
+  words: string;
+}
+
+/** How a board answer settled a question: go to implement, go for planning, or no. */
+export type RulingOutcome = "go" | "plan" | "no";
+
+/**
+ * What a call settled by a learned ruling carries: the kind of question, the
+ * answers it rests on (each under the name of whoever gave it) and the
+ * question as entail would have asked it, which stays in the log and is never
+ * posted. A call with no ruling rests on the vision or a past case.
+ */
+export interface Ruling {
+  kind: string;
+  outcome: RulingOutcome;
+  answers: RulingAnswer[];
+  asked: { question: string; why: string; reason: string };
+}
+
+/** A kind of question the repo's board has seen, for the judgment to name a question's kind the same way again. */
+export interface KnownKind {
+  kind: string;
+  /** How many answers this kind has had. */
+  answers: number;
+  /** How each answer settled it, when they all agree; null when there are none or they differ. */
+  outcome: RulingOutcome | null;
+}
+
 /**
  * What a go clears a ticket for: `implement`, work on one PR; `plan`, a
  * ticket too large for one PR, whose plan and smaller tickets the owner's
@@ -94,8 +139,10 @@ export type IssueCall =
       criteria: Criterion[];
       /** What the go clears the ticket for; missing on calls logged before it was kept, which read as implement. */
       scope?: GoScope;
+      /** Set when a learned ruling settled a question that would have gone to the owner: the board answers it rests on. */
+      ruling?: Ruling;
     }
-  | { call: "no"; reason: string; restsOn: RestsOn }
+  | { call: "no"; reason: string; restsOn: RestsOn; ruling?: Ruling }
   | {
       call: "ask";
       reason: string;
@@ -106,6 +153,8 @@ export type IssueCall =
       large: boolean;
       /** The criteria a go would carry, when the change is asked only because it is hard to undo. */
       criteria: Criterion[];
+      /** The kind of question this is, in the words the judgment named it; missing on questions logged before it was kept. */
+      kind?: string;
     };
 
 /** What a call's go clears the ticket for; a go logged before scope was kept reads as implement. */
@@ -133,12 +182,12 @@ export function routeVerdict(verdict: Verdict): { ok: true; call: IssueCall } | 
       question: "Go ahead with this change? It is hard to undo.",
       why: verdict.large_because.trim() === "" ? "The change is hard to undo." : verdict.large_because,
     };
-    return { ok: true, call: { call: "ask", reason, restsOn, ...question, large: true, criteria: verdict.criteria } };
+    return { ok: true, call: { call: "ask", reason, restsOn, ...question, large: true, criteria: verdict.criteria, kind: verdict.question_kind } };
   }
   if (verdict.question === null || verdict.question.question.trim() === "") {
     return { ok: false, problem: "the answer is ask but carries no question" };
   }
-  return { ok: true, call: { call: "ask", reason, restsOn, ...verdict.question, large: verdict.hard_to_undo, criteria: verdict.criteria } };
+  return { ok: true, call: { call: "ask", reason, restsOn, ...verdict.question, large: verdict.hard_to_undo, criteria: verdict.criteria, kind: verdict.question_kind } };
 }
 
 /** Everything the judgment reads about one issue. */
@@ -158,6 +207,8 @@ export interface JudgmentInputs {
   /** A read-only checkout of the repo for the run to read, and its commit. */
   checkout: string;
   sha: string;
+  /** The kinds of question the repo's board has been asked; the prompt lists them only when there are some. */
+  kinds?: KnownKind[];
   /** Set for a re-check after VISION.md changed: the call made under the earlier vision, and what changed. */
   recheck?: RecheckInputs;
 }
@@ -240,6 +291,8 @@ Restating the issue, "tests cover X", "VISION.md is not changed", and good pract
 
 Ask one question the owner can answer without reading anything else, and say what makes it a question: the readings and how users' results would differ, or the stakes that make the change hard to undo.
 
+Also name the **kind** of question it is in question_kind: the sort of decision it asks for, apart from this issue's details, in a few lowercase words joined with hyphens (for example \`new-dependency\` or \`default-on-or-opt-in\`). Two questions are the same kind when the owner's answer to one would be the owner's answer to the other. Name a kind the same way every time it comes up: when one of the kinds listed under "Kinds of question already asked" fits, use its name exactly; coin a new name only when none does. The kind is only a name for the question: it never changes whether to ask, and a change that is hard to undo is asked whatever its kind.
+
 ## The repo
 
 You are in a read-only checkout of ${inputs.repo} at ${inputs.sha}, its default branch. Read whatever helps you judge the product call, such as what exists today or what a change would replace, and search it for the places an issue's list leaves out (see Criteria). This is a product call, not a code review.
@@ -255,7 +308,7 @@ ${pins}
 ## Past cases
 
 ${precedents}
-
+${kindsSection(inputs.kinds ?? [])}
 ## The issue: ${issueName}
 
 <issue>
@@ -263,6 +316,14 @@ ${inputs.issueText.trim()}
 </issue>
 ${inputs.recheck === undefined ? "" : `\n${recheckSection(inputs.recheck)}\n`}
 Now answer the owner's question for this issue: would doing it make the product better, as the owner would see it?`;
+}
+
+/** The block that lists the kinds of question the repo has asked, so a question is named as before; empty when it has asked none. */
+function kindsSection(kinds: readonly KnownKind[]): string {
+  if (kinds.length === 0) return "";
+  const how = (known: KnownKind) =>
+    known.answers === 0 ? "asked, not answered yet" : `answered ${known.answers} time${known.answers === 1 ? "" : "s"}${known.outcome === null ? ", not all the same way" : `, all ${known.outcome === "plan" ? "go, for planning" : known.outcome}`}`;
+  return `\n## Kinds of question already asked\n\nThese are the kinds of question this repo's board has been asked, so you name a question's kind the same way again. They are only names: nothing here settles this issue.\n\n${kinds.map((known) => `- ${known.kind} (${how(known)})`).join("\n")}\n`;
 }
 
 /** The block a re-check adds: the call made under the earlier vision and the lines the change removed and added. */
@@ -336,11 +397,25 @@ export async function judge(runner: ModelRunner, inputs: JudgmentInputs, options
   return { ok: true, call: routed.call, verdict: output, facts: result.facts, ...(output.vision_change === undefined ? {} : { visionChange: output.vision_change }) };
 }
 
+/** How an outcome reads in words. */
+export function outcomeWords(outcome: RulingOutcome): string {
+  return outcome === "plan" ? "go, for planning" : outcome;
+}
+
+/** A ruling's answers as lines for the terminal, each under the name of whoever gave it. */
+export function rulingLines(ruling: Ruling, indent = "  "): string[] {
+  return [
+    `${indent}rests on ${ruling.answers.length} board answers to "${ruling.kind}" questions:`,
+    ...ruling.answers.map((answer) => `${indent}  - ${answer.by} answered ${outcomeWords(answer.outcome)} on #${answer.issue.number} (${answer.at.slice(0, 10)}): ${answer.words.replace(/\s+/gu, " ").trim()}`),
+  ];
+}
+
 /** A call as plain text, for the terminal. */
 export function formatCall(call: IssueCall): string {
   const lines = [`${call.call === "go" && scopeOf(call) === "plan" ? "go, for planning" : call.call}: ${call.reason}`];
   for (const line of call.restsOn.visionLines) lines.push(`  rests on the vision: > ${line}`);
   for (const slug of call.restsOn.cases) lines.push(`  rests on case ${slug}`);
+  if (call.call !== "ask" && call.ruling !== undefined) lines.push(...rulingLines(call.ruling));
   if (call.call === "ask") {
     lines.push("", `Question: ${call.question}`, `Why it is a question: ${call.why}`);
   }

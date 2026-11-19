@@ -18,6 +18,7 @@ function verdict(call: Verdict["call"], reason = `entail says ${call}`): Verdict
     large_because: "",
     criteria: [],
     question: call === "ask" ? { question: "Which way?", why: "Two readings." } : null,
+    question_kind: call === "ask" ? "which-way" : "",
   };
 }
 

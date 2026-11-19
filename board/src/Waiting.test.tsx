@@ -25,6 +25,39 @@ describe("Waiting", () => {
     expect(screen.getAllByRole("link", { name: /VISION\.md:48 at 8973851/u }).length).toBe(3);
   });
 
+  it("shows a call a learned ruling settled with the board answers it rests on, each under the name of whoever gave it, and no vision line", async () => {
+    const item = aCall({
+      id: 12,
+      call: "go",
+      reason: "This is a kind of question the board has settled before.",
+      issue: { number: 190, title: "Use wcwidth", url: "u190", author: "r" },
+      restsOn: { visionLines: [], cases: [] },
+      ruling: {
+        kind: "new-dependency",
+        outcome: "go",
+        answers: [
+          { id: 1, by: "Omkar", at: "2026-11-10T09:00:00.000Z", outcome: "go", words: "Yes, keep it optional.", issue: { number: 150, title: "Use chalk", url: "u150" } },
+          { id: 2, by: "Priya", at: "2026-11-11T09:00:00.000Z", outcome: "go", words: "Fine.", issue: { number: 160, title: "Use ora", url: "u160" } },
+          { id: 3, by: "Omkar", at: "2026-11-12T09:00:00.000Z", outcome: "go", words: "Go.", issue: { number: 170, title: "Use ms", url: "u170" } },
+        ],
+        asked: { question: "May tally depend on wcwidth?", why: "Different installs." },
+      },
+    });
+    fakeApi({ waiting: { items: [item], held: [], actedAlone: { count: 0, repos: [] } } });
+    renderBoard();
+    expect(await screen.findByText("Settled by a ruling")).toBeTruthy();
+    expect(screen.getByText(/3 board answers to “new-dependency” questions, all go/u)).toBeTruthy();
+    const answers = screen.getAllByRole("listitem").filter((one) => /answered go on/u.test(one.textContent ?? ""));
+    expect(answers.map((one) => one.textContent)).toEqual([
+      expect.stringMatching(/^Omkar answered go on #150 2026-11-10: Yes, keep it optional\.$/u),
+      expect.stringMatching(/^Priya answered go on #160 2026-11-11: Fine\.$/u),
+      expect.stringMatching(/^Omkar answered go on #170 2026-11-12: Go\.$/u),
+    ]);
+    expect(screen.getByText("May tally depend on wcwidth?")).toBeTruthy();
+    expect(screen.queryByText(/On the merits/u)).toBeNull();
+    expect(screen.queryByRole("link", { name: /VISION\.md/u })).toBeNull();
+  });
+
   it("shows a call a vision change moved with the call before and after, the line that moved it, and the PR that relied on the old text", async () => {
     const item = aCall({
       id: 9,

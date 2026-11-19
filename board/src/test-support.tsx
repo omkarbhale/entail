@@ -140,6 +140,7 @@ export function aCall(overrides: Partial<CallView> = {}): CallView {
     criteria: [],
     question: null,
     restsOn: { visionLines: [{ text: "Its value over chat is structure.", url: "https://github.com/omkarbhale/entail/blob/8973851/VISION.md#L48", line: 48 }], cases: [] },
+    ruling: null,
     judgedAt: new Date(Date.now() - 3600_000).toISOString(),
     trigger: "new",
     owner: null,

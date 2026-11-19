@@ -20,13 +20,14 @@ import {
   type PullRequest,
 } from "./forge/forge.ts";
 import { oneLine, type RepoFailure } from "./health.ts";
-import { formatCall, judge, JUDGMENT_PROMPT_VERSION, RECHECK_PROMPT_VERSION, scopeOf } from "./judgment.ts";
+import { formatCall, judge, JUDGMENT_PROMPT_VERSION, RECHECK_PROMPT_VERSION, scopeOf, type IssueCall } from "./judgment.ts";
 import { ciGreen, ciProblems, formatLandingCall, judgeLanding, landingPromptVersion, touched, type LinkedIssue } from "./landing.ts";
 import { forgeRemote, Mirror, type MirrorRemote } from "./mirror.ts";
 import type { ModelRunner } from "./model-runner.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import { caseFor, landingCaseFor, runSettings } from "./owner.ts";
 import { readPins } from "./pins.ts";
+import { knownKinds, settleByRuling, type Settlement } from "./rulings.ts";
 import { BLOCKED_LABEL, postFor, pullRequestPostFor, type MergeResult } from "./posts.ts";
 import {
   appendEntry,
@@ -610,6 +611,8 @@ async function judgeIssue(context: JudgeContext, issue: Issue, trigger: Trigger,
   const reading = await context.reading();
   const book = await options.book();
   const { model, effort } = runSettings(state, options.settings);
+  const logged = readLog(options.dataDirectory, repo);
+  const asOf = options.now?.() ?? new Date();
   const judgment = await judge(
     options.runner,
     {
@@ -619,6 +622,7 @@ async function judgeIssue(context: JudgeContext, issue: Issue, trigger: Trigger,
       vision: reading.vision,
       pins: reading.pins,
       precedents: precedentsFor(book, repo, issueText),
+      kinds: knownKinds(logged, asOf),
       checkout: reading.checkout,
       sha: reading.sha,
     },
@@ -631,9 +635,13 @@ async function judgeIssue(context: JudgeContext, issue: Issue, trigger: Trigger,
     options.print(`${name}: the judgment gave no call (${judgment.failure.kind}): ${judgment.failure.message}; it is tried again next pass`);
     return null;
   }
-  options.log?.info("judged", { repo, issue: issue.number, trigger, call: judgment.call.call, model: judgment.facts.model, costUsd: judgment.facts.estimatedCostUsd });
+  // The owner's own word is never replaced by a ruling; a question that would go to the owner may be settled by one.
+  const settled = owner === null ? settleByRuling(judgment.call, { entries: logged, issueText, pins: reading.pins, now: asOf }) : { call: judgment.call, ruling: null, notSettled: null };
+  const call = settled.call;
+  options.log?.info("judged", { repo, issue: issue.number, trigger, call: call.call, model: judgment.facts.model, costUsd: judgment.facts.estimatedCostUsd });
+  logSettlement(options, repo, issue.number, judgment.call, settled);
   const why = owner === null ? trigger : `the owner's ${owner.word.kind}, ${ownerCallWords(owner.word)}`;
-  options.print(`${name} (${why}): ${issue.title}\n${indent(formatCall(judgment.call))}`);
+  options.print(`${name} (${why}): ${issue.title}\n${indent(formatCall(call))}`);
   return {
     type: "call",
     issue: { number: issue.number, title: issue.title, url: issue.url, author: issue.author.username, createdAt: issue.createdAt },
@@ -643,7 +651,7 @@ async function judgeIssue(context: JudgeContext, issue: Issue, trigger: Trigger,
     issueText,
     vision: reading.vision,
     sha: reading.sha,
-    call: judgment.call,
+    call,
     confirm: state.confirm,
     owner: owner?.word ?? null,
     model: judgment.facts.model,
@@ -651,6 +659,15 @@ async function judgeIssue(context: JudgeContext, issue: Issue, trigger: Trigger,
     promptVersion: JUDGMENT_PROMPT_VERSION,
     costUsd: judgment.facts.estimatedCostUsd,
   };
+}
+
+/** Tells the operational log what a ruling did with a call that would have gone to the owner: settled it, or why not. */
+function logSettlement(options: PassOptions, repo: string, issue: number, judged: IssueCall, settled: Settlement): void {
+  if (settled.ruling !== null) {
+    options.log?.info("ruled", { repo, issue, kind: settled.ruling.kind, outcome: settled.ruling.outcome, answers: settled.ruling.answers.map((answer) => ({ call: answer.call, by: answer.by })) });
+  } else if (settled.notSettled !== null && judged.call === "ask") {
+    options.log?.info("ruling-not-used", { repo, issue, kind: judged.kind ?? "", why: settled.notSettled });
+  }
 }
 
 /** The owner's word as the judgment reads it: one more comment on the issue, from the board. */
@@ -940,6 +957,7 @@ async function recheckVision(context: JudgeContext, startEntries: readonly Entry
         vision: reading.vision,
         pins: reading.pins,
         precedents: precedentsFor(book, repo, call.issueText),
+        kinds: knownKinds(readLog(options.dataDirectory, repo), now()),
         checkout: reading.checkout,
         sha: reading.sha,
         recheck: {
@@ -961,9 +979,12 @@ async function recheckVision(context: JudgeContext, startEntries: readonly Entry
       continue;
     }
     const facts = { model: judgment.facts.model, effort, promptVersion: RECHECK_PROMPT_VERSION, costUsd: judgment.facts.estimatedCostUsd };
-    options.log?.info("rechecked", { repo, issue: number, from: previous, call: judgment.call.call, model: judgment.facts.model, costUsd: judgment.facts.estimatedCostUsd });
-    if (judgment.call.call === previous) {
-      record({ ...base, outcome: "held", judged: judgment.call, ...facts });
+    // The owner's own word is never replaced by a ruling; any other question the re-check would send to the owner may be.
+    const settled = call.owner !== null ? { call: judgment.call, ruling: null, notSettled: null } : settleByRuling(judgment.call, { entries: readLog(options.dataDirectory, repo), issueText: call.issueText, pins: reading.pins, now: now() });
+    logSettlement(options, repo, number, judgment.call, settled);
+    options.log?.info("rechecked", { repo, issue: number, from: previous, call: settled.call.call, model: judgment.facts.model, costUsd: judgment.facts.estimatedCostUsd });
+    if (settled.call.call === previous) {
+      record({ ...base, outcome: "held", judged: settled.call, ...facts });
       options.print(`${name} ${progress}: the call holds under the new vision: ${previous}`);
       continue;
     }
@@ -991,14 +1012,14 @@ async function recheckVision(context: JudgeContext, startEntries: readonly Entry
       issueText: call.issueText,
       vision: reading.vision,
       sha: reading.sha,
-      call: judgment.call,
+      call: settled.call,
       // The owner made the earlier call: a change to it waits for them whatever the mode.
       confirm: state.confirm || call.owner !== null,
       owner: null,
       ...facts,
       recheck,
     });
-    options.print(`${name} ${progress}: the vision change moves the call: ${previous} → ${judgment.call.call}: ${issue.title}\n${indent(formatCall(judgment.call))}\n    moved by: ${recheck.passage}${pullRequests.length === 0 ? "" : `\n    in-flight work that relied on the old text: ${pullRequests.map((pr) => pr.url).join(", ")}`}`);
+    options.print(`${name} ${progress}: the vision change moves the call: ${previous} → ${settled.call.call}: ${issue.title}\n${indent(formatCall(settled.call))}\n    moved by: ${recheck.passage}${pullRequests.length === 0 ? "" : `\n    in-flight work that relied on the old text: ${pullRequests.map((pr) => pr.url).join(", ")}`}`);
   }
   return judged;
 }
