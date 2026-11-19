@@ -436,13 +436,22 @@ export interface ReopenedEntry extends EntryBase {
 
 /**
  * The reopens of an issue entail closed that no call answers yet, by issue:
- * each issue's latest `reopened` entry with no call on the issue after it.
+ * each issue's latest `reopened` entry with nothing after it on the issue that
+ * answers it: a call, an act of entail's, or the owner's own word on a call.
  */
 export function pendingReopens(entries: readonly Entry[]): Map<number, ReopenedEntry> {
   const pending = new Map<number, ReopenedEntry>();
+  const issueOfCall = new Map<number, number>();
   for (const entry of entries) {
     if (entry.type === "reopened") pending.set(entry.issue, entry);
-    else if (entry.type === "call") pending.delete(entry.issue.number);
+    else if (entry.type === "call") {
+      issueOfCall.set(entry.id, entry.issue.number);
+      pending.delete(entry.issue.number);
+    } else if (entry.type === "acted") pending.delete(entry.issue);
+    else if (entry.type === "confirmed" || entry.type === "overridden" || entry.type === "answered") {
+      const issue = issueOfCall.get(entry.call);
+      if (issue !== undefined) pending.delete(issue);
+    }
   }
   return pending;
 }
