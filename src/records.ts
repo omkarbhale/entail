@@ -227,10 +227,27 @@ export interface FollowedEntry extends EntryBase {
 }
 
 /** entail stopped following a PR: it was merged or closed, by entail or anyone else. */
+/**
+ * entail stopped following a PR: it was merged or closed, or, still open, it
+ * no longer merges into the repo's base branch (the owner changed the base
+ * branch, or the PR was retargeted), and `base` is the branch it merges into.
+ */
 export interface UnfollowedEntry extends EntryBase {
   type: "unfollowed";
   pr: number;
-  state: "merged" | "closed";
+  state: "merged" | "closed" | "open";
+  base?: string;
+}
+
+/**
+ * A pass started working against a base branch other than the one it worked
+ * against before: the owner set, changed or unset the repo's base branch.
+ * `picked` are the open PRs into it that the pass read, to pick them up.
+ */
+export interface BaseBranchSeenEntry extends EntryBase {
+  type: "base-branch-seen";
+  branch: string;
+  picked: number[];
 }
 
 /** A landing judgment on a PR's head gave no call: counted, so a head is judged at most {@link JUDGMENT_ATTEMPTS} times. */
@@ -490,7 +507,8 @@ export type Entry =
   | BlockedEntry
   | UnblockedEntry
   | VisionSeenEntry
-  | RecheckedEntry;
+  | RecheckedEntry
+  | BaseBranchSeenEntry;
 
 /** An entry as written, before it has an id and a time. */
 export type NewEntry = Entry extends infer E ? (E extends Entry ? Omit<E, "id" | "at"> : never) : never;

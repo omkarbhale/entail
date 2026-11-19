@@ -403,6 +403,13 @@ export class GitHubForge implements Forge {
     return { changes, cursor: JSON.stringify(next) };
   }
 
+  async openPullRequests(): Promise<PullRequest[]> {
+    const { baseBranch } = await this.project();
+    const params = new URLSearchParams({ state: "open", base: baseBranch, sort: "created", direction: "asc", per_page: String(PAGE_SIZE) });
+    const pulls = await this.#readPages(`repos/${this.setting.path}/pulls?${params}`, (body) => body);
+    return pulls.map((raw) => this.#pullRequest(raw));
+  }
+
   async pullRequest(number: number): Promise<PullRequest> {
     return this.#pullRequest(await this.#getJson(`repos/${this.setting.path}/pulls/${pathNumber(number)}`));
   }

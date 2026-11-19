@@ -22,8 +22,10 @@ function twoBranches(t: TestContext) {
   repo.push("develop");
   const head = repo.write("src/stdin.ts", "export {};\n").commit("read standard input");
   repo.pushRef(head, "refs/pull/4/head");
+  const release = repo.write("VISION.md", "# Tally\n\nTally counts words, lines and pages.\n").commit("vision on release");
+  repo.push("release");
   const readers = mirrorReaders(tempDirectory(t, "data"), { remote: () => ({ url: repo.remote, credentialHelper: null }) });
-  return { main, develop, head, readers };
+  return { main, develop, head, release, readers };
 }
 
 test("with a base branch set, the call on an issue, the vision re-check, a PR's diff and a suggestion run all read that branch", async (t) => {
@@ -53,4 +55,27 @@ test("with no base branch set, the readers read the forge's default branch, as b
   const reading = await readers.reader("acme/tally", forgeWith(null));
   assert.equal(reading.sha, main);
   assert.equal(reading.vision?.text, "# Tally\n\nTally counts words.\n");
+});
+
+test("when the base branch changes later, the same mirror fetches the new branch, and the vision and suggestions follow it", async (t) => {
+  const { main, develop, release, readers } = twoBranches(t);
+  assert.equal((await readers.reader("acme/tally", forgeWith(null))).sha, main);
+
+  const onDevelop = await readers.reader("acme/tally", forgeWith("develop"));
+  assert.equal(onDevelop.sha, develop);
+  assert.equal(onDevelop.vision?.text, "# Tally\n\nTally counts words and lines.\n");
+
+  const onRelease = await readers.reader("acme/tally", forgeWith("release"));
+  assert.equal(onRelease.sha, release, "the release branch is fetched once it is the base branch");
+  assert.equal(onRelease.vision?.text, "# Tally\n\nTally counts words, lines and pages.\n");
+  const suggesting = await readers.suggestReader("acme/tally", forgeWith("release"));
+  assert.equal(suggesting.sha, release);
+  await suggesting.release();
+
+  const back = await readers.reader("acme/tally", forgeWith(null));
+  assert.equal(back.sha, main, "unset, the forge's default branch again");
+  const suggestingOnMain = await readers.suggestReader("acme/tally", forgeWith(null));
+  assert.equal(suggestingOnMain.sha, main);
+  await suggestingOnMain.release();
+  await assert.rejects(readers.reader("acme/tally", forgeWith("gone")), /the remote has no branch gone/u, "a branch the remote lacks fails the read, with why");
 });

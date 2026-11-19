@@ -66,6 +66,7 @@ import {
   type Trigger,
   type VisionRecheck,
   type VisionSeenEntry,
+  type BaseBranchSeenEntry,
   workStarted,
 } from "./records.ts";
 import { handoffFor, runStart } from "./starts.ts";
@@ -145,6 +146,7 @@ export type WatchForge = Pick<
   | "closeIssue"
   | "reopenIssue"
   | "pullRequest"
+  | "openPullRequests"
   | "linkedIssues"
   | "checks"
   | "pullRequestFiles"
@@ -1020,16 +1022,39 @@ async function passPullRequests(
   const followed = followedPullRequests(entries);
   const changed = new Set<number>();
   for (const change of fresh) if (change.kind === "pull-request" && change.pullRequest.state === "open") changed.add(change.pullRequest.number);
-  const numbers = [...new Set([...followed.keys(), ...changed])].sort((a, b) => a - b);
-  const latest = latestLandings(entries);
   let ok = true;
   let judged = 0;
+  // When the owner set, changed or unset the base branch, the PRs already open into the new one are picked up, once.
+  const worked = entries.findLast((entry): entry is BaseBranchSeenEntry => entry.type === "base-branch-seen")?.branch ?? project.defaultBranch;
+  if (worked !== project.baseBranch && entries.some((entry) => entry.type === "settings" && entry.baseBranch !== undefined)) {
+    try {
+      const open = await forge.openPullRequests();
+      for (const pr of open) changed.add(pr.number);
+      record({ type: "base-branch-seen", branch: project.baseBranch, picked: open.map((pr) => pr.number) });
+      options.print(`${repo}: now working against ${project.baseBranch}; ${open.length === 0 ? "no open pull request into it" : `reading the open pull requests into it: ${open.map((pr) => `#${pr.number}`).join(", ")}`}`);
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      ok = false;
+      const message = error instanceof Error ? error.message : String(error);
+      options.log?.warn("pr-read-failed", { repo, baseBranch: project.baseBranch, error: message });
+      context.failure = failureAt(options, `reading the pull requests into ${project.baseBranch}`, message, error instanceof RateLimitedError ? error.resetAt : undefined);
+      options.print(`${repo}: entail could not read the pull requests into ${project.baseBranch}: ${message}; it tries again next pass`);
+    }
+  }
+  const numbers = [...new Set([...followed.keys(), ...changed])].sort((a, b) => a - b);
+  const latest = latestLandings(entries);
   for (const number of numbers) {
     options.signal?.throwIfAborted();
     const name = `${repo}#${number}`;
     try {
       const pr = await forge.pullRequest(number);
       const following = followed.get(number);
+      // A PR followed into a branch that is no longer the base branch, as after the owner changed it, is followed no more.
+      if (following !== undefined && pr.state === "open" && pr.baseBranch !== project.baseBranch) {
+        record({ type: "unfollowed", pr: number, state: "open", base: pr.baseBranch });
+        options.print(`${name}: the pull request merges into ${pr.baseBranch}, not the base branch ${project.baseBranch}; no longer following it`);
+        continue;
+      }
       let issue = following?.issue ?? null;
       let linkedNow = following?.linked ?? [];
       // A PR followed with no ticket is linked again when it changed, or when a go on an issue it was linked to has acted since.
@@ -1308,8 +1333,10 @@ function cancelQuestion(state: RepoState, landing: LandingEntry, entries: readon
 
 /**
  * Merges a PR at the head that was judged, and only there: a PR already
- * merged counts as merged; a closed one, one whose head moved since, or one
- * whose CI is not green at that head is refused without asking the forge. The
+ * merged counts as merged; a closed one, one whose head moved since, one that
+ * no longer merges into the base branch (the owner changed it since, or the PR
+ * was retargeted), or one whose CI is not green at that head is refused
+ * without asking the forge. The
  * repo's own merge method is followed: squash where it is allowed, else the
  * first the repo allows.
  */
@@ -1322,6 +1349,8 @@ async function mergeAtHead(options: PassOptions, forge: WatchForge, landing: Lan
   }
   if (live.state === "closed") return { merged: false, refusal: `the ${forge.wording.pullRequest} is closed` };
   if (live.headSha !== landing.head) return { merged: false, refusal: `its head moved to \`${live.headSha}\` since it was judged` };
+  const { baseBranch } = await forge.project();
+  if (live.baseBranch !== baseBranch) return { merged: false, refusal: `it merges into \`${live.baseBranch}\`, not the base branch \`${baseBranch}\`` };
   const report = await forge.checks(number, landing.head, []);
   if (!ciGreen(report)) return { merged: false, refusal: `CI is not green at the judged head: ${ciProblems(report).join("; ")}` };
   const outcome = await forge.merge(number, landing.head, mergeMethod(await forge.mergeMethods()));
@@ -1340,6 +1369,21 @@ function indent(text: string): string {
     .split("\n")
     .map((line) => (line === "" ? "" : `    ${line}`))
     .join("\n");
+}
+
+/**
+ * The forges of a run, one per repo, each working against the base branch the
+ * repo's log sets now: a repo's forge is made again when the owner changes its
+ * base branch, so the next pass works against the new one.
+ */
+export function forgesByBaseBranch<F extends { readonly baseBranch: string | null }>(dataDirectory: string, make: (repo: string, baseBranch: string | null) => F): (repo: string) => F {
+  const forges = new Map<string, F>();
+  return (repo) => {
+    const { baseBranch } = repoState(repo, readLog(dataDirectory, repo));
+    let forge = forges.get(repo);
+    if (forge === undefined || forge.baseBranch !== baseBranch) forges.set(repo, (forge = make(repo, baseBranch)));
+    return forge;
+  };
 }
 
 /**

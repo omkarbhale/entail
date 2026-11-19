@@ -755,7 +755,7 @@ export type LogItem =
   | { kind: "pr-acted"; repo: string; at: string; for: number; pr: number; url: string; merged: PrActedEntry["merged"]; refused: string | null; sentBack: boolean; closed: boolean }
   /** entail started or stopped following a PR. */
   | { kind: "pr"; repo: string; at: string; entry: Extract<Entry, { type: "followed" | "unfollowed" | "landing-failed" }> }
-  | { kind: "repo"; repo: string; at: string; entry: Extract<Entry, { type: "enrolled" | "unenrolled" | "settings" | "undone" | "backlog" | "reopened" }> }
+  | { kind: "repo"; repo: string; at: string; entry: Extract<Entry, { type: "enrolled" | "unenrolled" | "settings" | "undone" | "backlog" | "reopened" | "base-branch-seen" }> }
   /** VISION.md changed, or an issue was re-checked after it changed and nothing was posted. */
   | { kind: "vision"; repo: string; at: string; entry: VisionSeenEntry | RecheckedEntry }
   /** A suggestion run the owner asked for: what it suggested and left out, or why it gave nothing. */
@@ -1199,6 +1199,7 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
           lines.push(`${at}  ${where(item.entry.pr.number)}  following PR "${item.entry.pr.title}", ${behind}`);
         }
         else if (item.entry.type === "landing-failed") lines.push(`${at}  ${where(item.entry.pr)}  the landing judgment at ${item.entry.head.slice(0, 7)} gave no call: ${item.entry.reason}`);
+        else if (item.entry.state === "open") lines.push(`${at}  ${where(item.entry.pr)}  stopped following the PR: it merges into ${item.entry.base ?? "another branch"}, not the base branch`);
         else lines.push(`${at}  ${where(item.entry.pr)}  stopped following the PR: it is ${item.entry.state}`);
         break;
       case "suggestion": {
@@ -1251,6 +1252,10 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         if (entry.type === "undone") lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} undid their action ${entry.action}; nothing was sent to ${forgeTitle(item.repo)}`);
         if (entry.type === "backlog") lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} asked entail to judge the open backlog: ${entry.issues.length === 0 ? "nothing left to judge" : entry.issues.map((issue) => `#${issue}`).join(", ")}`);
         if (entry.type === "reopened") lines.push(`${at}  ${where(entry.issue)}  reopened on ${forgeTitle(item.repo)} after entail closed it`);
+        if (entry.type === "base-branch-seen") {
+          const picked = entry.picked.length === 0 ? "no open pull request into it to pick up" : `picked up the open pull requests into it: ${entry.picked.map((pr) => `#${pr}`).join(", ")}`;
+          lines.push(`${at}  ${where(null) || item.repo}  now working against ${entry.branch}; ${picked}`);
+        }
         break;
       }
     }

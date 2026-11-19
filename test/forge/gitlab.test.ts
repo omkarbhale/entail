@@ -585,3 +585,25 @@ test("with a base branch set, only merge requests into it link issues, and one G
   assert.deepEqual(await forge.linkedIssues(7), [12], "#5 is no issue here");
   assert.deepEqual(await forge.linkedIssues(8), [], "a merge request into the default branch is not one into the base branch");
 });
+
+test("the open merge requests into the base branch are listed filtered on it", async (t) => {
+  const transport = new RecordedTransport({
+    host: SELF_HOSTED,
+    exchanges: [
+      { request: { method: "GET", path: PROJECT }, response: { status: 200, body: { id: 5001, default_branch: "main" } } },
+      {
+        request: { method: "GET", path: `${PROJECT}/merge_requests?state=opened&target_branch=main&order_by=created_at&sort=asc&per_page=100` },
+        response: { status: 200, body: [mergeRequest(5), mergeRequest(6, { draft: true })] },
+      },
+    ],
+  });
+  t.after(() => transport.assertDone());
+  const forge = new GitLabForge(SETTING, transport);
+  assert.deepEqual(
+    (await forge.openPullRequests()).map((pr) => [pr.number, pr.baseBranch, pr.draft, pr.mergeable]),
+    [
+      [5, "main", false, null],
+      [6, "main", true, null],
+    ],
+  );
+});

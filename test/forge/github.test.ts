@@ -628,3 +628,25 @@ test("a blocker's state is read from its issue in any repo, and a missing one is
   assert.equal(await forge.issueState("acme/tally", 77), null);
   assert.equal(await forge.issueState("not a path", 1), null);
 });
+
+test("the open PRs into the base branch are listed by the pulls API filtered on it", async (t) => {
+  const transport = new RecordedTransport({
+    host: "github.com",
+    exchanges: [
+      { request: { method: "GET", path: "repos/acme/tally" }, response: { status: 200, body: { id: 5001, default_branch: "main" } } },
+      {
+        request: { method: "GET", path: "repos/acme/tally/pulls?state=open&base=develop&sort=created&direction=asc&per_page=100" },
+        response: { status: 200, body: [pull(5, "2026-11-02T09:00:00Z", { base: { ref: "develop", sha: "0".repeat(40) } }), pull(6, "2026-11-02T10:00:00Z", { draft: true, base: { ref: "develop", sha: "0".repeat(40) } })] },
+      },
+    ],
+  });
+  t.after(() => transport.assertDone());
+  const forge = new GitHubForge(SETTING, transport, { baseBranch: "develop" });
+  assert.deepEqual(
+    (await forge.openPullRequests()).map((pr) => [pr.number, pr.baseBranch, pr.draft, pr.mergeable]),
+    [
+      [5, "develop", false, null],
+      [6, "develop", true, null],
+    ],
+  );
+});

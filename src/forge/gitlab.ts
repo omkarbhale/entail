@@ -343,6 +343,13 @@ export class GitLabForge implements Forge {
     return { changes, cursor: JSON.stringify(next) };
   }
 
+  async openPullRequests(): Promise<PullRequest[]> {
+    const { baseBranch } = await this.project();
+    const params = new URLSearchParams({ state: "opened", target_branch: baseBranch, order_by: "created_at", sort: "asc", per_page: String(PAGE_SIZE) });
+    const mergeRequests = await this.#readPages(`${this.#projectRef}/merge_requests`, params, () => false);
+    return mergeRequests.map((raw) => this.#mergeRequest(raw, false));
+  }
+
   async pullRequest(number: number): Promise<PullRequest> {
     // Asking for a recheck keeps a merge status GitLab left unchecked from staying so.
     const path = `${this.#projectRef}/merge_requests/${pathNumber(number)}?with_merge_status_recheck=true`;

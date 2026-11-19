@@ -227,6 +227,12 @@ export class FakeForge implements WatchForge {
     return { ...pull };
   }
 
+  async openPullRequests(): Promise<PullRequest[]> {
+    this.#check();
+    const base = this.baseBranch ?? "main";
+    return [...this.pulls.values()].filter((pull) => pull.state === "open" && pull.baseBranch === base).map((pull) => ({ ...pull }));
+  }
+
   async linkedIssues(number: number): Promise<number[]> {
     this.#check();
     return [...(this.links.get(number) ?? [])];

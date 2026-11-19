@@ -64,7 +64,7 @@ import { forgeHost, forgeTitle, isRepo, repoSetting } from "./repo-ref.ts";
 import { installService, isWsl, machineServiceSystem, serviceStatus, uninstallService, type ServiceInputs } from "./service.ts";
 import { fileUnfiled, formatSuggestions, runSuggestions, SUGGEST_TIMEOUT_MS, SuggestionRuns } from "./suggest.ts";
 import { machineUpdate, update } from "./update.ts";
-import { mirrorReader, mirrorReaders, runPass, type PassOptions } from "./watch.ts";
+import { forgesByBaseBranch, mirrorReader, mirrorReaders, runPass, type PassOptions } from "./watch.ts";
 
 /** The port the board and its API are served on unless --port names another. */
 export const DEFAULT_PORT = 4380;
@@ -515,7 +515,7 @@ async function runCommand(args: string[]): Promise<number> {
   const lock = dryRun ? null : acquireLock(dataDirectory);
   const log = new OperationalLog(dataDirectory, { echo: null });
   if (lock?.takeover) log.warn("unexpected-stop", { previous: lock.takeover.previous });
-  const forges = new Map<string, Forge>();
+  const forges = forgesByBaseBranch(dataDirectory, (repo, baseBranch) => createForge(repoSetting(repo), undefined, baseBranch));
   const seen = new Map<string, ChangeDeduplicator>();
   const cursors = new CursorStore(dataDirectory);
   const { reader, prReader, suggestReader } = mirrorReaders(dataDirectory);
@@ -525,13 +525,7 @@ async function runCommand(args: string[]): Promise<number> {
     dataDirectory,
     owner: await ownerName(dataDirectory),
     settings: settingsIn(dataDirectory),
-    forgeFor: (repo) => {
-      // Made again when the owner changes the repo's base branch.
-      const baseBranch = baseBranchOf(dataDirectory, repo);
-      let forge = forges.get(repo);
-      if (forge === undefined || forge.baseBranch !== baseBranch) forges.set(repo, (forge = createForge(repoSetting(repo), undefined, baseBranch)));
-      return forge;
-    },
+    forgeFor: forges,
     reader,
     prReader,
     runner,

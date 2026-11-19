@@ -473,6 +473,14 @@ export interface Forge {
   /** A PR's state, to learn whether a merge went through. */
   pullRequestState(prNumber: number): Promise<PullRequestState>;
 
+  /**
+   * Every open PR into the base branch ({@link Project.baseBranch}), drafts
+   * included, as a list reads them, so without mergeability. entail reads them
+   * when the owner changes a repo's base branch, to pick up the PRs already
+   * open into the new one.
+   */
+  openPullRequests(): Promise<PullRequest[]>;
+
   /** One PR, read live, with whether the forge would merge it and whether it conflicts. */
   pullRequest(number: number): Promise<PullRequest>;
 
