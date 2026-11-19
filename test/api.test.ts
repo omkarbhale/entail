@@ -162,11 +162,13 @@ test("the board enrolls a repo it can read on GitHub, changes its settings and u
       ["settings", "Omkar"],
       ["settings", "Omkar"],
       ["settings", "Omkar"],
+      ["settings", "Omkar"],
+      ["settings", "Omkar"],
       ["unenrolled", "Omkar"],
     ],
     "every change to the base branch and the drift check is logged under the owner's name, like the other settings",
   );
-  assert.equal(api.woken(), 7);
+  assert.equal(api.woken(), 9);
 });
 
 test("an answer is recorded at once and held ten seconds: it can be undone until entail acts, and is acted on when the window closes", async (t) => {
