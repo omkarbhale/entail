@@ -199,6 +199,7 @@ export function forgeContract(subject: ForgeContractSubject): void {
         id: 5001,
         path: setting.path,
         defaultBranch: "main",
+        baseBranch: "main",
       });
       assert.equal(projectKey(project), `${setting.forge}:${setting.host}:5001`);
     });
@@ -273,6 +274,7 @@ export function forgeContract(subject: ForgeContractSubject): void {
         conflicts: null,
         headSha: HEAD4,
         baseBranch: "main",
+        headBranch: "stdin",
         author: actor(REPORTER),
         createdAt: "2026-11-01T10:30:00.000Z",
         updatedAt: "2026-11-01T10:45:00.000Z",
@@ -415,6 +417,7 @@ export function forgeContract(subject: ForgeContractSubject): void {
         conflicts: false,
         headSha: HEAD4,
         baseBranch: "main",
+        headBranch: "stdin",
         author: actor(REPORTER),
         createdAt: "2026-11-01T10:30:00.000Z",
         updatedAt: "2026-11-02T09:20:00.000Z",

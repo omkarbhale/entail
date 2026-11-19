@@ -56,6 +56,8 @@ export class FakeForge implements WatchForge {
   readonly kind: "github" | "gitlab";
   readonly setting: WatchForge["setting"];
   readonly wording: WatchForge["wording"];
+  /** The base branch the owner set; null works against `main`, the default branch. */
+  baseBranch: string | null = null;
   /** The repo as entail names it. */
   readonly repo: string;
   readonly #web: string;
@@ -180,7 +182,7 @@ export class FakeForge implements WatchForge {
   }
 
   /** Opens a PR from `head` that closes `closes` by the forge's link data. */
-  openPull(number: number, title: string, options: { head: string; closes?: number[]; body?: string; draft?: boolean; files?: ChangedFile[]; base?: string } ): PullRequest {
+  openPull(number: number, title: string, options: { head: string; closes?: number[]; body?: string; draft?: boolean; files?: ChangedFile[]; base?: string; branch?: string } ): PullRequest {
     const at = this.tick();
     const pull: PullRequest = {
       id: 8000 + number,
@@ -193,6 +195,7 @@ export class FakeForge implements WatchForge {
       conflicts: null,
       headSha: options.head,
       baseBranch: options.base ?? "main",
+      headBranch: options.branch ?? `topic-${number}`,
       author: REPORTER,
       createdAt: at,
       updatedAt: at,
@@ -222,6 +225,12 @@ export class FakeForge implements WatchForge {
     const pull = this.pulls.get(number);
     if (pull === undefined) throw new Error(`no PR #${number}`);
     return { ...pull };
+  }
+
+  async openPullRequests(): Promise<PullRequest[]> {
+    this.#check();
+    const base = this.baseBranch ?? "main";
+    return [...this.pulls.values()].filter((pull) => pull.state === "open" && pull.baseBranch === base).map((pull) => ({ ...pull }));
   }
 
   async linkedIssues(number: number): Promise<number[]> {
@@ -273,7 +282,7 @@ export class FakeForge implements WatchForge {
 
   async project(): Promise<Project> {
     this.#check();
-    return { forge: this.kind, host: this.setting.host, id: 77, path: REPO, defaultBranch: "main" };
+    return { forge: this.kind, host: this.setting.host, id: 77, path: REPO, defaultBranch: "main", baseBranch: this.baseBranch ?? "main" };
   }
 
   async changesSince(cursor: string | null) {

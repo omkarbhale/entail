@@ -96,7 +96,7 @@ export interface PullRequestView {
   author: string;
   /** The head judged; a merge happens at it and nowhere else. */
   head: string;
-  /** The default branch's commit the diff was taken against. */
+  /** The base branch's commit the diff was taken against. */
   base: string;
   /** Whether it solves the issue's problem, and the evidence. */
   solves: { solved: boolean; evidence: string };
@@ -237,7 +237,7 @@ export interface SuggestionRunView {
   model: string;
   effort: EffortName;
   costUsd: number | null;
-  /** The default branch's commit the repo was read at; null for a run that failed. */
+  /** The base branch's commit the repo was read at; null for a run that failed. */
   sha: string | null;
   suggestions: SuggestionView[];
   leftOut: { item: string; reason: string }[];
@@ -268,6 +268,8 @@ export interface RepoView {
   confirm: boolean;
   model: string | null;
   effort: EffortName | null;
+  /** The branch entail works against in place of the forge's default branch, or null for the forge's default. */
+  baseBranch: string | null;
   /** The model and effort its calls are made with now. */
   uses: { model: string; effort: EffortName };
   calls: number;

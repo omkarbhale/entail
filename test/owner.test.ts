@@ -74,7 +74,7 @@ test("a repo is named owner/name, from a URL too, and kept in lower case", () =>
 test("enrolling, settings and unenrolling are logged under the owner's name, and only real changes are", (t) => {
   const directory = dataDirectory(t);
   const state = enroll(directory, "acme/tally", "Omkar", { since: new Date("2026-11-12T09:00:00Z") }, new Date("2026-11-12T09:00:00Z"));
-  assert.deepEqual(state, { repo: "acme/tally", enrolled: true, since: "2026-11-12T09:00:00.000Z", confirm: true, model: null, effort: null, vision: null });
+  assert.deepEqual(state, { repo: "acme/tally", enrolled: true, since: "2026-11-12T09:00:00.000Z", confirm: true, model: null, effort: null, baseBranch: null, vision: null });
   assert.throws(() => enroll(directory, "acme/tally", "Omkar"), /already enrolled/u);
 
   changeRepoSettings(directory, "acme/tally", "Omkar", { confirm: true, model: "claude-sonnet-5-5" });
@@ -99,6 +99,31 @@ test("a settings change is checked as it arrives", () => {
   assert.throws(() => checkSettingsChange({ effort: "huge" }), /effort is one of/u);
   assert.throws(() => checkSettingsChange({ model: "a model; rm -rf" }), /model is a model name/u);
   assert.throws(() => checkSettingsChange({ colour: "pink" }), /no setting named colour/u);
+  assert.deepEqual(checkSettingsChange({ baseBranch: " develop " }), { baseBranch: "develop" });
+  assert.deepEqual(checkSettingsChange({ baseBranch: "release/2.x" }), { baseBranch: "release/2.x" });
+  assert.deepEqual(checkSettingsChange({ baseBranch: null }), { baseBranch: null });
+  for (const bad of ["", "-x", "a..b", "a b", "x.lock", "a~1", "refs:x", 3]) assert.throws(() => checkSettingsChange({ baseBranch: bad }), /baseBranch is a branch name/u, String(bad));
+});
+
+test("a repo's base branch is a setting logged like the others, and unset again it is the forge's default", (t) => {
+  const directory = dataDirectory(t);
+  enroll(directory, "acme/tally", "Omkar", {}, new Date("2026-11-12T09:00:00Z"));
+  assert.equal(changeRepoSettings(directory, "acme/tally", "Omkar", { baseBranch: "develop" }).baseBranch, "develop");
+  changeRepoSettings(directory, "acme/tally", "Omkar", { baseBranch: "develop" });
+  assert.equal(repoViews(directory, SETTINGS)[0]!.baseBranch, "develop");
+  assert.equal(changeRepoSettings(directory, "acme/tally", "Omkar", { baseBranch: null }).baseBranch, null);
+  const settings = readLog(directory, "acme/tally").filter((entry) => entry.type === "settings");
+  assert.deepEqual(
+    settings.map((entry) => ({ by: entry.by, baseBranch: entry.baseBranch })),
+    [
+      { by: "Omkar", baseBranch: "develop" },
+      { by: "Omkar", baseBranch: null },
+    ],
+    "setting it again to the same branch logs nothing",
+  );
+  const log = formatLog(logItems(directory, []), { repoColumn: false });
+  assert.match(log, /Omkar set base branch develop/u);
+  assert.match(log, /Omkar set base branch the default \(GitHub's\)/u);
 });
 
 test("what waits on the owner: questions first, then calls to confirm, oldest first, and only in enrolled repos", (t) => {

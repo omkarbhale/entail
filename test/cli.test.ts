@@ -95,9 +95,17 @@ test("from the command line the owner sets their name, reads what waits, confirm
   });
 
   assert.equal(await main(["settings", "acme/tally", "--confirm", "off", "--model", "default"]), 0);
-  assert.equal(out.pop(), "acme/tally: confirm mode off, model claude-opus-5-5 (default), effort medium (default)");
+  assert.equal(out.pop(), "acme/tally: confirm mode off, model claude-opus-5-5 (default), effort medium (default), base branch GitHub's default branch (default)");
   assert.equal(await main(["repos"]), 0);
   assert.match(out.pop()!, /^acme\/tally: confirm mode off, claude-opus-5-5 \(default\) at medium effort \(default\); 1 calls, 1 waiting on you$/u);
+  assert.equal(await main(["settings", "acme/tally", "--base", "develop"]), 0);
+  assert.equal(out.pop(), "acme/tally: confirm mode off, model claude-opus-5-5 (default), effort medium (default), base branch develop");
+  assert.equal(await main(["repos"]), 0);
+  assert.match(out.pop()!, /^acme\/tally: confirm mode off, claude-opus-5-5 \(default\) at medium effort \(default\), base branch develop; 1 calls, 1 waiting on you$/u);
+  assert.equal(await main(["settings", "acme/tally", "--base", "a..b"]), 2, "a branch git would refuse is refused");
+  assert.equal(await main(["settings", "--base", "develop"]), 2, "the base branch is a setting of one repo");
+  assert.equal(await main(["settings", "acme/tally", "--base", "default"]), 0);
+  assert.equal(out.pop(), "acme/tally: confirm mode off, model claude-opus-5-5 (default), effort medium (default), base branch GitHub's default branch (default)");
 
   assert.equal(await main(["waiting"]), 0);
   assert.match(out.pop()!, /acme\/tally#12: Count words in footnotes\n.*\n {2}NO, to confirm \(call \d+\): Footnotes are not prose\./u);

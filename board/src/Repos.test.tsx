@@ -56,6 +56,30 @@ describe("Repos", () => {
     expect(api.sent(/PATCH/u)[0]!.body).toEqual({ confirm: false });
   });
 
+  it("sets a repo's base branch, and clears it back to the forge's default branch", async () => {
+    const api = fakeApi();
+    api.route((method, path, body) => {
+      if (method === "PATCH" && path === "/api/repos/omkarbhale/entail") {
+        api.state.repos = [aRepo({ baseBranch: body.baseBranch })];
+        return { status: 200, body: {} };
+      }
+      return undefined;
+    });
+    renderBoard("#/repos");
+    const field = await screen.findByRole("textbox", { name: "Base branch" });
+    expect(field.getAttribute("placeholder")).toBe("GitHub’s default branch");
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save.hasAttribute("disabled")).toBe(true);
+    await userEvent.type(field, " develop ");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Saved")).toBeTruthy();
+    expect(api.sent(/PATCH/u)[0]!.body).toEqual({ baseBranch: "develop" });
+    await waitFor(() => expect((screen.getByRole("textbox", { name: "Base branch" }) as HTMLInputElement).value).toBe("develop"));
+    await userEvent.clear(screen.getByRole("textbox", { name: "Base branch" }));
+    await userEvent.click(screen.getByRole("button", { name: "Use the default" }));
+    await waitFor(() => expect(api.sent(/PATCH/u)[1]!.body).toEqual({ baseBranch: null }));
+  });
+
   it("checks a repo now and says what the check found, or that it failed", async () => {
     const api = fakeApi();
     api.route((method, path) => (method === "POST" && path.endsWith("/check") ? { status: 200, body: { repo: "omkarbhale/entail", at: new Date().toISOString(), judged: 0, posted: 0, failed: false } } : undefined));

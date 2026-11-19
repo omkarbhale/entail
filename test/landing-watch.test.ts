@@ -229,6 +229,24 @@ test("a draft with no ticket, or a PR to another branch, is not followed", async
   assert.equal(landings(h).length, 1);
 });
 
+test("with a base branch set, a PR into it is followed, judged against its go and merged, and one into the forge's default branch is not followed", async (t) => {
+  const h = harness(t, { confirm: false });
+  h.forge.baseBranch = "develop";
+  await goIssue(h);
+  h.forge.openPull(4, "Read standard input", { head: HEAD1, closes: [1], base: "develop" });
+  h.forge.openPull(5, "Into main", { head: HEAD2, closes: [1], base: "main" });
+  h.forge.report(HEAD1, ["test", "passed"]);
+  h.forge.report(HEAD2, ["test", "passed"]);
+  h.scriptLanding(4, met());
+  await h.pass();
+  assert.deepEqual(
+    readLog(h.dataDirectory, REPO).flatMap((e) => (e.type === "followed" ? [{ pr: e.pr.number, issue: e.issue }] : [])),
+    [{ pr: 4, issue: 1 }],
+  );
+  assert.deepEqual(h.forge.merges, [{ pr: 4, sha: HEAD1, method: "squash" }]);
+  assert.deepEqual(h.prReads, [{ pr: 4, head: HEAD1 }]);
+});
+
 test("a PR linked to an issue entail said no to is judged on the vision alone, and the prompt says where the issue stands", async (t) => {
   const h = harness(t, { confirm: false });
   h.forge.file(2, "Something", "x");

@@ -220,6 +220,7 @@ export function aRepo(overrides: Partial<RepoView> = {}): RepoView {
     confirm: true,
     model: null,
     effort: null,
+    baseBranch: null,
     uses: { model: "claude-opus-5-5", effort: "low" },
     calls: 6,
     waiting: 2,

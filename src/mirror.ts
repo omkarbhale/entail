@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { chmod, lstat, mkdir, readdir, readFile, readlink, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { Git, GitError } from "./git.ts";
+import { Git, GitError, isBranchName } from "./git.ts";
 import type { OperationalLog } from "./operational-log.ts";
 
 /** The forges a repo can live on. */
@@ -27,7 +27,7 @@ export interface MirrorRemote {
   credentialHelper: string | null;
 }
 
-/** The default branch's head on the remote. */
+/** A branch's head on the remote: the default branch's, or the base branch the owner set. */
 export interface DefaultBranchHead {
   branch: string;
   commit: string;
@@ -100,8 +100,9 @@ export interface Checkout {
  * entail reads repository content from it: VISION.md and each PR's diff and
  * changed paths. It never pushes.
  *
- * Fetches are only of the default branch, and of a PR's head when one is
- * needed, so the mirror holds no other branch.
+ * Fetches are only of the default branch, or the base branch the owner set
+ * for the repo in its place, and of a PR's head when one is needed, so the
+ * mirror holds no other branch.
  */
 export class Mirror {
   readonly key: MirrorKey;
@@ -163,12 +164,40 @@ export class Mirror {
   }
 
   /**
+   * Asks the remote for one branch's head, with `git ls-remote`.
+   *
+   * @throws {GitError} when the remote has no such branch.
+   */
+  async remoteBranch(branch: string): Promise<DefaultBranchHead> {
+    if (!isBranchName(branch)) throw new RangeError(`not a branch name: ${JSON.stringify(branch)}`);
+    const ref = `refs/heads/${branch}`;
+    const out = await this.git.text(["ls-remote", "--end-of-options", this.remote.url, ref]);
+    const commit = out
+      .split("\n")
+      .map((line) => line.split("\t"))
+      .find(([, name]) => name === ref)?.[0];
+    if (commit === undefined || !/^[0-9a-f]+$/u.test(commit)) {
+      throw new GitError(["ls-remote", this.remote.url, ref], 0, `the remote has no branch ${branch}`);
+    }
+    return { branch, commit };
+  }
+
+  /**
    * Brings the default branch up to date: checks its head with
    * `git ls-remote` and fetches only when the mirror does not have that
    * commit yet. `fetched` says whether it fetched.
    */
   async updateDefaultBranch(): Promise<DefaultBranchHead & { fetched: boolean }> {
-    const head = await this.remoteDefaultBranch();
+    return this.updateBranch(null);
+  }
+
+  /**
+   * Brings the repo's base branch up to date as {@link updateDefaultBranch}
+   * does the default branch: `branch`, the base branch the owner set, or the
+   * remote's default branch when it is null.
+   */
+  async updateBranch(branch: string | null): Promise<DefaultBranchHead & { fetched: boolean }> {
+    const head = branch === null ? await this.remoteDefaultBranch() : await this.remoteBranch(branch);
     const ref = `refs/heads/${head.branch}`;
     let fetched = false;
     if (!(await this.hasCommit(head.commit))) {
@@ -219,7 +248,7 @@ export class Mirror {
    * branch, computed by git and never truncated. Renames show as a deletion
    * and an addition, so both paths count as changed.
    *
-   * @param base the target branch's head, such as the default branch's.
+   * @param base the target branch's head, such as the base branch's.
    */
   async pullRequestDiff(base: string, head: string): Promise<string> {
     return this.git.text([

@@ -282,7 +282,7 @@ export interface LandingInputs {
   pr: { number: number; text: string };
   /** The PR's head commit being judged. */
   head: string;
-  /** The default branch's commit the diff is taken against. */
+  /** The base branch's commit the diff is taken against. */
   base: string;
   /** The issue the PR closes, whose go acted; null when no cleared ticket is behind it, so it is judged on the vision alone. */
   issue: { number: number; text: string } | null;

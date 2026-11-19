@@ -145,7 +145,7 @@ test("a self-hosted Community Edition instance is read at its own host, with its
   assert.deepEqual(await forge.instance(), { version: "16.11.10", unsupported: null });
   assert.deepEqual(await forge.currentActor(), { forge: "gitlab", host: SELF_HOSTED, id: 7, username: "owner" });
   const project = await forge.project();
-  assert.deepEqual(project, { forge: "gitlab", host: SELF_HOSTED, id: 42, path: "platform/tools/tally", defaultBranch: "trunk" });
+  assert.deepEqual(project, { forge: "gitlab", host: SELF_HOSTED, id: 42, path: "platform/tools/tally", defaultBranch: "trunk", baseBranch: "trunk" });
   assert.equal(projectKey(project), `gitlab:${SELF_HOSTED}:42`);
   assert.ok(transport.requests.every((r) => r.host === SELF_HOSTED), "every call goes to the instance's own host");
 });
@@ -269,6 +269,7 @@ function mergeRequest(iid: number, extra: Record<string, unknown> = {}) {
     draft: false,
     sha: SHA,
     target_branch: "main",
+    source_branch: "topic",
     author: OWNER,
     user_notes_count: 0,
     detailed_merge_status: "mergeable",
@@ -562,4 +563,47 @@ test("a new issue is filed with its entail: labels, each created in the project 
   assert.deepEqual(filed.labels, ["entail:suggested"]);
   await assert.rejects(forge.createIssue("x", "y", ["bug"]), /entail writes only its own labels/);
   assert.equal(transport.requests.length, 3);
+});
+
+test("with a base branch set, only merge requests into it link issues, and one GitLab closes none for is matched by the issue its source branch names", async (t) => {
+  const transport = new RecordedTransport({
+    host: SELF_HOSTED,
+    exchanges: [
+      { request: { method: "GET", path: PROJECT }, response: { status: 200, body: { id: 5001, default_branch: "main" } } },
+      { request: { method: "GET", path: PROJECT }, response: { status: 200, body: { id: 5001, default_branch: "main" } } },
+      { request: { method: "GET", path: `${PROJECT}/merge_requests/7` }, response: { status: 200, body: mergeRequest(7, { target_branch: "develop", source_branch: "12-word-count-5" }) } },
+      { request: { method: "GET", path: `${PROJECT}/merge_requests/7/closes_issues?per_page=100` }, response: { status: 200, body: [] } },
+      { request: { method: "GET", path: `${PROJECT}/issues/12` }, response: { status: 200, body: issue(12, "2026-11-01T09:00:00.000Z", 0) } },
+      { request: { method: "GET", path: `${PROJECT}/issues/5` }, response: { status: 404, body: { message: "404 Not found" } } },
+      { request: { method: "GET", path: PROJECT }, response: { status: 200, body: { id: 5001, default_branch: "main" } } },
+      { request: { method: "GET", path: `${PROJECT}/merge_requests/8` }, response: { status: 200, body: mergeRequest(8, { source_branch: "12-word-count" }) } },
+    ],
+  });
+  t.after(() => transport.assertDone());
+  const forge = new GitLabForge(SETTING, transport, { baseBranch: "develop" });
+  assert.deepEqual(await forge.project(), { forge: "gitlab", host: SELF_HOSTED, id: 5001, path: "acme/tally", defaultBranch: "main", baseBranch: "develop" });
+  assert.deepEqual(await forge.linkedIssues(7), [12], "#5 is no issue here");
+  assert.deepEqual(await forge.linkedIssues(8), [], "a merge request into the default branch is not one into the base branch");
+});
+
+test("the open merge requests into the base branch are listed filtered on it", async (t) => {
+  const transport = new RecordedTransport({
+    host: SELF_HOSTED,
+    exchanges: [
+      { request: { method: "GET", path: PROJECT }, response: { status: 200, body: { id: 5001, default_branch: "main" } } },
+      {
+        request: { method: "GET", path: `${PROJECT}/merge_requests?state=opened&target_branch=main&order_by=created_at&sort=asc&per_page=100` },
+        response: { status: 200, body: [mergeRequest(5), mergeRequest(6, { draft: true })] },
+      },
+    ],
+  });
+  t.after(() => transport.assertDone());
+  const forge = new GitLabForge(SETTING, transport);
+  assert.deepEqual(
+    (await forge.openPullRequests()).map((pr) => [pr.number, pr.baseBranch, pr.draft, pr.mergeable]),
+    [
+      [5, "main", false, null],
+      [6, "main", true, null],
+    ],
+  );
 });

@@ -397,7 +397,7 @@ test("a PR GitHub has not worked out, or that its rules block, is not known to b
 });
 
 /** A transport that answers GraphQL queries in order, whatever their text, and records them. */
-function graphqlTransport(t: TestContext, responses: { status?: number; headers?: Record<string, string>; body: unknown }[]) {
+function graphqlTransport(t: TestContext, responses: { status?: number; headers?: Record<string, string>; body: unknown }[], baseBranch: string | null = null) {
   const requests: { path: string; variables: unknown }[] = [];
   const transport = {
     async request(request: { method: string; path: string; body?: unknown }) {
@@ -410,7 +410,7 @@ function graphqlTransport(t: TestContext, responses: { status?: number; headers?
     },
   };
   t.after(() => assert.deepEqual(responses, [], "every response was asked for"));
-  return { forge: new GitHubForge(SETTING, transport), requests };
+  return { forge: new GitHubForge(SETTING, transport, { baseBranch }), requests };
 }
 
 test("closing references are paged until GraphQL says there are no more", async (t) => {
@@ -456,6 +456,33 @@ test("a GraphQL error is a request error, and a GraphQL rate limit is surfaced w
   await assert.rejects(forge.linkedIssues(4), (error: unknown) => {
     return error instanceof RateLimitedError && error.resetAt.toISOString() === "2026-11-08T12:00:00.000Z";
   });
+});
+
+test("with a base branch set, only PRs into it link issues, and one GitHub links to none is matched by the issue its head branch names", async (t) => {
+  const repository = (pullRequest: unknown) => ({ data: { repository: { databaseId: 5001, defaultBranchRef: { name: "main" }, pullRequest } } });
+  const none = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+  const { forge, requests } = graphqlTransport(
+    t,
+    [
+      { body: { id: 5001, default_branch: "main" } },
+      { body: repository({ baseRefName: "develop", closingIssuesReferences: none }) },
+      { body: pull(7, "2026-11-02T09:00:00Z", { head: { ref: "fix/12-after-5", sha: SHA }, base: { ref: "develop", sha: "0".repeat(40) } }) },
+      { body: issue(9012, "2026-11-01T09:00:00Z") },
+      { body: { ...issue(9005, "2026-11-01T09:00:00Z"), pull_request: { url: "https://api.github.com/repos/acme/tally/pulls/5" } } },
+      { body: repository({ baseRefName: "main", closingIssuesReferences: { nodes: [{ number: 3, repository: { databaseId: 5001 } }], pageInfo: { hasNextPage: false, endCursor: null } } }) },
+      { body: repository({ baseRefName: "develop", closingIssuesReferences: { nodes: [{ number: 3, repository: { databaseId: 5001 } }], pageInfo: { hasNextPage: false, endCursor: null } } }) },
+    ],
+    "develop",
+  );
+  assert.deepEqual(await forge.project(), { forge: "github", host: "github.com", id: 5001, path: "acme/tally", defaultBranch: "main", baseBranch: "develop" });
+  assert.deepEqual(await forge.linkedIssues(7), [12], "#5 is a pull request, not an issue");
+  assert.deepEqual(
+    requests.slice(2).map((request) => request.path),
+    ["repos/acme/tally/pulls/7", "repos/acme/tally/issues/12", "repos/acme/tally/issues/5"],
+    "the head branch is read from the forge, never from the PR's text",
+  );
+  assert.deepEqual(await forge.linkedIssues(8), [], "a PR into the forge's default branch is not one into the base branch");
+  assert.deepEqual(await forge.linkedIssues(9), [3], "the forge's own link comes first, with no head branch read");
 });
 
 const REPO = "repos/acme/tally";
@@ -600,4 +627,26 @@ test("a blocker's state is read from its issue in any repo, and a missing one is
   assert.equal(await forge.issueState("acme/core", 9), "closed");
   assert.equal(await forge.issueState("acme/tally", 77), null);
   assert.equal(await forge.issueState("not a path", 1), null);
+});
+
+test("the open PRs into the base branch are listed by the pulls API filtered on it", async (t) => {
+  const transport = new RecordedTransport({
+    host: "github.com",
+    exchanges: [
+      { request: { method: "GET", path: "repos/acme/tally" }, response: { status: 200, body: { id: 5001, default_branch: "main" } } },
+      {
+        request: { method: "GET", path: "repos/acme/tally/pulls?state=open&base=develop&sort=created&direction=asc&per_page=100" },
+        response: { status: 200, body: [pull(5, "2026-11-02T09:00:00Z", { base: { ref: "develop", sha: "0".repeat(40) } }), pull(6, "2026-11-02T10:00:00Z", { draft: true, base: { ref: "develop", sha: "0".repeat(40) } })] },
+      },
+    ],
+  });
+  t.after(() => transport.assertDone());
+  const forge = new GitHubForge(SETTING, transport, { baseBranch: "develop" });
+  assert.deepEqual(
+    (await forge.openPullRequests()).map((pr) => [pr.number, pr.baseBranch, pr.draft, pr.mergeable]),
+    [
+      [5, "develop", false, null],
+      [6, "develop", true, null],
+    ],
+  );
 });

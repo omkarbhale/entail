@@ -58,13 +58,13 @@ import {
   waitingItems,
 } from "./owner.ts";
 import { pinsFile } from "./pins.ts";
-import { clearedGoOn, goCallOn, heldActions, loggedRepos, readLog, readSettings, sendBacksPosted, type GlobalSettings } from "./records.ts";
+import { clearedGoOn, goCallOn, heldActions, loggedRepos, readLog, readSettings, repoState, sendBacksPosted, type GlobalSettings } from "./records.ts";
 import { formatReplay, replay, replayLandings } from "./replay.ts";
 import { forgeHost, forgeTitle, isRepo, repoSetting } from "./repo-ref.ts";
 import { installService, isWsl, machineServiceSystem, serviceStatus, uninstallService, type ServiceInputs } from "./service.ts";
 import { fileUnfiled, formatSuggestions, runSuggestions, SUGGEST_TIMEOUT_MS, SuggestionRuns } from "./suggest.ts";
 import { machineUpdate, update } from "./update.ts";
-import { mirrorReader, mirrorReaders, runPass, type PassOptions } from "./watch.ts";
+import { forgesByBaseBranch, mirrorReader, mirrorReaders, runPass, type PassOptions } from "./watch.ts";
 
 /** The port the board and its API are served on unless --port names another. */
 export const DEFAULT_PORT = 4380;
@@ -76,7 +76,7 @@ const USAGE = `usage:
   entail enroll <owner/repo> [--no-confirm] [--since <time>]
   entail unenroll <owner/repo>
   entail repos [--all] [--json]
-  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--owner <name>] [--notice <command>|none] [--start <command>|none] [--backup <git remote url>|none]
+  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--base <branch>|default] [--owner <name>] [--notice <command>|none] [--start <command>|none] [--backup <git remote url>|none]
   entail backup status
   entail restore <git remote url>
   entail run [--once] [--dry-run] [--interval <seconds>] [--port <n>]
@@ -104,7 +104,9 @@ enroll     watch a repo: entail makes the call on each issue filed or edited fro
 unenroll   stop watching a repo; its log is kept.
 repos      the enrolled repos with confirm mode, model, effort and what waits on you.
 settings   with a repo, its confirm mode, model and effort ("default" uses the one for
-           every repo); without, your name on comments, the default model and effort, the
+           every repo), and its base branch: the branch entail reads the repo and its
+           vision on, follows and merges PRs into and diffs them against ("default" is
+           the forge's default branch); without, your name on comments, the default model and effort, the
            notice command entail runs with one line and a link when something starts
            waiting on you, and the start command entail runs when a go acts, with the
            issue, the reason and the criteria as JSON on its standard input (see examples/
@@ -245,6 +247,16 @@ function settingsIn(dataDirectory: string): GlobalSettings {
   return readSettings(dataDirectory, { model: DEFAULT_MODEL });
 }
 
+/** The base branch the owner set for a repo, from its log; null for the forge's default branch. */
+function baseBranchOf(dataDirectory: string, repo: string): string | null {
+  return repoState(repo, readLog(dataDirectory, repo)).baseBranch;
+}
+
+/** The forge adapter for a repo, working against the base branch its log sets now. */
+function repoForge(dataDirectory: string, repo: string): Forge {
+  return createForge(repoSetting(repo), undefined, baseBranchOf(dataDirectory, repo));
+}
+
 /** The case book: the one entail ships with, then the owner's own, whose cases win. */
 function caseBook(dataDirectory: string): Promise<Case[]> {
   return readCaseBooks([DEFAULT_CASE_BOOK, join(dataDirectory, OWNER_CASE_BOOK)]);
@@ -309,8 +321,9 @@ export function parseIssueReference(text: string): { path: string; number: numbe
   return { path: match[1]!, number };
 }
 
-async function openRepo(setting: ForgeSetting, dataDirectory: string): Promise<{ forge: Forge; mirror: Mirror }> {
-  const forge = createForge(setting);
+async function openRepo(repo: string, dataDirectory: string): Promise<{ forge: Forge; mirror: Mirror }> {
+  const setting = repoSetting(repo);
+  const forge = repoForge(dataDirectory, repo);
   const project = await forge.project();
   const mirror = await Mirror.open({
     dataDirectory,
@@ -362,7 +375,7 @@ function reposCommand(args: string[]): number {
     for (const repo of repos) {
       const own = (value: string | null) => (value === null ? " (default)" : "");
       console.log(
-        `${repo.repo}${repo.enrolled ? "" : " (not enrolled)"}: confirm mode ${repo.confirm ? "on" : "off"}, ${repo.uses.model}${own(repo.model)} at ${repo.uses.effort} effort${own(repo.effort)}; ${repo.calls} calls, ${repo.waiting} waiting on you` +
+        `${repo.repo}${repo.enrolled ? "" : " (not enrolled)"}: confirm mode ${repo.confirm ? "on" : "off"}, ${repo.uses.model}${own(repo.model)} at ${repo.uses.effort} effort${own(repo.effort)}${repo.baseBranch === null ? "" : `, base branch ${repo.baseBranch}`}; ${repo.calls} calls, ${repo.waiting} waiting on you` +
           (repo.checked > 0 ? `; you confirmed ${repo.agreed} of the ${repo.checked} calls you checked` : ""),
       );
     }
@@ -375,6 +388,7 @@ async function settingsCommand(args: string[]): Promise<number> {
     confirm: { type: "string" },
     model: { type: "string" },
     effort: { type: "string" },
+    base: { type: "string" },
     owner: { type: "string" },
     notice: { type: "string" },
     start: { type: "string" },
@@ -393,6 +407,7 @@ async function settingsCommand(args: string[]): Promise<number> {
     }
     if (values.model !== undefined) change.model = values.model === "default" ? null : values.model;
     if (values.effort !== undefined) change.effort = values.effort === "default" ? null : values.effort;
+    if (values.base !== undefined) change.baseBranch = values.base === "default" ? null : values.base;
     const repo = repoName(positionals[0]!);
     const state =
       Object.keys(change).length === 0
@@ -400,10 +415,13 @@ async function settingsCommand(args: string[]): Promise<number> {
         : changeRepoSettings(dataDirectory, repo, await ownerName(dataDirectory), checkSettingsChange(change));
     if (state === undefined) throw new Error(`${repo} has never been enrolled`);
     const settings = settingsIn(dataDirectory);
-    console.log(`${repo}: confirm mode ${state.confirm ? "on" : "off"}, model ${state.model ?? `${settings.model} (default)`}, effort ${state.effort ?? `${settings.effort} (default)`}`);
+    console.log(
+      `${repo}: confirm mode ${state.confirm ? "on" : "off"}, model ${state.model ?? `${settings.model} (default)`}, effort ${state.effort ?? `${settings.effort} (default)`}, base branch ${state.baseBranch ?? `${forgeTitle(repo)}'s default branch (default)`}`,
+    );
     return 0;
   }
   if (values.confirm !== undefined) throw new UsageError("--confirm is a setting of one repo: name it");
+  if (values.base !== undefined) throw new UsageError("--base is a setting of one repo: name it");
   const change: Record<string, unknown> = {};
   for (const key of ["owner", "model", "effort"] as const) if (values[key] !== undefined) change[key] = values[key];
   if (values.notice !== undefined) change.notice = values.notice === "none" ? null : values.notice;
@@ -497,7 +515,7 @@ async function runCommand(args: string[]): Promise<number> {
   const lock = dryRun ? null : acquireLock(dataDirectory);
   const log = new OperationalLog(dataDirectory, { echo: null });
   if (lock?.takeover) log.warn("unexpected-stop", { previous: lock.takeover.previous });
-  const forges = new Map<string, Forge>();
+  const forges = forgesByBaseBranch(dataDirectory, (repo, baseBranch) => createForge(repoSetting(repo), undefined, baseBranch));
   const seen = new Map<string, ChangeDeduplicator>();
   const cursors = new CursorStore(dataDirectory);
   const { reader, prReader, suggestReader } = mirrorReaders(dataDirectory);
@@ -507,11 +525,7 @@ async function runCommand(args: string[]): Promise<number> {
     dataDirectory,
     owner: await ownerName(dataDirectory),
     settings: settingsIn(dataDirectory),
-    forgeFor: (repo) => {
-      let forge = forges.get(repo);
-      if (forge === undefined) forges.set(repo, (forge = createForge(repoSetting(repo))));
-      return forge;
-    },
+    forgeFor: forges,
     reader,
     prReader,
     runner,
@@ -551,7 +565,7 @@ async function runCommand(args: string[]): Promise<number> {
     });
     const health = new Health();
     const suggestRunner = new ClaudeRunner({ timeoutMs: SUGGEST_TIMEOUT_MS });
-    const forgeOf = (repo: string) => createForge(repoSetting(repo));
+    const forgeOf = (repo: string) => repoForge(dataDirectory, repo);
     const suggestions = new SuggestionRuns({
       events: bus,
       log,
@@ -610,7 +624,7 @@ async function runCommand(args: string[]): Promise<number> {
       health,
       events: bus,
       suggestions,
-      forgeFor: (repo) => createForge(repoSetting(repo)),
+      forgeFor: (repo) => repoForge(dataDirectory, repo),
       get url() {
         return boardUrl;
       },
@@ -853,7 +867,7 @@ async function judgeCommand(args: string[]): Promise<number> {
   const dataDirectory = ensureDataDirectory();
   const options = withSettings(settingsIn(dataDirectory));
 
-  const forge = createForge(setting);
+  const forge = repoForge(dataDirectory, repoName(reference.path));
   const issue = await forge.issue(reference.number);
   if (issue === null) throw new Error(`${reference.path}#${reference.number} is not an issue`);
   const comments = await forge.comments("issue", reference.number);
@@ -899,7 +913,7 @@ async function landCommand(args: string[]): Promise<number> {
   const dataDirectory = ensureDataDirectory();
   const options = withSettings(settingsIn(dataDirectory));
   const repo = repoName(reference.path);
-  const forge = createForge(repoSetting(repo));
+  const forge = repoForge(dataDirectory, repo);
   const pr = await forge.pullRequest(reference.number);
   const entries = readLog(dataDirectory, repo);
 
@@ -979,13 +993,15 @@ async function replayCommand(args: string[]): Promise<number> {
   const landings = values.cases === undefined ? await landingBook(dataDirectory) : await readLandingCaseBook(values.cases);
   if (book.length === 0 && landings.length === 0) throw new Error("the case book has no cases");
 
-  // One mirror per repo, brought up to date once; each case is read at its own commit.
+  // One mirror per repo, brought up to date once; each case is read at its own commit. With a base branch set, the
+  // default branch is fetched too, since cases judged before the base branch was set were read on it.
   const mirrors = new Map<string, Promise<Mirror>>();
   const mirrorOf = (repo: string): Promise<Mirror> => {
     let mirror = mirrors.get(repo);
     if (mirror === undefined) {
-      mirror = openRepo(repoSetting(repo), dataDirectory).then(async ({ mirror: opened }) => {
-        await opened.updateDefaultBranch();
+      mirror = openRepo(repo, dataDirectory).then(async ({ mirror: opened, forge }) => {
+        if (forge.baseBranch !== null) await opened.updateBranch(null);
+        await opened.updateBranch(forge.baseBranch);
         return opened;
       });
       mirrors.set(repo, mirror);
@@ -994,7 +1010,7 @@ async function replayCommand(args: string[]): Promise<number> {
   };
   const checkoutOf = async (past: Case) => {
     const mirror = await mirrorOf(past.repo);
-    if (!(await mirror.hasCommit(past.visionCommit))) throw new Error(`case ${past.slug}: ${past.repo} has no commit ${past.visionCommit} on its default branch`);
+    if (!(await mirror.hasCommit(past.visionCommit))) throw new Error(`case ${past.slug}: ${past.repo} has no commit ${past.visionCommit} on its base branch`);
     return mirror.checkout(past.visionCommit);
   };
 
@@ -1044,7 +1060,7 @@ async function suggestCommand(args: string[]): Promise<number> {
     dataDirectory,
     repo,
     by: await ownerName(dataDirectory),
-    forge: createForge(repoSetting(repo)),
+    forge: repoForge(dataDirectory, repo),
     read: mirrorReaders(dataDirectory).suggestReader,
     runner: new ClaudeRunner({ timeoutMs: SUGGEST_TIMEOUT_MS }),
     book: () => caseBook(dataDirectory),

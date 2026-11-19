@@ -86,13 +86,13 @@ export interface SuggestInputs {
   vision: { text: string; commit: string } | null;
   /** The README at the same commit, or null when there is none. */
   readme: { path: string; text: string } | null;
-  /** Every path in the default branch's tree. */
+  /** Every path in the base branch's tree: the default branch's, or the base branch the owner set's. */
   tree: string[];
   /** The issues open now and the suggestions filed before and since closed, so nothing already filed is suggested again. */
   openIssues: { number: number; title: string; closed?: boolean }[];
   /** The owner's past calls on this repo's issues, as precedent for their taste. */
   precedents: Case[];
-  /** A read-only checkout of the default branch for the run to read, and its commit. */
+  /** A read-only checkout of the base branch for the run to read, and its commit. */
   checkout: string;
   sha: string;
 }
@@ -286,7 +286,7 @@ export function suggestionBody(ownerName: string, run: number, index: number, su
 }
 
 /** What filing needs of a forge. */
-export type SuggestForge = Pick<Forge, "setting" | "project" | "openIssues" | "labelledIssues" | "createIssue">;
+export type SuggestForge = Pick<Forge, "setting" | "baseBranch" | "project" | "openIssues" | "labelledIssues" | "createIssue">;
 
 /** The suggested entries in a log with suggestions not yet filed, oldest first. */
 export function unfiledRuns(entries: readonly Entry[]): SuggestedEntry[] {
@@ -328,7 +328,7 @@ export async function fileSuggestions(dataDirectory: string, repo: string, forge
 
 // A whole run.
 
-/** The repo read for a suggestion run, at its default branch's head. */
+/** The repo read for a suggestion run, at its base branch's head: the default branch's, or the base branch the owner set's. */
 export interface SuggestReading {
   checkout: string;
   sha: string;

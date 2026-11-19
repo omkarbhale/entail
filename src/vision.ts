@@ -1,6 +1,6 @@
 import type { Git } from "./git.ts";
 
-/** Where the vision of record lives on the default branch. */
+/** Where the vision of record lives on the base branch. */
 export const VISION_PATH = "VISION.md";
 
 /**

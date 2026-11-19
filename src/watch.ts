@@ -22,7 +22,7 @@ import {
 import { oneLine, type RepoFailure } from "./health.ts";
 import { formatCall, judge, JUDGMENT_PROMPT_VERSION, RECHECK_PROMPT_VERSION, scopeOf } from "./judgment.ts";
 import { ciGreen, ciProblems, formatLandingCall, judgeLanding, landingPromptVersion, touched, type LinkedIssue } from "./landing.ts";
-import { forgeRemote, Mirror } from "./mirror.ts";
+import { forgeRemote, Mirror, type MirrorRemote } from "./mirror.ts";
 import type { ModelRunner } from "./model-runner.ts";
 import type { OperationalLog } from "./operational-log.ts";
 import { caseFor, landingCaseFor, runSettings } from "./owner.ts";
@@ -66,6 +66,7 @@ import {
   type Trigger,
   type VisionRecheck,
   type VisionSeenEntry,
+  type BaseBranchSeenEntry,
   workStarted,
 } from "./records.ts";
 import { handoffFor, runStart } from "./starts.ts";
@@ -113,7 +114,7 @@ import { collapseWhitespace, readVision, visionTextChange, type VisionChange } f
  * When a go acts and the owner set a start command, entail runs it with the
  * handoff, once per issue, and records that work was started (`src/starts.ts`).
  *
- * When VISION.md on the default branch states different lines from what
+ * When VISION.md on the base branch states different lines from what
  * entail last saw, the pass records the change and re-checks once each open
  * issue whose posted call was made under the earlier text: the same
  * judgment, with the earlier call and the lines removed and added. A call the
@@ -131,6 +132,7 @@ export type WatchForge = Pick<
   Forge,
   | "setting"
   | "wording"
+  | "baseBranch"
   | "project"
   | "changesSince"
   | "issue"
@@ -144,6 +146,7 @@ export type WatchForge = Pick<
   | "closeIssue"
   | "reopenIssue"
   | "pullRequest"
+  | "openPullRequests"
   | "linkedIssues"
   | "checks"
   | "pullRequestFiles"
@@ -153,7 +156,7 @@ export type WatchForge = Pick<
   | "closePullRequest"
 >;
 
-/** A repo read at its default branch's head, for the judgment. */
+/** A repo read at its base branch's head, for the judgment: the default branch, or the base branch the owner set. */
 export interface RepoReading {
   checkout: string;
   sha: string;
@@ -164,19 +167,19 @@ export interface RepoReading {
 /** Reads a repo for the judgment: once per pass and repo, and only when something there is judged. */
 export type RepoReader = (repo: string, forge: WatchForge) => Promise<RepoReading>;
 
-/** A PR read at one head for the landing judgment: its diff from git, and the default branch it would merge into. */
+/** A PR read at one head for the landing judgment: its diff from git, and the base branch it would merge into. */
 export interface PullRequestReading {
   /** A read-only checkout of the PR's head. */
   checkout: string;
   head: string;
-  /** The default branch's head the diff is taken against. */
+  /** The base branch's head the diff is taken against. */
   base: string;
   diff: string;
   /** ISO time the head commit was made. */
   committedAt: string;
   /** Whether the head defines CI for its forge: workflows under `.github/workflows` on GitHub, `.gitlab-ci.yml` on GitLab. */
   definesCI: boolean;
-  /** VISION.md on the default branch. */
+  /** VISION.md on the base branch. */
   vision: { text: string; commit: string } | null;
   pins: string[];
   /** Removes what the reading left behind, such as the checkout. */
@@ -671,10 +674,10 @@ async function act(
   entries: () => Entry[],
   cannotLabel: () => Promise<string | null>,
 ): Promise<boolean> {
-  const post = postFor(pending, options.owner, repo);
+  const post = postFor(pending, options.owner, repo, forge.baseBranch);
   if (post === null) return false;
   const command = options.settings.start ?? null;
-  const handoff = command === null ? null : handoffFor(repo, pending);
+  const handoff = command === null ? null : handoffFor(repo, pending, forge.baseBranch);
   const start = command !== null && handoff !== null && !workStarted(entries(), handoff.issue.number) ? { start: { command, handoff } } : {};
   const body = composeComment(options.owner, post.markerFor, post.text);
   const name = `${repo}#${post.issue}`;
@@ -863,7 +866,7 @@ function movingPassage(quote: string, change: VisionChange): Pick<VisionRecheck,
 }
 
 /**
- * Notices a change to VISION.md on the default branch and re-checks the open
+ * Notices a change to VISION.md on the base branch and re-checks the open
  * issues called under the earlier text, once per change. Returns how many
  * judgments ran.
  */
@@ -996,9 +999,10 @@ const CHECKS_WINDOW_MS = 10 * 60 * 1000;
 
 /**
  * Follows and judges the repo's PRs: each open PR that changed this pass and
- * each PR already followed. A PR to the default branch is followed with its
- * issue once the forge's own link data says it closes an issue whose go has
- * acted; an open, non-draft one with no cleared ticket behind it (linked to
+ * each PR already followed. A PR to the base branch is followed with its
+ * issue once the forge says it closes an issue whose go has acted (by its own
+ * link data, or, in a repo with a base branch set, by the PR's head branch
+ * name when the forge links none: {@link Forge.linkedIssues}); an open, non-draft one with no cleared ticket behind it (linked to
  * no such issue, or to one whose go still waits for the owner) is followed
  * with none, and judged on the vision alone until a go on an issue it is
  * linked to acts. A followed PR's every new head is judged once its checks
@@ -1018,23 +1022,46 @@ async function passPullRequests(
   const followed = followedPullRequests(entries);
   const changed = new Set<number>();
   for (const change of fresh) if (change.kind === "pull-request" && change.pullRequest.state === "open") changed.add(change.pullRequest.number);
-  const numbers = [...new Set([...followed.keys(), ...changed])].sort((a, b) => a - b);
-  const latest = latestLandings(entries);
   let ok = true;
   let judged = 0;
+  // When the owner set, changed or unset the base branch, the PRs already open into the new one are picked up, once.
+  const worked = entries.findLast((entry): entry is BaseBranchSeenEntry => entry.type === "base-branch-seen")?.branch ?? project.defaultBranch;
+  if (worked !== project.baseBranch && entries.some((entry) => entry.type === "settings" && entry.baseBranch !== undefined)) {
+    try {
+      const open = await forge.openPullRequests();
+      for (const pr of open) changed.add(pr.number);
+      record({ type: "base-branch-seen", branch: project.baseBranch, picked: open.map((pr) => pr.number) });
+      options.print(`${repo}: now working against ${project.baseBranch}; ${open.length === 0 ? "no open pull request into it" : `reading the open pull requests into it: ${open.map((pr) => `#${pr.number}`).join(", ")}`}`);
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      ok = false;
+      const message = error instanceof Error ? error.message : String(error);
+      options.log?.warn("pr-read-failed", { repo, baseBranch: project.baseBranch, error: message });
+      context.failure = failureAt(options, `reading the pull requests into ${project.baseBranch}`, message, error instanceof RateLimitedError ? error.resetAt : undefined);
+      options.print(`${repo}: entail could not read the pull requests into ${project.baseBranch}: ${message}; it tries again next pass`);
+    }
+  }
+  const numbers = [...new Set([...followed.keys(), ...changed])].sort((a, b) => a - b);
+  const latest = latestLandings(entries);
   for (const number of numbers) {
     options.signal?.throwIfAborted();
     const name = `${repo}#${number}`;
     try {
       const pr = await forge.pullRequest(number);
       const following = followed.get(number);
+      // A PR followed into a branch that is no longer the base branch, as after the owner changed it, is followed no more.
+      if (following !== undefined && pr.state === "open" && pr.baseBranch !== project.baseBranch) {
+        record({ type: "unfollowed", pr: number, state: "open", base: pr.baseBranch });
+        options.print(`${name}: the pull request merges into ${pr.baseBranch}, not the base branch ${project.baseBranch}; no longer following it`);
+        continue;
+      }
       let issue = following?.issue ?? null;
       let linkedNow = following?.linked ?? [];
       // A PR followed with no ticket is linked again when it changed, or when a go on an issue it was linked to has acted since.
       const cleared = (one: number) => clearedGoOn(entries, one, options.now?.() ?? new Date()) !== null;
       const relink = following !== undefined && following.issue === null && pr.state === "open" && (changed.has(number) || (following.linked ?? []).some(cleared));
       if (following === undefined || relink) {
-        if (following === undefined && (pr.state !== "open" || pr.baseBranch !== project.defaultBranch)) continue;
+        if (following === undefined && (pr.state !== "open" || pr.baseBranch !== project.baseBranch)) continue;
         const linked = await forge.linkedIssues(number);
         const closes = linked.find(cleared) ?? null;
         if (following === undefined) {
@@ -1059,7 +1086,7 @@ async function passPullRequests(
         options.print(`${name}: the pull request is ${pr.state}; no longer following it`);
         continue;
       }
-      if (pr.draft || pr.baseBranch !== project.defaultBranch) continue;
+      if (pr.draft || pr.baseBranch !== project.baseBranch) continue;
       // A head is judged once on what is behind it: a PR whose go acted since it was judged with no ticket is judged again against the criteria.
       const last = latest.get(number);
       if (last?.head === pr.headSha && (last.issue?.number ?? null) === issue) continue;
@@ -1306,8 +1333,10 @@ function cancelQuestion(state: RepoState, landing: LandingEntry, entries: readon
 
 /**
  * Merges a PR at the head that was judged, and only there: a PR already
- * merged counts as merged; a closed one, one whose head moved since, or one
- * whose CI is not green at that head is refused without asking the forge. The
+ * merged counts as merged; a closed one, one whose head moved since, one that
+ * no longer merges into the base branch (the owner changed it since, or the PR
+ * was retargeted), or one whose CI is not green at that head is refused
+ * without asking the forge. The
  * repo's own merge method is followed: squash where it is allowed, else the
  * first the repo allows.
  */
@@ -1320,6 +1349,8 @@ async function mergeAtHead(options: PassOptions, forge: WatchForge, landing: Lan
   }
   if (live.state === "closed") return { merged: false, refusal: `the ${forge.wording.pullRequest} is closed` };
   if (live.headSha !== landing.head) return { merged: false, refusal: `its head moved to \`${live.headSha}\` since it was judged` };
+  const { baseBranch } = await forge.project();
+  if (live.baseBranch !== baseBranch) return { merged: false, refusal: `it merges into \`${live.baseBranch}\`, not the base branch \`${baseBranch}\`` };
   const report = await forge.checks(number, landing.head, []);
   if (!ciGreen(report)) return { merged: false, refusal: `CI is not green at the judged head: ${ciProblems(report).join("; ")}` };
   const outcome = await forge.merge(number, landing.head, mergeMethod(await forge.mergeMethods()));
@@ -1341,8 +1372,24 @@ function indent(text: string): string {
 }
 
 /**
- * Reads repos through their git mirrors in the data directory: the default
- * branch's head, a read-only checkout of it, VISION.md there, and the owner's
+ * The forges of a run, one per repo, each working against the base branch the
+ * repo's log sets now: a repo's forge is made again when the owner changes its
+ * base branch, so the next pass works against the new one.
+ */
+export function forgesByBaseBranch<F extends { readonly baseBranch: string | null }>(dataDirectory: string, make: (repo: string, baseBranch: string | null) => F): (repo: string) => F {
+  const forges = new Map<string, F>();
+  return (repo) => {
+    const { baseBranch } = repoState(repo, readLog(dataDirectory, repo));
+    let forge = forges.get(repo);
+    if (forge === undefined || forge.baseBranch !== baseBranch) forges.set(repo, (forge = make(repo, baseBranch)));
+    return forge;
+  };
+}
+
+/**
+ * Reads repos through their git mirrors in the data directory: the base
+ * branch's head (the forge's default branch, or the base branch the owner set
+ * for the repo), a read-only checkout of it, VISION.md there, and the owner's
  * pins. The previous checkout of a repo is removed when its head moves.
  */
 export function mirrorReader(dataDirectory: string): RepoReader {
@@ -1352,18 +1399,22 @@ export function mirrorReader(dataDirectory: string): RepoReader {
 /**
  * The readers of a run, sharing one mirror per repo: {@link mirrorReader}'s
  * for the call on an issue, and one for a PR's head, which fetches it, diffs it
- * against the default branch's head and checks it out until the judgment is
- * done.
+ * against the base branch's head and checks it out until the judgment is
+ * done, and one for a suggestion run. `remote` replaces where a repo's mirror
+ * fetches from, as tests do with a local repository.
  */
-export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prReader: PullRequestReader; suggestReader: SuggestReader } {
+export function mirrorReaders(
+  dataDirectory: string,
+  options: { remote?: (setting: WatchForge["setting"]) => MirrorRemote } = {},
+): { reader: RepoReader; prReader: PullRequestReader; suggestReader: SuggestReader } {
   const mirrors = new Map<string, Promise<Mirror>>();
   const lastCommit = new Map<string, string>();
-  /** The default branch commits a suggestion run is reading, with how many runs read each: their checkouts stay until released. */
+  /** The base branch commits a suggestion run is reading, with how many runs read each: their checkouts stay until released. */
   const held = new Map<string, number>();
-  /** One default branch update at a time per repo, since a suggestion run reads beside the pass. */
+  /** One base branch update at a time per repo, since a suggestion run reads beside the pass. */
   const updates = new Map<string, Promise<unknown>>();
-  const updateDefaultBranch = (repo: string, mirror: Mirror) => {
-    const update = (updates.get(repo) ?? Promise.resolve()).catch(() => {}).then(() => mirror.updateDefaultBranch());
+  const updateBaseBranch = (repo: string, mirror: Mirror, forge: Pick<WatchForge, "baseBranch">) => {
+    const update = (updates.get(repo) ?? Promise.resolve()).catch(() => {}).then(() => mirror.updateBranch(forge.baseBranch));
     updates.set(repo, update);
     return update;
   };
@@ -1374,7 +1425,7 @@ export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prRe
         Mirror.open({
           dataDirectory,
           key: { forge: forge.setting.forge, host: forge.setting.host, projectId: project.id },
-          remote: forgeRemote(forge.setting.forge, forge.setting.host, forge.setting.path),
+          remote: options.remote?.(forge.setting) ?? forgeRemote(forge.setting.forge, forge.setting.host, forge.setting.path),
         }),
       );
       mirrors.set(repo, opening);
@@ -1389,7 +1440,7 @@ export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prRe
   };
   const reader: RepoReader = async (repo, forge) => {
     const mirror = await mirrorOf(repo, forge);
-    const head = await updateDefaultBranch(repo, mirror);
+    const head = await updateBaseBranch(repo, mirror, forge);
     const previous = lastCommit.get(repo);
     if (previous !== undefined && previous !== head.commit && !held.has(previous)) await mirror.removeCheckout(previous);
     const checkout = await mirror.checkout(head.commit);
@@ -1403,7 +1454,7 @@ export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prRe
   };
   const prReader: PullRequestReader = async (repo, forge, pr, head) => {
     const mirror = await mirrorOf(repo, forge);
-    const base = await updateDefaultBranch(repo, mirror);
+    const base = await updateBaseBranch(repo, mirror, forge);
     const fetched = await mirror.fetchPullRequestHead(pr, head);
     if (fetched.commit !== head) throw new Error(`the pull request's head moved to ${fetched.commit} while it was read`);
     const diff = await mirror.pullRequestDiff(base.commit, head);
@@ -1420,7 +1471,7 @@ export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prRe
       definesCI,
       vision: await visionAt(mirror, base.commit),
       pins: await readPins(dataDirectory, forge.setting),
-      // The default branch's own checkout is the issue reader's to remove.
+      // The base branch's own checkout is the issue reader's to remove.
       release: async () => {
         if ([...lastCommit.values()].includes(head)) return;
         await mirror.removeCheckout(head);
@@ -1429,7 +1480,7 @@ export function mirrorReaders(dataDirectory: string): { reader: RepoReader; prRe
   };
   const suggestReader: SuggestReader = async (repo, forge) => {
     const mirror = await mirrorOf(repo, forge);
-    const head = await updateDefaultBranch(repo, mirror);
+    const head = await updateBaseBranch(repo, mirror, forge);
     held.set(head.commit, (held.get(head.commit) ?? 0) + 1);
     let released = false;
     const release = async () => {

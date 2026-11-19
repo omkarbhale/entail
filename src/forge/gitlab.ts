@@ -24,6 +24,7 @@ import {
   type ForgeWording,
   type Issue,
   type IssueComment,
+  issueNumbersInBranch,
   type MergeMethod,
   type MergeOutcome,
   type PostedComment,
@@ -82,6 +83,12 @@ export const REQUIRED_PIPELINE = "pipeline";
 /** The `detailed_merge_status`es under which GitLab has not finished working out mergeability. */
 const MERGE_STATUS_UNKNOWN = new Set(["unchecked", "checking", "preparing", "approvals_syncing"]);
 
+/** How the GitLab adapter is set up beyond its forge setting. */
+export interface GitLabForgeOptions {
+  /** The base branch the owner set for the repo; the default branch when unset or null. */
+  baseBranch?: string | null;
+}
+
 /**
  * The GitLab adapter of the {@link Forge} interface, read side, for gitlab.com
  * and self-hosted GitLab alike: gitlab.com is just the host `gitlab.com`, and
@@ -98,11 +105,12 @@ const MERGE_STATUS_UNKNOWN = new Set(["unchecked", "checking", "preparing", "app
 export class GitLabForge implements Forge {
   readonly setting: ForgeSetting;
   readonly wording: ForgeWording = { pullRequest: "merge request" };
+  readonly baseBranch: string | null;
   readonly #transport: Transport;
   /** The project as GitLab's API names it: its path, URL-encoded into one segment. */
   readonly #projectRef: string;
 
-  constructor(setting: ForgeSetting, transport: Transport) {
+  constructor(setting: ForgeSetting, transport: Transport, options: GitLabForgeOptions = {}) {
     if (setting.forge !== "gitlab") {
       throw new Error(`the GitLab adapter cannot serve a ${setting.forge} repo`);
     }
@@ -115,6 +123,7 @@ export class GitLabForge implements Forge {
     this.setting = setting;
     this.#transport = transport;
     this.#projectRef = `projects/${encodeURIComponent(setting.path)}`;
+    this.baseBranch = options.baseBranch ?? null;
   }
 
   async currentActor(): Promise<Actor | null> {
@@ -149,12 +158,14 @@ export class GitLabForge implements Forge {
 
   #project(project: unknown): Project {
     const path = this.#projectRef;
+    const defaultBranch = this.#field(project, "default_branch", "string", path);
     return {
       forge: "gitlab",
       host: this.setting.host,
       id: this.#field(project, "id", "number", path),
       path: this.setting.path,
-      defaultBranch: this.#field(project, "default_branch", "string", path),
+      defaultBranch,
+      baseBranch: this.baseBranch ?? defaultBranch,
     };
   }
 
@@ -163,7 +174,7 @@ export class GitLabForge implements Forge {
    * higher of its project and group access level, or everything for an
    * instance administrator. Labelling an issue needs Planner or Reporter
    * access, and commenting needs issues to be turned on. A Developer may merge
-   * only where the default branch's protection allows it, so anything below
+   * only where the base branch's protection allows it, so anything below
    * Maintainer may lack permission to merge.
    */
   async access(): Promise<RepoAccess> {
@@ -187,7 +198,7 @@ export class GitLabForge implements Forge {
     if (!admin && level < ACCESS.developer) {
       mayLackMerge = "the logged-in account has less than Developer access, and merging needs at least that";
     } else if (!admin && level < ACCESS.maintainer) {
-      mayLackMerge = "the logged-in account has Developer access, which merges only where the default branch's protection allows Developers";
+      mayLackMerge = `the logged-in account has Developer access, which merges only where ${this.baseBranch === null ? "the default branch's" : `${this.baseBranch}'s`} protection allows Developers`;
     }
     return { cannotLabelAndComment, mayLackMerge };
   }
@@ -332,6 +343,13 @@ export class GitLabForge implements Forge {
     return { changes, cursor: JSON.stringify(next) };
   }
 
+  async openPullRequests(): Promise<PullRequest[]> {
+    const { baseBranch } = await this.project();
+    const params = new URLSearchParams({ state: "opened", target_branch: baseBranch, order_by: "created_at", sort: "asc", per_page: String(PAGE_SIZE) });
+    const mergeRequests = await this.#readPages(`${this.#projectRef}/merge_requests`, params, () => false);
+    return mergeRequests.map((raw) => this.#mergeRequest(raw, false));
+  }
+
   async pullRequest(number: number): Promise<PullRequest> {
     // Asking for a recheck keeps a merge status GitLab left unchecked from staying so.
     const path = `${this.#projectRef}/merge_requests/${pathNumber(number)}?with_merge_status_recheck=true`;
@@ -388,13 +406,13 @@ export class GitLabForge implements Forge {
 
   async linkedPullRequests(issueNumber: number): Promise<PullRequest[]> {
     const project = await this.#getJson(this.#projectRef);
-    const { id, defaultBranch } = this.#project(project);
+    const { id, baseBranch } = this.#project(project);
     const params = new URLSearchParams({ per_page: String(PAGE_SIZE) });
     const closing = await this.#readPages(`${this.#projectRef}/issues/${pathNumber(issueNumber)}/closed_by`, params, () => false);
     const numbers: number[] = [];
     for (const raw of closing) {
       // A merge request in another project can close this issue too; it is not this repo's PR.
-      if (!isObject(raw) || raw.project_id !== id || raw.target_branch !== defaultBranch) continue;
+      if (!isObject(raw) || raw.project_id !== id || raw.target_branch !== baseBranch) continue;
       const number = this.#field(raw, "iid", "number", "merge request");
       if (!numbers.includes(number)) numbers.push(number);
     }
@@ -405,10 +423,10 @@ export class GitLabForge implements Forge {
   }
 
   async linkedIssues(pullRequestNumber: number): Promise<number[]> {
-    const { id, defaultBranch } = this.#project(await this.#getJson(this.#projectRef));
+    const { id, baseBranch } = this.#project(await this.#getJson(this.#projectRef));
     const number = pathNumber(pullRequestNumber);
     const mergeRequest = await this.#getJson(`${this.#projectRef}/merge_requests/${number}`);
-    if (this.#field(mergeRequest, "target_branch", "string", "merge request") !== defaultBranch) return [];
+    if (this.#field(mergeRequest, "target_branch", "string", "merge request") !== baseBranch) return [];
     const params = new URLSearchParams({ per_page: String(PAGE_SIZE) });
     const issues = await this.#readPages(`${this.#projectRef}/merge_requests/${number}/closes_issues`, params, () => false);
     const numbers: number[] = [];
@@ -416,6 +434,12 @@ export class GitLabForge implements Forge {
       if (!isObject(raw) || raw.project_id !== id) continue;
       const issue = this.#field(raw, "iid", "number", "issue");
       if (!numbers.includes(issue)) numbers.push(issue);
+    }
+    // GitLab closes issues only from a merge request into its default branch, so it links none for one into another; its source branch can still name them.
+    if (numbers.length === 0 && this.baseBranch !== null) {
+      for (const issue of issueNumbersInBranch(this.#field(mergeRequest, "source_branch", "string", "merge request"))) {
+        if ((await this.issue(issue)) !== null) numbers.push(issue);
+      }
     }
     return numbers.sort((a, b) => a - b);
   }
@@ -443,10 +467,10 @@ export class GitLabForge implements Forge {
     };
   }
 
-  /** The jobs of the default branch's most recent pipelines, one pipeline per commit. */
+  /** The jobs of the base branch's most recent pipelines, one pipeline per commit. */
   async recentDefaultBranchChecks(commits: number): Promise<CommitChecks[]> {
-    const { defaultBranch } = await this.project();
-    const params = new URLSearchParams({ ref: defaultBranch, order_by: "id", sort: "desc", per_page: String(pageCount(commits)) });
+    const { baseBranch } = await this.project();
+    const params = new URLSearchParams({ ref: baseBranch, order_by: "id", sort: "desc", per_page: String(pageCount(commits)) });
     const path = `${this.#projectRef}/pipelines?${params}`;
     const pipelines = await this.#getJson(path);
     if (!Array.isArray(pipelines)) throw this.#malformed(200, path, "expected a list");
@@ -749,6 +773,7 @@ export class GitLabForge implements Forge {
       conflicts: known ? mergeStatus === "conflict" || (isObject(raw) && raw.has_conflicts === true) : null,
       headSha: this.#field(raw, "sha", "string", where),
       baseBranch: this.#field(raw, "target_branch", "string", where),
+      headBranch: this.#field(raw, "source_branch", "string", where),
       author: this.#actor(isObject(raw) ? raw.author : undefined, `${where} author`),
       createdAt: isoTime(this.#field(raw, "created_at", "string", where)),
       updatedAt: isoTime(this.#field(raw, "updated_at", "string", where)),
