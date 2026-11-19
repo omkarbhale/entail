@@ -232,6 +232,37 @@ test("a start recorded with its go but not run, as after a crash, runs at the ne
   assert.equal(started(h.dataDirectory)[0]!.for, acted.id);
 });
 
+test("a start that began with no recorded outcome, as after a crash mid-command, is logged as interrupted and not run again", async (t) => {
+  const h = harness(t, { confirm: false, settings: { start: "my-executor" } });
+  const start = recorder();
+  const handoff: Handoff = { repo: REPO, issue: { number: 12, url: "https://github.com/acme/tally/issues/12", title: "T" }, call: 1, by: "entail", scope: "implement", reason: "R", criteria: [], vision: null };
+  const acted = appendEntry(h.dataDirectory, REPO, { type: "acted", for: 1, issue: 12, comment: { id: 5, url: "https://github.com/acme/tally/issues/12#issuecomment-5" }, closed: false, start: { command: "my-executor", handoff } }) as ActedEntry;
+  appendEntry(h.dataDirectory, REPO, { type: "starting", for: acted.id, issue: 12, command: "my-executor" });
+  await h.pass({ startWork: start.startWork });
+  await h.pass({ startWork: start.startWork });
+  assert.deepEqual(start.handoffs, [], "the command is not run again");
+  const entries = started(h.dataDirectory);
+  assert.equal(entries.length, 1, "recorded once");
+  assert.equal(entries[0]!.interrupted, true);
+  assert.equal(entries[0]!.exit, null);
+  assert.equal(entries[0]!.for, acted.id);
+  assert.match(formatLog(logItems(h.dataDirectory, []), { repoColumn: false }), /#12 {2}the start was interrupted: my-executor/u);
+});
+
+test("a start writes its starting marker before the command runs", async (t) => {
+  const h = harness(t, { confirm: false, settings: { start: "my-executor" } });
+  h.forge.file(12, "Count words in footnotes");
+  h.script(12, verdict());
+  let seen: string[] = [];
+  await h.pass({
+    startWork: async () => {
+      seen = readLog(h.dataDirectory, REPO).map((entry) => entry.type);
+      return { exit: 0 };
+    },
+  });
+  assert.ok(seen.includes("starting") && !seen.includes("started"));
+});
+
 test("a dry run prints the start it would make and runs nothing", async (t) => {
   const h = harness(t, { confirm: false, settings: { start: "my-executor" } });
   const start = recorder();
