@@ -399,7 +399,7 @@ export interface Harness {
   options(overrides?: Partial<PassOptions>): PassOptions;
 }
 
-export function harness(t: TestContext, options: { confirm?: boolean; settings?: Partial<GlobalSettings>; pins?: string[]; definesCI?: boolean; forge?: "github" | "gitlab" } = {}): Harness {
+export function harness(t: TestContext, options: { confirm?: boolean; settings?: Partial<GlobalSettings>; pins?: string[]; definesCI?: boolean; noVision?: boolean; forge?: "github" | "gitlab" } = {}): Harness {
   const dataDirectory = mkdtempSync(join(tmpdir(), "entail-watch-"));
   t.after(() => rmSync(dataDirectory, { recursive: true, force: true }));
   const forge = new FakeForge(options.forge);
@@ -419,7 +419,7 @@ export function harness(t: TestContext, options: { confirm?: boolean; settings?:
     reader: async () => ({ checkout: "/checkout", sha: SHA, vision: { text: VISION, commit: SHA }, pins: [] }),
     prReader: async (_repo, _forge, pr, head) => {
       prReads.push({ pr, head });
-      return { checkout: `/checkouts/${head}`, head, base: BASE, diff: `diff --git a/src/count.ts b/src/count.ts\n+// head ${head}\n`, vision: { text: VISION, commit: BASE }, pins: options.pins ?? [], committedAt: forge.pulls.get(pr)?.updatedAt ?? ENROLLED_AT, definesCI: options.definesCI ?? false, release: async () => {} };
+      return { checkout: `/checkouts/${head}`, head, base: BASE, diff: `diff --git a/src/count.ts b/src/count.ts\n+// head ${head}\n`, vision: options.noVision ? null : { text: VISION, commit: BASE }, pins: options.pins ?? [], committedAt: forge.pulls.get(pr)?.updatedAt ?? ENROLLED_AT, definesCI: options.definesCI ?? false, release: async () => {} };
     },
     runner,
     cursors,
