@@ -449,19 +449,19 @@ test("an update drains entail through the API: no new pass, check now refused, a
 test("every setting for every repo is read and changed, checked as entail settings checks it", async (t) => {
   const api = await serve(t);
   const noBackup = { remote: null, pushedAt: null, problem: null };
-  assert.deepEqual((await api.call("GET", "/api/settings")).body, { owner: null, model: "claude-opus-5-5", effort: "high", notice: null, start: null, backup: noBackup });
+  assert.deepEqual((await api.call("GET", "/api/settings")).body, { owner: null, model: "claude-opus-5-5", effort: "high", notice: null, start: null, sendBack: null, backup: noBackup });
   const changed = await api.call("PATCH", "/api/settings", { owner: "Omkar", effort: "medium" });
-  assert.deepEqual(changed.body, { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null, backup: noBackup });
-  assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null, backup: null });
+  assert.deepEqual(changed.body, { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null, sendBack: null, backup: noBackup });
+  assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null, sendBack: null, backup: null });
 
-  const commands = await api.call("PATCH", "/api/settings", { notice: "  examples/notice-to-file.sh  ", start: "examples/start-to-file.sh 'a b'", backup: "git@example.com:me/records.git" });
+  const commands = await api.call("PATCH", "/api/settings", { notice: "  examples/notice-to-file.sh  ", start: "examples/start-to-file.sh 'a b'", sendBack: " examples/send-back-to-file.sh ", backup: "git@example.com:me/records.git" });
   assert.equal(commands.status, 200);
   assert.deepEqual(
     commands.body,
-    { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: "examples/notice-to-file.sh", start: "examples/start-to-file.sh 'a b'", backup: { remote: "git@example.com:me/records.git", pushedAt: null, problem: null } },
+    { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: "examples/notice-to-file.sh", start: "examples/start-to-file.sh 'a b'", sendBack: "examples/send-back-to-file.sh", backup: { remote: "git@example.com:me/records.git", pushedAt: null, problem: null } },
     "a command is kept as given, trimmed",
   );
-  const stored = { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: "examples/notice-to-file.sh", start: "examples/start-to-file.sh 'a b'", backup: "git@example.com:me/records.git" };
+  const stored = { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: "examples/notice-to-file.sh", start: "examples/start-to-file.sh 'a b'", sendBack: "examples/send-back-to-file.sh", backup: "git@example.com:me/records.git" };
   assert.deepEqual(readSettings(api.dataDirectory, { model: "x" }), stored);
 
   for (const [change, error] of [
@@ -487,8 +487,8 @@ test("every setting for every repo is read and changed, checked as entail settin
   assert.deepEqual((await api.call("GET", "/api/settings")).body.backup, { remote: "https://***:***@example.com/me/records.git", pushedAt: null, problem: null });
   assert.equal(readSettings(api.dataDirectory, { model: "x" }).backup, "https://me:s3cret@example.com/me/records.git");
 
-  const off = await api.call("PATCH", "/api/settings", { notice: null, start: "", backup: null });
-  assert.deepEqual(off.body, { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null, backup: noBackup }, "null or empty turns a command off");
+  const off = await api.call("PATCH", "/api/settings", { notice: null, start: "", sendBack: "", backup: null });
+  assert.deepEqual(off.body, { owner: "Omkar", model: "claude-opus-5-5", effort: "medium", notice: null, start: null, sendBack: null, backup: noBackup }, "null or empty turns a command off");
 
   assert.equal((await api.call("PATCH", "/api/settings", { start: "touch /tmp/x" }, { Origin: "https://evil.example" })).status, 403, "a web page cannot set a command");
   assert.equal((await fetch(`${api.base}/api/settings`, { method: "PATCH", headers: { "Content-Type": "text/plain" }, body: JSON.stringify({ start: "touch /tmp/x" }) })).status, 415);

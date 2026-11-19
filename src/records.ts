@@ -9,6 +9,7 @@ import type { AnswerParts } from "./parts.ts";
 import { DEFAULT_EFFORT, EFFORTS, type Effort } from "./model-runner.ts";
 import { forgeHost, isSelfHostedHost, repoOf, repoSetting } from "./repo-ref.ts";
 import type { IssueRef } from "./forge/forge.ts";
+import type { SendBackHandoff } from "./send-backs.ts";
 import type { Handoff } from "./starts.ts";
 
 /**
@@ -317,6 +318,19 @@ export interface PrActedEntry extends EntryBase {
   sentBack: boolean;
   /** Whether the PR was closed unmerged: cancelled. */
   closed: boolean;
+  /** Set when this act sent the PR back or cancelled it and a send-back command was set: the handoff to run once (see `src/send-backs.ts`). */
+  handoff?: { command: string; handoff: SendBackHandoff };
+}
+
+/** entail ran the send-back command for a PR it sent back or cancelled: by which command, and how it exited. */
+export interface HandedBackEntry extends EntryBase {
+  type: "handed-back";
+  /** The `pr-acted` entry whose handoff this ran. */
+  for: number;
+  pr: number;
+  command: string;
+  exit: number | null;
+  error?: string;
 }
 
 /**
@@ -574,6 +588,7 @@ export type Entry =
   | PrActedEntry
   | StartingEntry
   | StartedEntry
+  | HandedBackEntry
   | SuggestedEntry
   | SuggestionFiledEntry
   | SuggestFailedEntry
@@ -735,6 +750,12 @@ export interface GlobalSettings {
    */
   start?: string | null;
   /**
+   * The command entail runs when it sends a PR back or cancels it, with the
+   * handoff as JSON on its standard input; null runs nothing. See
+   * `src/send-backs.ts`.
+   */
+  sendBack?: string | null;
+  /**
    * The git remote entail backs its records up to after each pass; null backs
    * nothing up. See `src/backup.ts`.
    */
@@ -755,6 +776,7 @@ export function readSettings(dataDirectory: string, defaults: { model: string })
     effort: (EFFORTS as readonly unknown[]).includes(parsed.effort) ? (parsed.effort as Effort) : DEFAULT_EFFORT,
     notice: typeof parsed.notice === "string" && parsed.notice.trim() !== "" ? parsed.notice : null,
     start: typeof parsed.start === "string" && parsed.start.trim() !== "" ? parsed.start : null,
+    sendBack: typeof parsed.sendBack === "string" && parsed.sendBack.trim() !== "" ? parsed.sendBack : null,
     backup: typeof parsed.backup === "string" && parsed.backup.trim() !== "" ? parsed.backup : null,
   };
 }
@@ -1018,6 +1040,12 @@ export function pendingStarts(entries: readonly Entry[]): (ActedEntry & { start:
 export function interruptedStarts(entries: readonly Entry[]): StartingEntry[] {
   const ended = new Set(entries.flatMap((entry) => (entry.type === "started" ? [entry.for] : [])));
   return entries.filter((entry): entry is StartingEntry => entry.type === "starting" && !ended.has(entry.for));
+}
+
+/** The `pr-acted` entries whose handoff is still to run, in log order: each with a handoff and no `handed-back` entry for it. */
+export function pendingHandoffs(entries: readonly Entry[]): (PrActedEntry & { handoff: NonNullable<PrActedEntry["handoff"]> })[] {
+  const handed = new Set(entries.flatMap((entry) => (entry.type === "handed-back" ? [entry.for] : [])));
+  return entries.filter((entry): entry is PrActedEntry & { handoff: NonNullable<PrActedEntry["handoff"]> } => entry.type === "pr-acted" && entry.handoff !== undefined && !handed.has(entry.id));
 }
 
 /** Whether work on an issue was started already: its start command exited 0 or was interrupted, or a start is still to run. */

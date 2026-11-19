@@ -53,6 +53,17 @@ export function SettingsPage() {
             </>
           }
         />
+        <Command
+          name="sendBack"
+          title="Sending back"
+          value={settings.data.sendBack}
+          what={<>When entail sends a PR back or cancels it, it runs this command once, after the comment is posted, with the repo, the PR, the issue, the judged head, what needs to change and the checklist as JSON on its standard input. Whatever the command does never changes the call.</>}
+          example={
+            <>
+              For example <code>examples/send-back-to-file.sh</code> in entail’s checkout.
+            </>
+          }
+        />
         <Backup backup={settings.data.backup} />
       </div>
       <p className="hint run-note">
@@ -144,7 +155,7 @@ function Backup({ backup }: { backup: SettingsView["backup"] }) {
 }
 
 /** A command entail runs with the shell as the owner. */
-function Command({ name, title, value, what, example }: { name: "notice" | "start"; title: string; value: string | null; what: ReactNode; example: ReactNode }) {
+function Command({ name, title, value, what, example }: { name: "notice" | "start" | "sendBack"; title: string; value: string | null; what: ReactNode; example: ReactNode }) {
   return (
     <Editable
       name={name}
@@ -172,7 +183,7 @@ function Command({ name, title, value, what, example }: { name: "notice" | "star
  * only until Edit, and saved only on a second click that says what it will be.
  */
 function Editable(props: {
-  name: "notice" | "start" | "backup";
+  name: "notice" | "start" | "sendBack" | "backup";
   title: string;
   value: string | null;
   prefill: string;

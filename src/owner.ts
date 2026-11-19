@@ -786,6 +786,8 @@ export type LogItem =
   | { kind: "acted"; repo: string; at: string; for: number; issue: number; url: string; closed: boolean }
   /** entail ran the start command for a go that acted. */
   | { kind: "started"; repo: string; at: string; issue: number; command: string; exit: number | null; error: string | null }
+  /** entail ran the send-back command for a PR it sent back or cancelled. */
+  | { kind: "handed-back"; repo: string; at: string; pr: number; command: string; exit: number | null; error: string | null }
   /** entail acted on a PR: posted, and merged or closed it if it was to. */
   | { kind: "pr-acted"; repo: string; at: string; for: number; pr: number; url: string; merged: PrActedEntry["merged"]; refused: string | null; sentBack: boolean; closed: boolean }
   /** entail started or stopped following a PR. */
@@ -849,6 +851,9 @@ export function logItems(dataDirectory: string, book: readonly Case[], repoFilte
           break;
         case "started":
           items.push({ kind: "started", repo, at: entry.at, issue: entry.issue, command: entry.command, exit: entry.exit, error: entry.error ?? null });
+          break;
+        case "handed-back":
+          items.push({ kind: "handed-back", repo, at: entry.at, pr: entry.pr, command: entry.command, exit: entry.exit, error: entry.error ?? null });
           break;
         case "pr-acted":
           items.push({ kind: "pr-acted", repo, at: entry.at, for: entry.for, pr: entry.pr, url: entry.comment.url, merged: entry.merged, refused: entry.refused, sentBack: entry.sentBack, closed: entry.closed });
@@ -1260,6 +1265,9 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         break;
       case "started":
         lines.push(`${at}  ${where(item.issue)}  ${item.exit === 0 ? "started work with" : item.exit === null && item.error?.startsWith("entail stopped while") === true ? "the start was interrupted" : "the start command failed"}: ${item.command}${item.exit === 0 ? "" : ` (${item.error ?? `exit ${item.exit}`})`}`);
+        break;
+      case "handed-back":
+        lines.push(`${at}  ${where(item.pr)}  ${item.exit === 0 ? "handed the PR to" : "the send-back command failed"}: ${item.command}${item.exit === 0 ? "" : ` (${item.error ?? `exit ${item.exit}`})`}`);
         break;
       case "pr-acted": {
         const did = item.merged !== null ? ` and merged at ${item.merged.sha.slice(0, 7)}` : item.closed ? " and closed the PR unmerged" : item.refused !== null ? `; the merge did not happen: ${item.refused}` : "";

@@ -160,13 +160,17 @@ function scratchHome(t: TestContext): { dataDirectory: string; out: string[] } {
 test("the start command is set and cleared from the command line, for every repo only", async (t) => {
   const { out } = scratchHome(t);
   assert.equal(await main(["settings", "--start", "examples/start-to-file.sh"]), 0);
-  assert.match(out.pop()!, /\nstart work with: examples\/start-to-file\.sh\nbackup: none$/u);
+  assert.match(out.pop()!, /\nstart work with: examples\/start-to-file\.sh\nhand a sent-back PR to: none\nbackup: none$/u);
   assert.equal(await main(["settings"]), 0);
-  assert.match(out.pop()!, /\nnotices: none\nstart work with: examples\/start-to-file\.sh\nbackup: none$/u);
+  assert.match(out.pop()!, /\nnotices: none\nstart work with: examples\/start-to-file\.sh\nhand a sent-back PR to: none\nbackup: none$/u);
   assert.equal(await main(["settings", "--start", "none"]), 0);
-  assert.match(out.pop()!, /\nstart work with: none\nbackup: none$/u);
+  assert.match(out.pop()!, /\nstart work with: none\nhand a sent-back PR to: none\nbackup: none$/u);
+  assert.equal(await main(["settings", "--send-back", "examples/send-back-to-file.sh"]), 0);
+  assert.match(out.pop()!, /\nhand a sent-back PR to: examples\/send-back-to-file\.sh\nbackup: none$/u);
+  assert.equal(await main(["settings", "--send-back", "none"]), 0);
+  assert.match(out.pop()!, /\nhand a sent-back PR to: none\nbackup: none$/u);
   assert.equal(await main(["settings", "acme/tally", "--start", "x"]), 2);
-  assert.match(out.pop()!, /--owner, --notice, --start and --backup are settings for every repo/u);
+  assert.match(out.pop()!, /--owner, --notice, --start, --send-back and --backup are settings for every repo/u);
 });
 
 test("the backup remote is set from the command line, pushes at once, reports how it went, and restores on a fresh install", async (t) => {
@@ -231,7 +235,7 @@ test("status says entail is not running, lists each enrolled repo with its confi
   assert.match(screen, /^entail is not running\. Start it with: entail service install \(or entail run\)\.\nThe board is at http:\/\/127\.0\.0\.1:4999\/ while it runs\./u);
   assert.match(screen, /\nacme\/tally {2}confirm on {3}not checked: entail is not running {2}1 waiting\n/u);
   assert.match(screen, /\nacme\/wordy {2}confirm off {2}not checked: entail is not running {2}0 waiting\n/u);
-  assert.match(screen, /\nWaiting on you: 1 question\.\nNotices: none\. Start work with: none\.\nBackup: none \(entail settings --backup <git remote url> turns it on\)\.$/u);
+  assert.match(screen, /\nWaiting on you: 1 question\.\nNotices: none\. Start work with: none\. Hand a sent-back PR to: none\.\nBackup: none \(entail settings --backup <git remote url> turns it on\)\.$/u);
 });
 
 test("status reads when each repo was last checked from the running copy's board", async (t) => {

@@ -78,7 +78,7 @@ const USAGE = `usage:
   entail enroll <owner/repo> [--no-confirm] [--since <time>]
   entail unenroll <owner/repo>
   entail repos [--all] [--json]
-  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--base <branch>|default] [--pin <topic>]... [--unpin <topic>]... [--owner <name>] [--notice <command>|none] [--start <command>|none] [--backup <git remote url>|none]
+  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--base <branch>|default] [--pin <topic>]... [--unpin <topic>]... [--owner <name>] [--notice <command>|none] [--start <command>|none] [--send-back <command>|none] [--backup <git remote url>|none]
   entail backup status
   entail restore <git remote url>
   entail run [--once] [--dry-run] [--interval <seconds>] [--port <n>]
@@ -439,13 +439,14 @@ async function settingsCommand(args: string[]): Promise<number> {
     owner: { type: "string" },
     notice: { type: "string" },
     start: { type: "string" },
+    "send-back": { type: "string" },
     backup: { type: "string" },
   });
   if (positionals.length > 1) throw new UsageError("settings takes at most one repo");
   const dataDirectory = ensureDataDirectory();
   if (positionals.length === 1) {
-    if (values.owner !== undefined || values.notice !== undefined || values.start !== undefined || values.backup !== undefined) {
-      throw new UsageError("--owner, --notice, --start and --backup are settings for every repo; leave the repo out");
+    if (values.owner !== undefined || values.notice !== undefined || values.start !== undefined || values["send-back"] !== undefined || values.backup !== undefined) {
+      throw new UsageError("--owner, --notice, --start, --send-back and --backup are settings for every repo; leave the repo out");
     }
     const change: Record<string, unknown> = {};
     if (values.confirm !== undefined) {
@@ -479,13 +480,14 @@ async function settingsCommand(args: string[]): Promise<number> {
   for (const key of ["owner", "model", "effort"] as const) if (values[key] !== undefined) change[key] = values[key];
   if (values.notice !== undefined) change.notice = values.notice === "none" ? null : values.notice;
   if (values.start !== undefined) change.start = values.start === "none" ? null : values.start;
+  if (values["send-back"] !== undefined) change.sendBack = values["send-back"] === "none" ? null : values["send-back"];
   if (values.backup !== undefined) {
     if (values.backup !== "none" && checkRemote(values.backup) === null) throw new UsageError("--backup is a git remote URL, or none");
     change.backup = values.backup === "none" ? null : values.backup;
   }
   const settings = Object.keys(change).length === 0 ? settingsIn(dataDirectory) : changeSettings(dataDirectory, DEFAULT_MODEL, change);
   console.log(
-    `your name on comments: ${settings.owner ?? "(not set: the GitHub account gh is logged in as, else the GitLab account glab is)"}\ndefault model: ${settings.model}\ndefault effort: ${settings.effort}\nnotices: ${settings.notice ?? "none"}\nstart work with: ${settings.start ?? "none"}\nbackup: ${settings.backup ? shownRemote(settings.backup) : "none"}`,
+    `your name on comments: ${settings.owner ?? "(not set: the GitHub account gh is logged in as, else the GitLab account glab is)"}\ndefault model: ${settings.model}\ndefault effort: ${settings.effort}\nnotices: ${settings.notice ?? "none"}\nstart work with: ${settings.start ?? "none"}\nhand a sent-back PR to: ${settings.sendBack ?? "none"}\nbackup: ${settings.backup ? shownRemote(settings.backup) : "none"}`,
   );
   if (values.backup !== undefined && settings.backup) {
     const holder = readLock(dataDirectory);
@@ -830,7 +832,7 @@ async function statusCommand(args: string[]): Promise<number> {
   console.log(
     `\n${waiting.length === 0 ? "Nothing waits on you." : `Waiting on you: ${[questions > 0 ? `${questions} question${questions === 1 ? "" : "s"}` : "", waiting.length - questions > 0 ? `${waiting.length - questions} call${waiting.length - questions === 1 ? "" : "s"} to confirm` : ""].filter((part) => part !== "").join(" and ")}${running === null ? "" : ` at ${url}#/waiting`}.`}`,
   );
-  console.log(`Notices: ${settings.notice ?? "none"}. Start work with: ${settings.start ?? "none"}.`);
+  console.log(`Notices: ${settings.notice ?? "none"}. Start work with: ${settings.start ?? "none"}. Hand a sent-back PR to: ${settings.sendBack ?? "none"}.`);
   console.log(backupLine(dataDirectory, settings, now));
   return 0;
 }
