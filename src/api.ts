@@ -70,7 +70,9 @@ import { forgeTitle } from "./repo-ref.ts";
  *                                             checked as `entail settings` checks them
  *
  * A GitLab project is addressed by its whole name as one encoded segment in
- * place of `:owner/:name`, such as `/api/repos/gitlab%3Aacme%2Ftally/check`.
+ * place of `:owner/:name`, such as `/api/repos/gitlab%3Aacme%2Ftally/check`,
+ * or `/api/repos/gitlab%3A%2F%2Fgit.example.com%2Facme%2Ftally/check` on a
+ * self-hosted GitLab.
  *
  * A call is on an issue or on a PR: each item carries `kind` ("issue" or
  * "pr") and, on a PR's call, `pr` with the criteria checklist, the facts read
@@ -104,8 +106,12 @@ export interface BoardLoop {
 
 export interface ApiOptions {
   dataDirectory: string;
-  /** The owner's display name, under which every owner's action is recorded. */
-  owner: () => Promise<string>;
+  /**
+   * The owner's display name, under which every owner's action is recorded.
+   * `repo`, when given, is a repo being enrolled, whose forge's login may be
+   * the only one there is.
+   */
+  owner: (repo?: string) => Promise<string>;
   /** The default model when the owner has set none. */
   defaultModel: string;
   book: () => Promise<Case[]>;
@@ -117,8 +123,8 @@ export interface ApiOptions {
   loop?: BoardLoop;
   /** Whether each repo's checks are failing, as the loop in this process saw them. */
   health?: Health;
-  /** What enrolling and the backlog read from the forge: that the repo can be reached, and its open issues. */
-  forgeFor?: (repo: string) => Pick<Forge, "project" | "openIssueNumbers">;
+  /** What enrolling and the backlog read from the forge: that the repo can be reached, that its instance is served, and its open issues. */
+  forgeFor?: (repo: string) => Pick<Forge, "project" | "instance" | "openIssueNumbers">;
   events?: EventBus;
   /** The suggestion runs started from the board, when entail runs them in this process. */
   suggestions?: Pick<SuggestionRuns, "running" | "repos" | "start">;
@@ -237,13 +243,16 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
       const since = body.since === undefined ? undefined : new Date(String(body.since));
       if (since !== undefined && Number.isNaN(since.getTime())) throw new OwnerError(400, "since is an ISO time");
       if (repoState(repo, readLog(dataDirectory, repo)).enrolled) throw new OwnerError(409, `${repo} is already enrolled`);
-      // Reading the repo checks it exists and the logged-in gh or glab can see it, before anything is recorded.
-      const openIssues = options.forgeFor === undefined ? 0 : await reach(repo, async () => {
+      // Reading the repo checks it exists, the logged-in gh or glab can see it and
+      // entail serves its forge's version (a self-hosted GitLab's), before anything is recorded.
+      const { openIssues, unsupported } = options.forgeFor === undefined ? { openIssues: 0, unsupported: null } : await reach(repo, async () => {
         const forge = options.forgeFor!(repo);
         await forge.project();
-        return (await forge.openIssueNumbers()).length;
+        const { unsupported } = await forge.instance();
+        return { openIssues: (await forge.openIssueNumbers()).length, unsupported };
       });
-      enroll(dataDirectory, repo, await options.owner(), { ...(typeof body.confirm === "boolean" ? { confirm: body.confirm } : {}), ...(since ? { since } : {}) }, now());
+      if (unsupported !== null) throw new OwnerError(409, `${repo} cannot be enrolled: ${unsupported}`);
+      enroll(dataDirectory, repo, await options.owner(repo), { ...(typeof body.confirm === "boolean" ? { confirm: body.confirm } : {}), ...(since ? { since } : {}) }, now());
       const view = repoViews(dataDirectory, settings(), checkedAt(options)).find((candidate) => candidate.repo === repo)!;
       return send(response, 201, changed<EnrollResponse>({ repo: view, openIssues }));
     }

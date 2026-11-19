@@ -60,7 +60,7 @@ import {
 import { pinsFile } from "./pins.ts";
 import { clearedGoOn, goCallOn, heldActions, loggedRepos, readLog, readSettings, sendBacksPosted, type GlobalSettings } from "./records.ts";
 import { formatReplay, replay, replayLandings } from "./replay.ts";
-import { forgeTitle, GITLAB_PREFIX, isRepo, repoSetting } from "./repo-ref.ts";
+import { forgeHost, forgeTitle, isRepo, repoSetting } from "./repo-ref.ts";
 import { installService, isWsl, machineServiceSystem, serviceStatus, uninstallService, type ServiceInputs } from "./service.ts";
 import { fileUnfiled, formatSuggestions, runSuggestions, SUGGEST_TIMEOUT_MS, SuggestionRuns } from "./suggest.ts";
 import { machineUpdate, update } from "./update.ts";
@@ -98,7 +98,9 @@ enroll     watch a repo: entail makes the call on each issue filed or edited fro
            (or --since) on, and on each /entail mention. A repo starts in confirm mode,
            where a go or no is posted but nothing is closed or started until you confirm.
            A repo is owner/repo on GitHub, through gh, or gitlab:group/repo on GitLab
-           (gitlab.com, subgroups included), through glab.
+           (gitlab.com, subgroups included), through glab; a project on a self-hosted
+           GitLab is gitlab://host/group/repo, or gitlab: before its pasted address, with
+           glab logged in to that host (glab auth login --hostname host).
 unenroll   stop watching a repo; its log is kept.
 repos      the enrolled repos with confirm mode, model, effort and what waits on you.
 settings   with a repo, its confirm mode, model and effort ("default" uses the one for
@@ -256,9 +258,10 @@ function landingBook(dataDirectory: string): Promise<LandingCase[]> {
 /**
  * The owner's display name: the setting, else the GitHub account `gh` is
  * logged in as, else, for an owner without `gh`, the GitLab account `glab` is
- * logged in as.
+ * logged in as on gitlab.com, then on each self-hosted GitLab host with a
+ * repo that has a log, then on the host of `repo`, the repo being enrolled.
  */
-async function ownerName(dataDirectory: string): Promise<string> {
+async function ownerName(dataDirectory: string, repo?: string): Promise<string> {
   const set = settingsIn(dataDirectory).owner;
   if (set !== null) return set;
   let github: unknown = null;
@@ -268,12 +271,24 @@ async function ownerName(dataDirectory: string): Promise<string> {
   } catch (error) {
     github = error;
   }
-  const gitlab = await createForge(repoSetting(`${GITLAB_PREFIX}gitlab-org/gitlab`))
-    .currentActor()
-    .catch(() => null);
-  if (gitlab !== null) return gitlab.username;
+  for (const host of gitlabHosts(dataDirectory, repo)) {
+    const gitlab = await createForge({ forge: "gitlab", host, path: "gitlab-org/gitlab" })
+      .currentActor()
+      .catch(() => null);
+    if (gitlab !== null) return gitlab.username;
+  }
   if (github !== null) throw github;
-  throw new Error("neither gh nor glab is logged in, and no name is set: run gh auth login (or glab auth login), or entail settings --owner <your name>");
+  throw new Error("neither gh nor glab is logged in, and no name is set: run gh auth login (or glab auth login, with --hostname for a self-hosted GitLab), or entail settings --owner <your name>");
+}
+
+/** The GitLab hosts to ask `glab` about, gitlab.com first: those of the repos with a log, and of `repo`. */
+function gitlabHosts(dataDirectory: string, repo?: string): string[] {
+  const hosts = new Set([forgeHost("gitlab")]);
+  for (const name of [...loggedRepos(dataDirectory), ...(repo === undefined ? [] : [repo])]) {
+    const setting = repoSetting(name);
+    if (setting.forge === "gitlab") hosts.add(setting.host);
+  }
+  return [...hosts];
 }
 
 function parse<const O extends ParseArgsOptionsConfig>(args: string[], options: O) {
@@ -284,12 +299,12 @@ function parse<const O extends ParseArgsOptionsConfig>(args: string[], options: 
   }
 }
 
-/** Reads `owner/name#number`, or `gitlab:group/name#number` on GitLab. `path` is the repo's name. */
+/** Reads `owner/name#number`, or `gitlab:group/name#number` or `gitlab://host/group/name#number` on GitLab. `path` is the repo's name. */
 export function parseIssueReference(text: string): { path: string; number: number } {
   const match = /^([^#\s]+)#(\d+)$/u.exec(text);
   const number = Number(match?.[2]);
   if (match === null || !isRepo(match[1]!) || !Number.isSafeInteger(number) || number <= 0) {
-    throw new UsageError(`not an issue reference: ${text} (expected owner/repo#number, or gitlab:group/repo#number)`);
+    throw new UsageError(`not an issue reference: ${text} (expected owner/repo#number, gitlab:group/repo#number, or gitlab://host/group/repo#number)`);
   }
   return { path: match[1]!, number };
 }
@@ -306,7 +321,7 @@ async function openRepo(setting: ForgeSetting, dataDirectory: string): Promise<{
 }
 
 function oneRepo(positionals: string[], command: string): string {
-  if (positionals.length !== 1) throw new UsageError(`${command} takes one repo, as owner/repo or gitlab:group/repo`);
+  if (positionals.length !== 1) throw new UsageError(`${command} takes one repo, as owner/repo, gitlab:group/repo or gitlab://host/group/repo`);
   return repoName(positionals[0]!);
 }
 
@@ -316,9 +331,13 @@ async function enrollCommand(args: string[]): Promise<number> {
   const since = values.since === undefined ? undefined : new Date(values.since);
   if (since !== undefined && Number.isNaN(since.getTime())) throw new UsageError(`--since is a date or time, such as 2026-11-12 or 2026-11-12T09:00:00Z, not ${values.since}`);
   const dataDirectory = ensureDataDirectory();
-  // Reading the repo checks it exists and the forge's CLI can see it.
-  await createForge(repoSetting(repo)).project();
-  const state = enroll(dataDirectory, repo, await ownerName(dataDirectory), { confirm: values["no-confirm"] !== true, ...(since ? { since } : {}) });
+  // Reading the repo checks it exists and the forge's CLI can see it, and that
+  // entail serves its forge's version, as a self-hosted GitLab's may not be.
+  const forge = createForge(repoSetting(repo));
+  await forge.project();
+  const { unsupported } = await forge.instance();
+  if (unsupported !== null) throw new Error(`${repo} cannot be enrolled: ${unsupported}`);
+  const state = enroll(dataDirectory, repo, await ownerName(dataDirectory, repo), { confirm: values["no-confirm"] !== true, ...(since ? { since } : {}) });
   console.log(`${repo} is enrolled: entail judges issues filed from ${state.since} on, and each /entail mention. Confirm mode is ${state.confirm ? "on" : "off"}.`);
   return 0;
 }
@@ -584,7 +603,7 @@ async function runCommand(args: string[]): Promise<number> {
     });
     const server = createApi({
       dataDirectory,
-      owner: () => ownerName(dataDirectory),
+      owner: (repo) => ownerName(dataDirectory, repo),
       defaultModel: DEFAULT_MODEL,
       book: () => caseBook(dataDirectory),
       loop,

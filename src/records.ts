@@ -5,7 +5,7 @@ import type { ForgeFacts, LandingOwnerCall, OwnerCall } from "./case-book.ts";
 import { scopeOf, type Criterion, type GoScope, type IssueCall } from "./judgment.ts";
 import type { LandingCall } from "./landing.ts";
 import { DEFAULT_EFFORT, EFFORTS, type Effort } from "./model-runner.ts";
-import { forgeHost, GITLAB_PREFIX, repoSetting } from "./repo-ref.ts";
+import { forgeHost, isSelfHostedHost, repoOf, repoSetting } from "./repo-ref.ts";
 import type { IssueRef } from "./forge/forge.ts";
 import type { Handoff } from "./starts.ts";
 
@@ -494,7 +494,7 @@ export type Entry =
 /** An entry as written, before it has an id and a time. */
 export type NewEntry = Entry extends infer E ? (E extends Entry ? Omit<E, "id" | "at"> : never) : never;
 
-/** The log file of a repo, `owner/name` or `gitlab:group/name`. */
+/** The log file of a repo, `owner/name`, `gitlab:group/name` or `gitlab://host/group/name`: under its host, which keeps the forges and hosts apart. */
 export function logFile(dataDirectory: string, repo: string): string {
   const { host, path } = repoSetting(repo);
   const parts = path.split("/").map((part) => part.toLowerCase());
@@ -563,25 +563,28 @@ export function readLog(dataDirectory: string, repo: string): Entry[] {
   return entries;
 }
 
-/** Every repo that has a log, enrolled or not, as `owner/name` or `gitlab:group/name`. */
+/** Every repo that has a log, enrolled or not, as `owner/name`, `gitlab:group/name` or `gitlab://host/group/name`. */
 export function loggedRepos(dataDirectory: string): string[] {
-  const github = join(dataDirectory, LOG_DIRECTORY, forgeHost("github"));
+  const log = join(dataDirectory, LOG_DIRECTORY);
+  const github = join(log, forgeHost("github"));
   const repos: string[] = [];
   for (const owner of safeReaddir(github)) {
     for (const file of safeReaddir(join(github, owner))) {
       if (file.endsWith(".jsonl")) repos.push(`${owner}/${file.slice(0, -".jsonl".length)}`);
     }
   }
-  // A GitLab project sits as deep as its subgroups go.
-  const gitlab = join(dataDirectory, LOG_DIRECTORY, forgeHost("gitlab"));
-  const walk = (directory: string, path: string[]): void => {
+  // A GitLab project sits as deep as its subgroups go, under gitlab.com or a self-hosted GitLab's host.
+  const walk = (host: string, directory: string, path: string[]): void => {
     for (const entry of safeReaddir(directory)) {
       if (entry.endsWith(".jsonl")) {
-        if (path.length > 0) repos.push(`${GITLAB_PREFIX}${[...path, entry.slice(0, -".jsonl".length)].join("/")}`);
-      } else walk(join(directory, entry), [...path, entry]);
+        if (path.length > 0) repos.push(repoOf({ forge: "gitlab", host, path: [...path, entry.slice(0, -".jsonl".length)].join("/") }));
+      } else walk(host, join(directory, entry), [...path, entry]);
     }
   };
-  walk(gitlab, []);
+  walk(forgeHost("gitlab"), join(log, forgeHost("gitlab")), []);
+  for (const host of safeReaddir(log)) {
+    if (isSelfHostedHost(host)) walk(host, join(log, host), []);
+  }
   return repos.sort();
 }
 

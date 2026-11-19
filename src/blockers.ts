@@ -84,13 +84,13 @@ export function sameBlockers(a: readonly IssueRef[], b: readonly IssueRef[]): bo
 /**
  * A blocker as a comment or the log names it: `#12` in the issue's own repo,
  * `owner/name#12` in another. `repo` is the issue's repo as entail names it,
- * `owner/name` or `gitlab:group/name`.
+ * `owner/name`, `gitlab:group/name` or `gitlab://host/group/name`.
  */
 export function refText(ref: IssueRef, repo: string): string {
   return ref.path.toLowerCase() === pathOf(repo).toLowerCase() ? `#${ref.number}` : `${ref.path}#${ref.number}`;
 }
 
-/** A repo's path on its forge: `gitlab:group/name` is `group/name` there. */
+/** A repo's path on its forge: `gitlab:group/name` and `gitlab://host/group/name` are `group/name` there. */
 function pathOf(repo: string): string {
   try {
     return repoSetting(repo).path;
