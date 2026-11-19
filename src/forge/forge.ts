@@ -336,6 +336,9 @@ export function assertEntailLabel(label: string): void {
   }
 }
 
+/** What {@link Forge.updateFile} did: nothing, or a commit on the base branch. */
+export type FileUpdate = { changed: false } | { changed: true; commit: string; branch: string };
+
 /** One forge's social layer for one repo. */
 export interface Forge {
   readonly setting: ForgeSetting;
@@ -455,6 +458,19 @@ export interface Forge {
 
   /** Closes a PR without merging it, as when entail cancels a PR that keeps failing. A closed PR stays closed. */
   closePullRequest(prNumber: number): Promise<void>;
+
+  /**
+   * Changes one file on the base branch with a commit of its own: reads the
+   * file's text there now (null when there is none), hands it to `change`, and
+   * commits what `change` returns, pinned to the version read, so a file that
+   * moved in between is refused instead of overwritten. `change` returning
+   * null, or the text it was given, commits nothing. Used only to write
+   * `VISION.md`, and only for a line the owner's answer grew it by.
+   *
+   * @throws {ForgeRequestError} when the forge refuses the commit, such as a
+   *   protected branch or a file that changed since it was read.
+   */
+  updateFile(path: string, change: (current: string | null) => string | null, message: string): Promise<FileUpdate>;
 
   /**
    * Merges a PR only at `sha`, never bypassing rules and never through the

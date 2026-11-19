@@ -693,3 +693,43 @@ test("the open PRs into the base branch are listed by the pulls API filtered on 
     ],
   );
 });
+
+const REPO_READ: Exchange = { request: { method: "GET", path: "repos/acme/tally" }, response: { status: 200, body: { id: 1, default_branch: "main" } } };
+const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
+
+test("updateFile reads the file on the base branch and commits the change pinned to the blob it read", async (t) => {
+  const { forge } = forgeOn(t, [
+    REPO_READ,
+    { request: { method: "GET", path: "repos/acme/tally/contents/VISION.md?ref=main" }, response: { status: 200, body: { type: "file", encoding: "base64", sha: "blob1", content: `${b64("# Vision\n\nOne.\n").slice(0, 8)}\n${b64("# Vision\n\nOne.\n").slice(8)}` } } },
+    {
+      request: { method: "PUT", path: "repos/acme/tally/contents/VISION.md", body: { message: "Add a line", content: b64("# Vision\n\nOne.\nTwo.\n"), branch: "main", sha: "blob1" } },
+      response: { status: 200, body: { commit: { sha: "c0ffee" }, content: { sha: "blob2" } } },
+    },
+  ]);
+  let seen: string | null = null;
+  const result = await forge.updateFile("VISION.md", (current) => ((seen = current), `${current}Two.\n`), "Add a line");
+  assert.equal(seen, "# Vision\n\nOne.\n");
+  assert.deepEqual(result, { changed: true, commit: "c0ffee", branch: "main" });
+});
+
+test("updateFile on a base branch the owner set commits there, and commits nothing when the change gives nothing", async (t) => {
+  const transport = new RecordedTransport({
+    host: "github.com",
+    exchanges: [
+      REPO_READ,
+      { request: { method: "GET", path: "repos/acme/tally/contents/VISION.md?ref=develop" }, response: { status: 200, body: { type: "file", encoding: "base64", sha: "blob1", content: b64("Same.\n") } } },
+    ],
+  });
+  t.after(() => transport.assertDone());
+  const forge = new GitHubForge(SETTING, transport, { baseBranch: "develop" });
+  assert.deepEqual(await forge.updateFile("VISION.md", () => null, "x"), { changed: false });
+});
+
+test("updateFile creates a file the base branch does not have, and a refusal is an error", async (t) => {
+  const { forge } = forgeOn(t, [
+    REPO_READ,
+    { request: { method: "GET", path: "repos/acme/tally/contents/VISION.md?ref=main" }, response: { status: 404, body: { message: "Not Found" } } },
+    { request: { method: "PUT", path: "repos/acme/tally/contents/VISION.md", body: { message: "m", content: b64("New.\n"), branch: "main" } }, response: { status: 409, body: { message: "VISION.md does not match abc" } } },
+  ]);
+  await assert.rejects(forge.updateFile("VISION.md", (current) => (current === null ? "New.\n" : null), "m"), (error: unknown) => error instanceof ForgeRequestError && error.status === 409);
+});

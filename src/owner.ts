@@ -53,6 +53,8 @@ import {
   type RecheckedEntry,
   type RepoState,
   type UndoneEntry,
+  type VisionConsideredEntry,
+  type VisionGrownEntry,
   type VisionSeenEntry,
 } from "./records.ts";
 import { blobUrl, canonicalRepo, forgeTitle, issueUrl, repoSetting } from "./repo-ref.ts";
@@ -774,8 +776,8 @@ export type LogItem =
   /** entail started or stopped following a PR. */
   | { kind: "pr"; repo: string; at: string; entry: Extract<Entry, { type: "followed" | "unfollowed" | "landing-failed" }> }
   | { kind: "repo"; repo: string; at: string; entry: Extract<Entry, { type: "enrolled" | "unenrolled" | "settings" | "undone" | "backlog" | "reopened" | "base-branch-seen" }> }
-  /** VISION.md changed, or an issue was re-checked after it changed and nothing was posted. */
-  | { kind: "vision"; repo: string; at: string; entry: VisionSeenEntry | RecheckedEntry }
+  /** VISION.md changed, an issue was re-checked after it changed and nothing was posted, or a board answer was weighed for the vision and a line was added or not. */
+  | { kind: "vision"; repo: string; at: string; entry: VisionSeenEntry | RecheckedEntry | VisionConsideredEntry | VisionGrownEntry }
   /** A suggestion run the owner asked for: what it suggested and left out, or why it gave nothing. */
   | { kind: "suggestion"; repo: string; at: string; run: SuggestionRunView }
   /** One suggestion filed as an issue. */
@@ -847,6 +849,8 @@ export function logItems(dataDirectory: string, book: readonly Case[], repoFilte
           break;
         case "vision-seen":
         case "rechecked":
+        case "vision-considered":
+        case "vision-grown":
           items.push({ kind: "vision", repo, at: entry.at, entry });
           break;
         default:
@@ -1235,7 +1239,12 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
       }
       case "vision": {
         const { entry } = item;
-        if (entry.type === "vision-seen") {
+        if (entry.type === "vision-grown") {
+          lines.push(`${at}  ${where(entry.about.number)}  added to VISION.md${entry.heading === null ? "" : ` under "${entry.heading}"`} automatically, from ${entry.by}'s answer on the board (call ${entry.on}, answer ${entry.answer}), at ${entry.commit.slice(0, 7)}`, `      ${entry.line}`, `      ${oneLine(entry.reason)}`);
+        } else if (entry.type === "vision-considered") {
+          if (entry.decision.add) lines.push(`${at}  ${where(null) || item.repo}  an answer (${entry.answer}) is a general statement: its line is to be added to VISION.md`, `      ${entry.decision.line}`);
+          else lines.push(`${at}  ${where(null) || item.repo}  an answer (${entry.answer}) settles its own ticket and adds nothing to the vision: ${oneLine(entry.decision.reason)}`);
+        } else if (entry.type === "vision-seen") {
           lines.push(`${at}  ${where(null) || item.repo}  VISION.md changed${entry.from === null ? "" : ` since ${entry.from.slice(0, 7)}`}${entry.commit === null ? "; it was removed" : ` at ${entry.commit.slice(0, 7)}`}: open calls made under the earlier text are re-checked`);
         } else if (entry.outcome === "held") {
           lines.push(`${at}  ${where(entry.issue)}  re-checked after the vision change: the call holds (${entry.judged?.call ?? "unchanged"}); nothing posted (call ${entry.call})`);

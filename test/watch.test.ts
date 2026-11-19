@@ -5,6 +5,7 @@ import { OWNER_CASE_BOOK, readCaseBook } from "../src/case-book.ts";
 import { commentRuleViolations, markedTickets } from "../src/comment-rules.ts";
 import { answerCall, confirmCall, latestCallOn, overrideCall, unenroll, waitingItems } from "../src/owner.ts";
 import { readLog, type CallEntry } from "../src/records.ts";
+import { JUDGMENT_KIND } from "../src/judgment.ts";
 import { contentHash, isMention } from "../src/watch.ts";
 import { ENROLLED_AT, harness, OWNER, REPO, verdict } from "./watch-fixture.ts";
 
@@ -282,7 +283,7 @@ test("a no answer closes the issue with the owner's words, without running the j
   await h.pass();
   await answerCall(h.dataDirectory, latestCallOn(h.dataDirectory, REPO, 11), OWNER, "no", "Not now; the JavaScript build is fine.");
   await h.pass();
-  assert.equal(h.runner.requests.length, 1);
+  assert.equal(h.runner.requests.filter((request) => request.kind === JUDGMENT_KIND).length, 1);
   assert.match(h.forge.posted[1]!.body, /\*\*No\*\*, on Omkar's answer on the board\.\n\nNot now; the JavaScript build is fine\.\n\nClosing the issue/u);
   assert.deepEqual(h.forge.closed, [11]);
 });

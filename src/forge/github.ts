@@ -7,6 +7,7 @@ import {
   type ChangeBatch,
   type ChangeCursor,
   type CloseReason,
+  type FileUpdate,
   ENTAIL_LABEL_COLOR,
   ENTAIL_LABEL_DESCRIPTION,
   type Check,
@@ -755,6 +756,32 @@ export class GitHubForge implements Forge {
   async closePullRequest(prNumber: number): Promise<void> {
     const path = `repos/${this.setting.path}/pulls/${pathNumber(prNumber)}`;
     await this.#sendJson("PATCH", path, { state: "closed" });
+  }
+
+  async updateFile(filePath: string, change: (current: string | null) => string | null, message: string): Promise<FileUpdate> {
+    const { baseBranch } = await this.project();
+    const path = `repos/${this.setting.path}/contents/${filePath.split("/").map(encodeURIComponent).join("/")}`;
+    const read = await this.#send("GET", `${path}?${new URLSearchParams({ ref: baseBranch })}`);
+    let current: string | null = null;
+    let blob: string | null = null;
+    if (read.status !== 404) {
+      this.#ensureOk(read, path, "GET");
+      const file = parseJson(read, this.setting.host, path, "GET");
+      if (field(file, "type", "string", path) !== "file" || field(file, "encoding", "string", path) !== "base64") {
+        throw new ForgeRequestError(this.setting.host, 200, "GET", path, `${filePath} is not a plain file on ${baseBranch}`);
+      }
+      current = Buffer.from(field(file, "content", "string", path), "base64").toString("utf8");
+      blob = field(file, "sha", "string", path);
+    }
+    const next = change(current);
+    if (next === null || next === current) return { changed: false };
+    const result = await this.#sendJson("PUT", path, {
+      message,
+      content: Buffer.from(next, "utf8").toString("base64"),
+      branch: baseBranch,
+      ...(blob === null ? {} : { sha: blob }),
+    });
+    return { changed: true, commit: field(isObject(result) ? result.commit : undefined, "sha", "string", path), branch: baseBranch };
   }
 
   /**

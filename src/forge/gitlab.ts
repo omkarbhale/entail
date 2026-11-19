@@ -7,6 +7,7 @@ import {
   type ChangeCursor,
   type ChangedFile,
   type CloseReason,
+  type FileUpdate,
   ENTAIL_LABEL_COLOR,
   ENTAIL_LABEL_DESCRIPTION,
   type Check,
@@ -614,6 +615,35 @@ export class GitLabForge implements Forge {
   /** GitLab leaves a closed merge request closed when asked to close it. */
   async closePullRequest(prNumber: number): Promise<void> {
     await this.#sendJson("PUT", `${this.#projectRef}/merge_requests/${pathNumber(prNumber)}`, { state_event: "close" });
+  }
+
+  async updateFile(filePath: string, change: (current: string | null) => string | null, message: string): Promise<FileUpdate> {
+    const { baseBranch } = await this.project();
+    const path = `${this.#projectRef}/repository/files/${encodeURIComponent(filePath)}`;
+    const read = await this.#send("GET", `${path}?${new URLSearchParams({ ref: baseBranch })}`);
+    let current: string | null = null;
+    let lastCommit: string | null = null;
+    if (read.status !== 404) {
+      this.#ensureOk(read, path, "GET");
+      const file = parseJson(read, this.setting.host, path, "GET");
+      if (this.#field(file, "encoding", "string", path) !== "base64") {
+        throw new ForgeRequestError(this.setting.host, 200, "GET", path, `${filePath} is not a plain file on ${baseBranch}`);
+      }
+      current = Buffer.from(this.#field(file, "content", "string", path), "base64").toString("utf8");
+      lastCommit = this.#field(file, "last_commit_id", "string", path);
+    }
+    const next = change(current);
+    if (next === null || next === current) return { changed: false };
+    // GitLab refuses an update pinned to a last commit that is no longer the file's.
+    await this.#sendJson(current === null ? "POST" : "PUT", path, {
+      branch: baseBranch,
+      content: next,
+      commit_message: message,
+      ...(lastCommit === null ? {} : { last_commit_id: lastCommit }),
+    });
+    // The file's last commit is the one just made, unless the branch moved on and touched the file again.
+    const written = await this.#getJson(`${path}?${new URLSearchParams({ ref: baseBranch })}`);
+    return { changed: true, commit: this.#field(written, "last_commit_id", "string", path), branch: baseBranch };
   }
 
   /**
