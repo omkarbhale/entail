@@ -249,3 +249,29 @@ test("a line half-written by a crash costs only itself", (t) => {
     ["enrolled", "call"],
   );
 });
+
+test("a pin added or removed is written to the pins file and logged under the owner's name, and only a real change is", (t) => {
+  const directory = dataDirectory(t);
+  enroll(directory, "acme/tally", "Omkar", {}, new Date("2026-11-12T09:00:00Z"));
+  changeRepoSettings(directory, "acme/tally", "Omkar", { pin: "src/billing/" });
+  changeRepoSettings(directory, "acme/tally", "Omkar", { pin: "src/billing/" });
+  changeRepoSettings(directory, "acme/tally", "Omkar", { pin: "pricing", confirm: false });
+  assert.deepEqual(repoViews(directory, SETTINGS)[0]!.pins.topics, ["src/billing/", "pricing"]);
+  changeRepoSettings(directory, "acme/tally", "Omkar", { unpin: "src/billing/" });
+  changeRepoSettings(directory, "acme/tally", "Omkar", { unpin: "src/billing/" });
+  assert.deepEqual(repoViews(directory, SETTINGS)[0]!.pins.topics, ["pricing"]);
+  const settings = readLog(directory, "acme/tally").filter((entry) => entry.type === "settings");
+  assert.deepEqual(
+    settings.map((entry) => ({ by: entry.by, confirm: entry.confirm, pinned: entry.pinned, unpinned: entry.unpinned })),
+    [
+      { by: "Omkar", confirm: undefined, pinned: "src/billing/", unpinned: undefined },
+      { by: "Omkar", confirm: false, pinned: "pricing", unpinned: undefined },
+      { by: "Omkar", confirm: undefined, pinned: undefined, unpinned: "src/billing/" },
+    ],
+  );
+  const log = formatLog(logItems(directory, []), { repoColumn: false });
+  assert.match(log, /Omkar pinned "src\/billing\/"/u);
+  assert.match(log, /Omkar took the pin "src\/billing\/" off/u);
+  assert.deepEqual(checkSettingsChange({ pin: " src/x/ ", unpin: "- old" }), { pin: "src/x/", unpin: "old" });
+  for (const bad of ["", "# note", "a\nb", 3]) assert.throws(() => checkSettingsChange({ pin: bad }), /pin is one topic/u, String(bad));
+});

@@ -220,15 +220,7 @@ function RepoCard({ repo, settings, showRepo }: { repo: RepoView; settings: Sett
           )}
         </span>
       </div>
-      <div className="rrow">
-        <span className="lbl">Pins</span>
-        <span className="val small">
-          {repo.pins.topics.length > 0 ? <span>{repo.pins.topics.join(" · ")}</span> : <span className="muted">None pinned.</span>}
-          <span className="muted">
-            Read from <code title={repo.pins.file}>{repo.pins.file.split("/").slice(-3).join("/")}</code>, one topic per line; edit the file to change them.
-          </span>
-        </span>
-      </div>
+      <Pins repo={repo} />
       <div className="rrow">
         <span className="lbl">Calls</span>
         <span className="val small">
@@ -407,6 +399,52 @@ function BaseBranch({ repo }: { repo: RepoView }) {
         <span className="small muted">Where entail reads the repo and its vision, and which PRs it judges and merges.</span>
       </span>
     </form>
+  );
+}
+
+/**
+ * The repo's pins, one topic each: anything touching a pinned topic comes to
+ * the owner, and a PR touching a pinned path merges only on their answer.
+ * Added and removed here they go to the same file the owner can edit by hand.
+ */
+function Pins({ repo }: { repo: RepoView }) {
+  const [topic, setTopic] = useState("");
+  const change = useSave((one: { pin: string } | { unpin: string }) => api.changeRepo(repo.repo, one));
+  const wanted = topic.trim();
+  const add = (event: FormEvent) => {
+    event.preventDefault();
+    if (wanted === "") return;
+    change.mutation.mutate({ pin: wanted }, { onSuccess: () => setTopic("") });
+  };
+  return (
+    <div className="rrow">
+      <span className="lbl">Pins</span>
+      <span className="val small">
+        {repo.pins.topics.length === 0 && <span className="muted">None pinned.</span>}
+        {repo.pins.topics.length > 0 && (
+          <ul className="plain pins">
+            {repo.pins.topics.map((one) => (
+              <li key={one}>
+                <span>{one}</span>{" "}
+                <button type="button" className="link" aria-label={`Unpin ${one}`} onClick={() => change.mutation.mutate({ unpin: one })} disabled={change.mutation.isPending}>
+                  Unpin
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <form className="val" onSubmit={add}>
+          <input className="field" aria-label={`Topic to pin for ${repo.repo}`} placeholder="A topic, or a path such as src/billing/" value={topic} onChange={(event) => setTopic(event.target.value)} autoComplete="off" spellCheck={false} />
+          <button className="btn sm" type="submit" disabled={change.mutation.isPending || wanted === ""}>
+            Pin
+          </button>
+          <Saved pending={change.mutation.isPending} saved={change.saved} />
+        </form>
+        <span className="muted">
+          Anything touching a pinned topic comes to you, and a PR changing a pinned path merges only on your answer. Kept in <code title={repo.pins.file}>{repo.pins.file.split("/").slice(-3).join("/")}</code>, one topic per line, which you can also edit by hand.
+        </span>
+      </span>
+    </div>
   );
 }
 
