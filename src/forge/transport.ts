@@ -26,24 +26,34 @@ export interface ForgeResponse {
 /**
  * The seam under the adapters: how an API request reaches the host.
  * It returns every HTTP response, 304 and error statuses included, and throws
- * only when no HTTP response came back. Tests replace it with recorded responses.
+ * only when no whole HTTP response came back: none at all, or one whose
+ * connection was dropped partway through. Tests replace it with recorded responses.
  */
 export interface Transport {
   request(request: ForgeRequest): Promise<ForgeResponse>;
 }
 
-/** No HTTP response came back: the CLI is missing, not logged in, or could not reach the host. */
+/**
+ * No whole HTTP response came back: the CLI is missing, not logged in or could
+ * not reach the host, or the connection was dropped partway through the response.
+ */
 export class TransportError extends Error {
   /** True when the CLI says it is not logged in for the host. */
   readonly loggedOut: boolean;
   /** True when the CLI is not installed: its executable was not found. */
   readonly cliMissing: boolean;
+  /**
+   * True when a response started but its connection was dropped before the
+   * body ended, as a server or a proxy in front of it may do to a long one.
+   */
+  readonly cutOff: boolean;
 
-  constructor(message: string, loggedOut: boolean, cliMissing = false) {
+  constructor(message: string, loggedOut: boolean, cliMissing = false, cutOff = false) {
     super(message);
     this.name = "TransportError";
     this.loggedOut = loggedOut;
     this.cliMissing = cliMissing;
+    this.cutOff = cutOff;
   }
 }
 
@@ -77,7 +87,11 @@ const MAX_OUTPUT_BYTES = 256 * 1024 * 1024;
  *
  * The CLI is asked to include the response's status line and headers, and the
  * transport reads the HTTP status from them rather than the exit code: `gh api`
- * exits 1 on a 304 Not Modified, which is not an error.
+ * exits 1 on a 304 Not Modified, which is not an error, and on a GraphQL error,
+ * which comes back whole with a 200. A CLI that fails after printing a success
+ * status and a body that is not whole JSON lost the connection partway through
+ * the body, as `glab` does with "Stream error: ... INTERNAL_ERROR; received
+ * from peer.", so that is a cut-off response rather than an answer.
  */
 export class CliTransport implements Transport {
   readonly #cli: ForgeCli;
@@ -126,6 +140,18 @@ export class CliTransport implements Transport {
           const code = error && typeof error.code === "number" ? error.code : null;
           const ranToExit = !error || (code !== null && !error.killed);
           const response = ranToExit ? parseIncludedResponse(stdout) : null;
+          if (response && error && isCutOff(response)) {
+            const cause = stderr.trim() || error.message;
+            reject(
+              new TransportError(
+                `${this.#cli} api ${request.method} ${request.path} on ${request.host}: the connection was dropped after ${response.body.length} characters of the response (${cause})`,
+                false,
+                false,
+                true,
+              ),
+            );
+            return;
+          }
           if (response) {
             resolve(response);
             return;
@@ -145,6 +171,17 @@ export class CliTransport implements Transport {
       child.stdin?.on("error", () => {});
       child.stdin?.end(request.body === undefined ? undefined : JSON.stringify(request.body));
     });
+  }
+}
+
+/** A success whose body is not whole JSON; a 204 has no body to be whole. */
+function isCutOff(response: ForgeResponse): boolean {
+  if (response.status < 200 || response.status >= 300 || response.status === 204) return false;
+  try {
+    JSON.parse(response.body);
+    return false;
+  } catch {
+    return true;
   }
 }
 

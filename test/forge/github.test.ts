@@ -369,6 +369,49 @@ test("the PR list is read until a PR last updated before the cursor, and keeps i
   assert.deepEqual(JSON.parse(batch.cursor).pulls, { since: "2026-11-02T09:30:00Z", etag: '"p1"' });
 });
 
+test("a PR list cut off mid-stream is read again in smaller pages without the ETag, which then is not kept", async (t) => {
+  const cursor = JSON.stringify({
+    issues: { since: null, etag: null },
+    comments: { since: null, etag: null },
+    pulls: { since: "2026-11-02T09:00:00Z", etag: '"p0"' },
+  });
+  const smaller = PULLS.replace("per_page=100", "per_page=50");
+  const page2 = "repositories/5001/pulls?state=all&sort=updated&direction=desc&per_page=50&page=2";
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: ISSUES }, response: { status: 200, body: [] } },
+    { request: { method: "GET", path: COMMENTS }, response: { status: 200, body: [] } },
+    {
+      request: { method: "GET", path: PULLS, headers: { "If-None-Match": '"p0"' } },
+      error: { message: "gh api GET … on github.com: the connection was dropped after 250000 characters of the response (stream error)", loggedOut: false, cutOff: true },
+    },
+    {
+      request: { method: "GET", path: smaller },
+      response: { status: 200, headers: { ETag: '"p50"', Link: `<https://api.github.com/${page2}>; rel="next"` }, body: [pull(6, "2026-11-02T09:30:00Z")] },
+    },
+    { request: { method: "GET", path: page2 }, response: { status: 200, body: [pull(5, "2026-11-02T09:10:00Z"), pull(4, "2026-11-01T10:45:00Z")] } },
+  ]);
+  const batch = await forge.changesSince(cursor);
+  assert.deepEqual(
+    batch.changes.map((c) => `${c.kind} ${c.id}`),
+    ["pull-request 8006", "pull-request 8005"],
+  );
+  assert.deepEqual(JSON.parse(batch.cursor).pulls, { since: "2026-11-02T09:30:00Z", etag: null }, "the smaller page's ETag belongs to another request");
+});
+
+test("a page of a list cut off inside its JSON is read again at the smaller size from its first item", async (t) => {
+  const first = "repos/acme/tally/issues?state=open&sort=created&direction=asc&per_page=100";
+  const page2 = "repositories/5001/issues?state=open&sort=created&direction=asc&per_page=100&page=2";
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: first }, response: { status: 200, headers: { Link: `<https://api.github.com/${page2}>; rel="next"` }, body: [issue(9003, "2026-11-01T10:00:00Z")] } },
+    { request: { method: "GET", path: page2 }, response: { status: 200, body: '[{"id":9005,"title":"Iss' } },
+    {
+      request: { method: "GET", path: page2.replace("per_page=100&page=2", "per_page=50&page=3") },
+      response: { status: 200, body: [issue(9005, "2026-11-02T10:00:00Z")] },
+    },
+  ]);
+  assert.deepEqual((await forge.openIssues()).map((one) => one.number), [3, 5]);
+});
+
 test("a cursor from before PRs were read keeps its issues and comments and reads every PR", async (t) => {
   const cursor = JSON.stringify({ issues: { since: null, etag: '"i"' }, comments: { since: null, etag: '"c"' } });
   const { forge } = forgeOn(t, [

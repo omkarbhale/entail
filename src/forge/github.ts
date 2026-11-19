@@ -18,6 +18,7 @@ import {
   type Forge,
   type ForgeComment,
   type ForgeInstance,
+  ForgeCutOffError,
   ForgeLoggedOutError,
   ForgeRequestError,
   MergePendingError,
@@ -29,6 +30,7 @@ import {
   issueNumbersInBranch,
   type MergeMethod,
   type MergeOutcome,
+  parseJson,
   type PostedComment,
   type Project,
   type PullRequestState,
@@ -36,6 +38,7 @@ import {
   type PullRequestComment,
   RateLimitedError,
   type RepoAccess,
+  smallerPage,
 } from "./forge.ts";
 import { type ForgeMethod, type ForgeResponse, type Transport, TransportError } from "./transport.ts";
 
@@ -256,23 +259,10 @@ export class GitHubForge implements Forge {
 
   async openIssueNumbers(): Promise<number[]> {
     const params = new URLSearchParams({ state: "open", per_page: String(PAGE_SIZE) });
-    let path = `repos/${this.setting.path}/issues?${params}`;
-    const numbers: number[] = [];
-    for (;;) {
-      const page = await this.#get(path, {});
-      this.#ensureOk(page, path, "GET");
-      const body = parseJson(page, this.setting.host, path, "GET");
-      if (!Array.isArray(body)) throw this.#malformed(page.status, path, "expected a list");
-      for (const raw of body) {
-        // The issues list also carries pull requests.
-        if (isObject(raw) && "pull_request" in raw) continue;
-        numbers.push(field(raw, "number", "number", "issue"));
-      }
-      const next = nextPagePath(page.headers.link);
-      if (next === null) break;
-      path = next;
-    }
-    return numbers.sort((a, b) => a - b);
+    const raw = await this.#readPages(`repos/${this.setting.path}/issues?${params}`, (body) => body);
+    // The issues list also carries pull requests.
+    const issues = raw.filter((item) => !(isObject(item) && "pull_request" in item));
+    return issues.map((item) => field(item, "number", "number", "issue")).sort((a, b) => a - b);
   }
 
   async openIssues(): Promise<Issue[]> {
@@ -287,23 +277,9 @@ export class GitHubForge implements Forge {
   /** The issues the list answers with for `filter`, oldest first, without the pull requests it also carries. */
   async #listIssues(filter: Record<string, string>): Promise<Issue[]> {
     const params = new URLSearchParams({ ...filter, sort: "created", direction: "asc", per_page: String(PAGE_SIZE) });
-    let path = `repos/${this.setting.path}/issues?${params}`;
-    const issues: Issue[] = [];
-    for (;;) {
-      const page = await this.#get(path, {});
-      this.#ensureOk(page, path, "GET");
-      const body = parseJson(page, this.setting.host, path, "GET");
-      if (!Array.isArray(body)) throw this.#malformed(page.status, path, "expected a list");
-      for (const raw of body) {
-        // The issues list also carries pull requests.
-        if (isObject(raw) && "pull_request" in raw) continue;
-        issues.push(this.#issue(raw));
-      }
-      const next = nextPagePath(page.headers.link);
-      if (next === null) break;
-      path = next;
-    }
-    return issues;
+    const raw = await this.#readPages(`repos/${this.setting.path}/issues?${params}`, (body) => body);
+    // The issues list also carries pull requests.
+    return raw.filter((item) => !(isObject(item) && "pull_request" in item)).map((item) => this.#issue(item));
   }
 
   async transferredIn(issueNumber: number): Promise<boolean> {
@@ -508,8 +484,7 @@ export class GitHubForge implements Forge {
   async recentDefaultBranchChecks(commits: number): Promise<CommitChecks[]> {
     const { baseBranch } = await this.project();
     const path = `repos/${this.setting.path}/commits?${new URLSearchParams({ sha: baseBranch, per_page: String(pageCount(commits)) })}`;
-    const list = await this.#getJson(path);
-    if (!Array.isArray(list)) throw this.#malformed(200, path, "expected a list");
+    const list = await this.#readPages(path, (body) => body, pageCount(commits));
     const recent: CommitChecks[] = [];
     for (const commit of list.slice(0, commits)) {
       const sha = checkedSha(field(commit, "sha", "string", "commit"));
@@ -600,13 +575,7 @@ export class GitHubForge implements Forge {
     const [owner, name] = this.setting.path.split("/");
     const path = "graphql";
     const body = { query, variables: { owner, name, number, after } };
-    let response: ForgeResponse;
-    try {
-      response = await this.#transport.request({ host: this.setting.host, method: "POST", path, body });
-    } catch (error) {
-      if (error instanceof TransportError && error.loggedOut) throw new ForgeLoggedOutError(this.setting.host, error.message);
-      throw error;
-    }
+    const response = await this.#request({ host: this.setting.host, method: "POST", path, body });
     this.#ensureOk(response, path, "POST");
     const parsed = parseJson(response, this.setting.host, path, "POST");
     const errors = isObject(parsed) && Array.isArray(parsed.errors) ? parsed.errors : [];
@@ -635,45 +604,68 @@ export class GitHubForge implements Forge {
     const params = new URLSearchParams({ state: "all", sort: "updated", direction: "desc", per_page: String(PAGE_SIZE) });
     const first = `repos/${this.setting.path}/pulls?${params}`;
     const headers: Record<string, string> = cursor.etag === null ? {} : { "If-None-Match": cursor.etag };
-    const response = await this.#get(first, headers);
-    if (response.status === 304) return { items: [], cursor };
+    const firstPage = await this.#readPage(first, headers);
+    if (firstPage.response.status === 304) return { items: [], cursor };
 
     const since = cursor.since === null ? null : Date.parse(cursor.since);
     const items: unknown[] = [];
     let newest = since;
-    let page: ForgeResponse = response;
-    let path = first;
+    let page = firstPage;
     pages: for (;;) {
-      this.#ensureOk(page, path, "GET");
-      const body = parseJson(page, this.setting.host, path, "GET");
-      if (!Array.isArray(body)) throw this.#malformed(page.status, path, "expected a list");
-      for (const item of body) {
+      if (!Array.isArray(page.body)) throw this.#malformed(page.response.status, page.path, "expected a list");
+      for (const item of page.body) {
         const updated = isObject(item) && typeof item.updated_at === "string" ? Date.parse(item.updated_at) : NaN;
         if (since !== null && !Number.isNaN(updated) && updated < since) break pages;
         items.push(item);
         if (!Number.isNaN(updated) && (newest === null || updated > newest)) newest = updated;
       }
-      const next = nextPagePath(page.headers.link);
+      const next = nextPagePath(page.response.headers.link);
       if (next === null) break;
-      path = next;
-      page = await this.#get(path, {});
+      page = await this.#readPage(next);
     }
-    return { items, cursor: { since: newest === null ? null : githubTime(newest), etag: response.headers.etag ?? null } };
+    return { items, cursor: { since: newest === null ? null : githubTime(newest), etag: firstEtag(firstPage, first) } };
   }
 
-  /** Every item of a paged read, following the `Link` header; `items` finds the list in each page's body. */
-  async #readPages(first: string, items: (body: unknown) => unknown): Promise<unknown[]> {
+  /**
+   * Every item of a paged read, following the `Link` header, or its first
+   * `limit` items; `items` finds the list in each page's body.
+   */
+  async #readPages(first: string, items: (body: unknown) => unknown, limit = Number.POSITIVE_INFINITY): Promise<unknown[]> {
     const all: unknown[] = [];
-    let path = first;
-    for (;;) {
-      const response = await this.#get(path, {});
-      this.#ensureOk(response, path, "GET");
-      const list = items(parseJson(response, this.setting.host, path, "GET"));
-      if (!Array.isArray(list)) throw this.#malformed(response.status, path, "expected a list");
+    let path: string | null = first;
+    while (path !== null && all.length < limit) {
+      const page = await this.#readPage(path);
+      const list = items(page.body);
+      if (!Array.isArray(list)) throw this.#malformed(page.response.status, page.path, "expected a list");
       all.push(...list);
-      const next = nextPagePath(response.headers.link);
-      if (next === null) return all;
-      path = next;
+      path = nextPagePath(page.response.headers.link);
+    }
+    return all.slice(0, limit);
+  }
+
+  /**
+   * One page of a list, read whole, with the path it came from. A 304 comes
+   * back as it is, with no body. A page cut off before it ended, as a server
+   * or a proxy in front of it may do to a long response, is asked for again
+   * in smaller pages ({@link smallerPage}) from the same item until one
+   * arrives whole; the `Link` header then carries that size on to the rest of
+   * the list, so a list never depends on one long response arriving whole. A
+   * smaller page is a different request, so `headers` such as `If-None-Match`
+   * go with the first path only. A page cut off at one item is the error.
+   */
+  async #readPage(path: string, headers: Record<string, string> = {}): Promise<Page> {
+    for (;;) {
+      try {
+        const response = await this.#get(path, headers);
+        if (response.status === 304) return { path, response, body: undefined };
+        this.#ensureOk(response, path, "GET");
+        return { path, response, body: parseJson(response, this.setting.host, path, "GET") };
+      } catch (error) {
+        const smaller = error instanceof ForgeCutOffError ? smallerPage(path) : null;
+        if (smaller === null) throw error;
+        path = smaller;
+        headers = {};
+      }
     }
   }
 
@@ -693,21 +685,17 @@ export class GitHubForge implements Forge {
     const first = `${base}?${params}`;
     const headers: Record<string, string> = cursor.etag === null ? {} : { "If-None-Match": cursor.etag };
 
-    const response = await this.#get(first, headers);
-    if (response.status === 304) return { items: [], cursor };
+    const firstPage = await this.#readPage(first, headers);
+    if (firstPage.response.status === 304) return { items: [], cursor };
 
     const items: unknown[] = [];
-    let page: ForgeResponse = response;
-    let path = first;
+    let page = firstPage;
     for (;;) {
-      this.#ensureOk(page, path, "GET");
-      const body = parseJson(page, this.setting.host, path, "GET");
-      if (!Array.isArray(body)) throw this.#malformed(page.status, path, "expected a list");
-      items.push(...body);
-      const next = nextPagePath(page.headers.link);
+      if (!Array.isArray(page.body)) throw this.#malformed(page.response.status, page.path, "expected a list");
+      items.push(...page.body);
+      const next = nextPagePath(page.response.headers.link);
       if (next === null) break;
-      path = next;
-      page = await this.#get(path, {});
+      page = await this.#readPage(next);
     }
 
     let newest: number | null = cursor.since === null ? null : Date.parse(cursor.since);
@@ -716,7 +704,7 @@ export class GitHubForge implements Forge {
       if (!Number.isNaN(updated) && (newest === null || updated > newest)) newest = updated;
     }
     const since = newest === null ? null : githubTime(newest);
-    const etag = since === cursor.since ? (response.headers.etag ?? null) : null;
+    const etag = since === cursor.since ? firstEtag(firstPage, first) : null;
     return { items, cursor: { since, etag } };
   }
 
@@ -807,7 +795,7 @@ export class GitHubForge implements Forge {
   // Reads that settle writes
 
   async comments(_target: ForgeTarget, number: number): Promise<ForgeComment[]> {
-    const items = await this.#readAll(`repos/${this.setting.path}/issues/${number}/comments?per_page=${PAGE_SIZE}`);
+    const items = await this.#readPages(`repos/${this.setting.path}/issues/${number}/comments?per_page=${PAGE_SIZE}`, (body) => body);
     return items.map((raw) => {
       const { issueNumber: _issueNumber, updatedAt: _updatedAt, ...comment } = this.#comment(raw);
       return comment;
@@ -854,21 +842,6 @@ export class GitHubForge implements Forge {
     return `GitHub refused the merge (HTTP ${status}): ${errorDetail(response)}`;
   }
 
-  /** Every item of a list, following its `Link` pages. */
-  async #readAll(first: string): Promise<unknown[]> {
-    const items: unknown[] = [];
-    let path: string | null = first;
-    while (path !== null) {
-      const page = await this.#send("GET", path);
-      this.#ensureOk(page, path, "GET");
-      const body = parseJson(page, this.setting.host, path, "GET");
-      if (!Array.isArray(body)) throw this.#malformed(page.status, path, "expected a list");
-      items.push(...body);
-      path = nextPagePath(page.headers.link);
-    }
-    return items;
-  }
-
   async #sendJson(method: ForgeMethod, path: string, body: unknown): Promise<unknown> {
     const response = await this.#send(method, path, body);
     this.#ensureOk(response, path, method);
@@ -895,6 +868,9 @@ export class GitHubForge implements Forge {
     } catch (error) {
       if (error instanceof TransportError && error.loggedOut) {
         throw new ForgeLoggedOutError(this.setting.host, error.message);
+      }
+      if (error instanceof TransportError && error.cutOff) {
+        throw new ForgeCutOffError(this.setting.host, request.method, request.path, error.message);
       }
       throw error;
     }
@@ -1102,6 +1078,23 @@ function rateLimitReset(response: ForgeResponse): Date | null {
   return null;
 }
 
+/** One page of a list as {@link GitHubForge} read it: the path it came from, the response, and its parsed body. */
+interface Page {
+  path: string;
+  response: ForgeResponse;
+  /** Undefined on a 304, which has no body. */
+  body: unknown;
+}
+
+/**
+ * The ETag of a list's first page, kept only when that page came from the
+ * list's own first request: one read in smaller pages after a cut-off was a
+ * different request, and its ETag does not belong to the next pass's.
+ */
+function firstEtag(page: Page, first: string): string | null {
+  return page.path === first ? (page.response.headers.etag ?? null) : null;
+}
+
 /** The API path of the `rel="next"` page in a `Link` header, or null on the last page. */
 function nextPagePath(link: string | undefined): string | null {
   if (!link) return null;
@@ -1113,14 +1106,6 @@ function nextPagePath(link: string | undefined): string | null {
     }
   }
   return null;
-}
-
-function parseJson(response: ForgeResponse, host: string, path: string, method: ForgeMethod): unknown {
-  try {
-    return JSON.parse(response.body);
-  } catch {
-    throw new ForgeRequestError(host, response.status, method, path, "the response body is not JSON");
-  }
 }
 
 /** GitHub's refusal of a feature the repo's plan does not have, such as rulesets on a private repo on GitHub Free. */

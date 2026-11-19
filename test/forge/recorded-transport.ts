@@ -11,7 +11,8 @@ export interface Exchange {
   /** A write's request records its JSON body; a read has none. */
   request: { method: ForgeMethod; path: string; headers?: Record<string, string>; body?: unknown };
   response?: { status: number; headers?: Record<string, string>; body?: unknown };
-  error?: { message: string; loggedOut: boolean };
+  /** `cutOff` records a response whose connection was dropped partway through. */
+  error?: { message: string; loggedOut: boolean; cutOff?: boolean };
 }
 
 /** A file of recorded exchanges for one host. */
@@ -48,7 +49,7 @@ export class RecordedTransport implements Transport {
       { host: this.#host, method: next.request.method, path: next.request.path, headers: next.request.headers ?? {}, body: next.request.body },
       "the request is the next one recorded",
     );
-    if (next.error) throw new TransportError(next.error.message, next.error.loggedOut);
+    if (next.error) throw new TransportError(next.error.message, next.error.loggedOut, false, next.error.cutOff ?? false);
     assert.ok(next.response, "an exchange records a response or an error");
     const headers: Record<string, string> = {};
     for (const [name, value] of Object.entries(next.response.headers ?? {})) headers[name.toLowerCase()] = value;

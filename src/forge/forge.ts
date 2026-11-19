@@ -4,6 +4,8 @@
  * interface names a forge; repository content comes from git, not from here.
  */
 
+import type { ForgeResponse } from "./transport.ts";
+
 /** Which forge a repo lives on. It is stated by the owner, never guessed from the host. */
 export type ForgeKind = "github" | "gitlab";
 
@@ -640,4 +642,69 @@ export class ForgeRequestError extends Error {
     this.method = method;
     this.path = path;
   }
+}
+
+/**
+ * A response was cut off: its connection was dropped before the body ended,
+ * as a server, or a proxy in front of it, may do to a long one. It is not a
+ * body entail cannot read, so it is told apart from {@link ForgeRequestError};
+ * a paged list reads the same items again in smaller pages.
+ */
+export class ForgeCutOffError extends Error {
+  readonly host: string;
+  readonly method: string;
+  readonly path: string;
+
+  /** `message` says what was cut off and where; the transport's own message names its CLI and the cause it gave. */
+  constructor(host: string, method: string, path: string, message: string) {
+    super(message);
+    this.name = "ForgeCutOffError";
+    this.host = host;
+    this.method = method;
+    this.path = path;
+  }
+}
+
+/**
+ * A response body read as JSON. A body that starts as JSON but does not parse
+ * stopped partway through: a cut-off response, thrown as
+ * {@link ForgeCutOffError}, rather than a body entail cannot read.
+ */
+export function parseJson(response: ForgeResponse, host: string, path: string, method: string): unknown {
+  try {
+    return JSON.parse(response.body);
+  } catch {
+    if (/^\s*[[{]/.test(response.body)) {
+      throw new ForgeCutOffError(
+        host,
+        method,
+        path,
+        `${method} ${path} on ${host}: the connection was dropped partway through the response; its JSON stops after ${response.body.length} characters`,
+      );
+    }
+    throw new ForgeRequestError(host, response.status, method, path, "the response body is not JSON");
+  }
+}
+
+/**
+ * The same page of a list asked for in smaller pages: the largest page size
+ * that divides the current one, so the items before this page fill whole
+ * smaller pages and the new page starts at this one's first item. Null when
+ * the path names no page size or it is already one item. The page sizes run
+ * 100, 50, 25, 5, 1.
+ */
+export function smallerPage(path: string): string | null {
+  const query = path.indexOf("?");
+  if (query < 0) return null;
+  const params = new URLSearchParams(path.slice(query + 1));
+  const size = Number(params.get("per_page"));
+  if (!Number.isSafeInteger(size) || size <= 1) return null;
+  const page = params.has("page") ? Number(params.get("page")) : 1;
+  if (!Number.isSafeInteger(page) || page < 1) return null;
+  let smaller = Math.floor(size / 2);
+  while (size % smaller !== 0) smaller--;
+  params.set("per_page", String(smaller));
+  const first = ((page - 1) * size) / smaller + 1;
+  if (params.has("page") || first > 1) params.set("page", String(first));
+  return `${path.slice(0, query)}?${params}`;
 }

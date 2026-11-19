@@ -176,6 +176,30 @@ test("no response for another reason fails, not as logged out", async (t) => {
   );
 });
 
+test("a success cut off partway through its body fails as a dropped connection, with the CLI's own cause", async (t) => {
+  const cutOff = 'HTTP/2.0 200 OK\nContent-Type: application/json\nX-Next-Page: 2\n\n[{"iid":1,"description":"a long desc';
+  const stderr = "Stream error: stream ID 1; INTERNAL_ERROR; received from peer.\n";
+  const cli = fakeCli(t, cutOff, 1, stderr);
+  const path = "projects/acme%2Ftally/merge_requests?order_by=updated_at&sort=desc&per_page=100";
+  await assert.rejects(
+    new CliTransport("glab", { executable: cli.path }).request({ host: "gitlab.example.org", method: "GET", path }),
+    (error: unknown) =>
+      error instanceof TransportError &&
+      error.cutOff &&
+      !error.loggedOut &&
+      error.message.includes(`GET ${path} on gitlab.example.org: the connection was dropped after 36 characters of the response`) &&
+      error.message.includes("Stream error: stream ID 1; INTERNAL_ERROR"),
+  );
+});
+
+test("a whole success the CLI exits non-zero on, as gh does for a GraphQL error, is still a response", async (t) => {
+  const graphqlError = 'HTTP/2.0 200 OK\nContent-Type: application/json\n\n{"errors":[{"message":"Something went wrong"}]}';
+  const cli = fakeCli(t, graphqlError, 1, "gh: Something went wrong");
+  const response = await new CliTransport("gh", { executable: cli.path }).request({ host: "github.com", method: "POST", path: "graphql", body: {} });
+  assert.equal(response.status, 200);
+  assert.equal(response.body, '{"errors":[{"message":"Something went wrong"}]}');
+});
+
 test("a call that outlives its timeout fails even if it printed a status line, and says it timed out", async (t) => {
   const cli = fakeCli(t, OK, 0, "a warning the CLI printed", 5);
   await assert.rejects(
