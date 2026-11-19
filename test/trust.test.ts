@@ -44,11 +44,14 @@ test("trusting runs glab config set ca_cert for the host, and refuses a file tha
   const fake = join(dir, "glab");
   writeFileSync(fake, `#!/bin/sh\nfor arg in "$@"; do printf '%s\\n' "$arg"; done > "${dir}/args"\n`);
   chmodSync(fake, 0o755);
-  await trustCertificate("git.example.org", file, { executable: fake });
-  assert.deepEqual(readFileSync(join(dir, "args"), "utf8").trim().split("\n"), ["config", "set", "ca_cert", file, "--host", "git.example.org"]);
+  // A shell script cannot be the executable on Windows; the refusals below still run there.
+  if (process.platform !== "win32") {
+    await trustCertificate("git.example.org", file, { executable: fake });
+    assert.deepEqual(readFileSync(join(dir, "args"), "utf8").trim().split("\n"), ["config", "set", "ca_cert", file, "--host", "git.example.org"]);
+    rmSync(join(dir, "args"));
+  }
 
   writeFileSync(join(dir, "notes.txt"), "no certificate here");
-  rmSync(join(dir, "args"));
   await assert.rejects(trustCertificate("git.example.org", join(dir, "notes.txt"), { executable: fake }), /is not a certificate file/u);
   await assert.rejects(trustCertificate("git.example.org", "relative.pem", { executable: fake }), /is not a certificate file/u);
   assert.throws(() => readFileSync(join(dir, "args")), "glab was not run");
