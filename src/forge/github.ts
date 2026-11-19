@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   type Actor,
+  type Reopen,
   type Blocker,
   assertEntailLabel,
   type Change,
@@ -825,6 +826,14 @@ export class GitHubForge implements Forge {
   async closeIssue(issueNumber: number, reason: CloseReason): Promise<void> {
     const path = `repos/${this.setting.path}/issues/${issueNumber}`;
     await this.#sendJson("PATCH", path, { state: "closed", state_reason: reason === "not-planned" ? "not_planned" : "completed" });
+  }
+
+  async reopenedBy(issueNumber: number): Promise<Reopen | null> {
+    const events = await this.#readPages(`repos/${this.setting.path}/issues/${pathNumber(issueNumber)}/events?per_page=${PAGE_SIZE}`, (body) => body);
+    const reopened = events.filter((raw): raw is Record<string, unknown> => isObject(raw) && raw.event === "reopened" && typeof raw.id === "number");
+    const last = reopened.at(-1);
+    if (last === undefined) return null;
+    return { event: last.id as number, actor: isObject(last.actor) ? this.#actor(last.actor, "issue event actor") : null };
   }
 
   async reopenIssue(issueNumber: number): Promise<void> {

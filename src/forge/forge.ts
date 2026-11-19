@@ -28,6 +28,12 @@ export interface ForgeSetting {
  * username is kept for display only and is never compared; use
  * {@link sameActor} for every identity comparison.
  */
+/** The latest reopen of an issue on the forge: the forge's id for that event, and who did it (null when the forge names no one). */
+export interface Reopen {
+  event: number;
+  actor: Actor | null;
+}
+
 export interface Actor {
   forge: ForgeKind;
   host: string;
@@ -452,6 +458,15 @@ export interface Forge {
 
   /** Closes an issue; on GitHub, with the reason given. An issue already closed stays closed. */
   closeIssue(issueNumber: number, reason: CloseReason): Promise<void>;
+
+  /**
+   * Who last reopened an issue, as the forge's own record of the issue says it
+   * (GitHub's issue events, GitLab's state events), or null when the forge
+   * names no one. It is null when the issue was never reopened. The event id
+   * tells one reopen from the next. It is read from the forge and never taken
+   * from the issue's text. Compare the account with {@link sameActor}.
+   */
+  reopenedBy(issueNumber: number): Promise<Reopen | null>;
 
   /** Reopens an issue, as when the owner overrides a no to go. An open issue stays open. */
   reopenIssue(issueNumber: number): Promise<void>;

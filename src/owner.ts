@@ -55,6 +55,7 @@ import {
   type OverriddenEntry,
   type OwnerAction,
   type RecheckedEntry,
+  type ReopenedEntry,
   type RepoState,
   type UndoneEntry,
   type VisionConsideredEntry,
@@ -314,7 +315,7 @@ export function repoViews(dataDirectory: string, settings: GlobalSettings, optio
       {
         ...state,
         uses: runSettings(state, settings),
-        calls: entries.filter((entry) => (entry.type === "call" && entry.owner === null && entry.trigger !== "landing") || entry.type === "landing").length,
+        calls: entries.filter((entry) => (entry.type === "call" && entry.owner === null && entry.trigger !== "landing" && entry.trigger !== "owner-reopen") || entry.type === "landing").length,
         waiting: statuses.filter((status) => status.status === "waiting").length,
         checked,
         agreed,
@@ -690,6 +691,12 @@ function dayFormatter(timeZone: string | undefined): (iso: string) => string {
   return (iso) => format.format(new Date(iso));
 }
 
+/** Who the forge says reopened an issue, as words after the fact of it: the owner is named as such, and no one else's reopen reads as theirs. */
+function reopenedBy(entry: ReopenedEntry): string {
+  if (entry.by === undefined || entry.by === null) return "";
+  return entry.by.owner ? ` by the owner (${entry.by.username})` : ` by ${entry.by.username}, who is not the owner`;
+}
+
 const TRIGGER_WORDS: Record<CallEntry["trigger"], string> = {
   landing: " after a PR was cancelled",
   new: "",
@@ -698,11 +705,13 @@ const TRIGGER_WORDS: Record<CallEntry["trigger"], string> = {
   owner: " on the owner's word",
   backlog: " from the open backlog",
   vision: " after a vision change",
+  reopen: " after someone reopened the issue",
+  "owner-reopen": " after the owner reopened the issue",
 };
 
 function logRow(repo: string, entry: CallEntry, statuses: Map<number, CallStatus>, entries: readonly Entry[], book: readonly Case[], dayOf: (iso: string) => string): LogRow {
   const call = callView(repo, entry, statuses.get(entry.id)!, entries, book);
-  const trail: TrailStep[] = [{ at: entry.at, text: `Judged: ${entry.call.call}${TRIGGER_WORDS[entry.trigger]} · ${entry.model}, ${entry.effort}` }];
+  const trail: TrailStep[] = [{ at: entry.at, text: entry.trigger === "owner-reopen" ? "Asked the owner after they reopened the issue entail closed" : `Judged: ${entry.call.call}${TRIGGER_WORDS[entry.trigger]} · ${entry.model}, ${entry.effort}` }];
   const actedFor = (id: number) => entries.find((other) => other.type === "acted" && other.for === id);
   // The holds that kept this issue waiting on its blockers before this call: those since its previous call.
   const index = entries.indexOf(entry);
@@ -757,7 +766,7 @@ function logRow(repo: string, entry: CallEntry, statuses: Map<number, CallStatus
     trail.push({ at: started.at, text: started.exit === 0 ? `Started work: ${started.command}` : started.interrupted === true ? `The start was interrupted and not run again: ${started.command}` : `The start command failed (${started.error ?? `exit ${started.exit}`}): ${started.command}` });
   }
   const reopened = entries.filter((other) => other.type === "reopened" && entries.some((act) => act.type === "acted" && act.id === other.after && act.issue === entry.issue.number && (act.for === entry.id || isActionOn(entries, act.for, entry.id))));
-  for (const reopen of reopened) trail.push({ at: reopen.at, text: `Reopened on ${forgeTitle(repo)} after entail closed it` });
+  for (const reopen of reopened) trail.push({ at: reopen.at, text: `Reopened on ${forgeTitle(repo)} after entail closed it${reopenedBy(reopen as ReopenedEntry)}` });
   trail.sort((a, b) => a.at.localeCompare(b.at));
   return { day: dayOf(entry.at), call, ownerCall, reopened: reopened.length > 0, trail };
 }
@@ -1382,7 +1391,7 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
       case "held": {
         const { entry } = item;
         if (entry.type === "blocked") lines.push(`${at}  ${where(entry.issue.number)}  HELD: ${entry.issue.title}`, `      blocked by ${refsText(entry.blockers, item.repo)}, still open; no call until none is${entry.forgeLinks ? "" : " (only the issue's text was checked: the forge's blocked-by links could not be read)"} · hold ${entry.id}`);
-        else lines.push(`${at}  ${where(entry.issue)}  no longer held: the issue was closed`);
+        else lines.push(`${at}  ${where(entry.issue)}  ${entry.why === "reopen-closed" ? "closed again after it was reopened, with nothing to answer" : "no longer held: the issue was closed"}`);
         break;
       }
       case "repo": {
@@ -1404,7 +1413,7 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         }
         if (entry.type === "undone") lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} undid their action ${entry.action}; nothing was sent to ${forgeTitle(item.repo)}`);
         if (entry.type === "backlog") lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} asked entail to judge the open backlog: ${entry.issues.length === 0 ? "nothing left to judge" : entry.issues.map((issue) => `#${issue}`).join(", ")}`);
-        if (entry.type === "reopened") lines.push(`${at}  ${where(entry.issue)}  reopened on ${forgeTitle(item.repo)} after entail closed it`);
+        if (entry.type === "reopened") lines.push(`${at}  ${where(entry.issue)}  reopened on ${forgeTitle(item.repo)} after entail closed it${reopenedBy(entry)}`);
         if (entry.type === "base-branch-seen") {
           const picked = entry.picked.length === 0 ? "no open pull request into it to pick up" : `picked up the open pull requests into it: ${entry.picked.map((pr) => `#${pr}`).join(", ")}`;
           lines.push(`${at}  ${where(null) || item.repo}  now working against ${entry.branch}; ${picked}`);

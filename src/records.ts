@@ -72,9 +72,13 @@ export interface SettingsEntry extends EntryBase, ByOwner {
  * What made entail judge an issue. `landing` is not a run: it is the
  * question a cancelled PR leaves for the owner when what blocked it was a
  * product call. `backlog` is the owner asking for the open backlog. `vision`
- * is a re-check after VISION.md changed that changed the call.
+ * is a re-check after VISION.md changed that changed the call. `reopen` is
+ * a judgment of an issue entail closed that someone other than the owner
+ * reopened: the same intake call, on the issue as it stands. `owner-reopen`
+ * is not a run: it is the question the owner's own reopen of an issue entail
+ * closed leaves for them on the board.
  */
-export type Trigger = "new" | "edit" | "mention" | "owner" | "landing" | "backlog" | "vision";
+export type Trigger = "new" | "edit" | "mention" | "owner" | "landing" | "backlog" | "vision" | "reopen" | "owner-reopen";
 
 /** A `/entail` comment, known by its id and the time it was last edited. */
 export interface Mention {
@@ -204,11 +208,15 @@ export interface BlockedEntry extends EntryBase {
   forgeLinks: boolean;
 }
 
-/** A held issue was closed before any of its blockers was cleared: it is no longer held. */
+/**
+ * A held issue was closed before any of its blockers was cleared: it is no
+ * longer held. Or (`reopen-closed`) an issue reopened after entail closed it was
+ * closed again before any call answered the reopen: nothing is left to answer.
+ */
 export interface UnblockedEntry extends EntryBase {
   type: "unblocked";
   issue: number;
-  why: "closed";
+  why: "closed" | "reopen-closed";
 }
 
 /** A PR as the log names it. */
@@ -415,12 +423,44 @@ export interface BacklogEntry extends EntryBase, ByOwner {
   issues: number[];
 }
 
-/** Someone reopened on the forge an issue entail had closed: recorded, not taken as the owner's word. */
+/**
+ * Someone reopened on the forge an issue entail had closed. The forge says
+ * who: `by` is that account, and `owner` whether it is the account the owner's
+ * CLI is logged in as. A reopen is the owner's word only when the forge says
+ * the owner did it; when the forge names no one, or an entry was logged before
+ * `by` was kept, it is nobody's word.
+ */
 export interface ReopenedEntry extends EntryBase {
   type: "reopened";
   issue: number;
   /** The acted entry whose close was undone on the forge. */
   after: number;
+  /** The forge's id for the reopen itself, so a second reopen after the same close is told from the first; missing on entries logged before it was kept. */
+  event?: number;
+  by?: { username: string; owner: boolean } | null;
+}
+
+/**
+ * The reopens of an issue entail closed that no call answers yet, by issue:
+ * each issue's latest `reopened` entry with nothing after it on the issue that
+ * answers it: a call, an act of entail's, or the owner's own word on a call.
+ */
+export function pendingReopens(entries: readonly Entry[]): Map<number, ReopenedEntry> {
+  const pending = new Map<number, ReopenedEntry>();
+  const issueOfCall = new Map<number, number>();
+  for (const entry of entries) {
+    if (entry.type === "reopened") pending.set(entry.issue, entry);
+    else if (entry.type === "call") {
+      issueOfCall.set(entry.id, entry.issue.number);
+      pending.delete(entry.issue.number);
+    } else if (entry.type === "acted") pending.delete(entry.issue);
+    else if (entry.type === "unblocked") pending.delete(entry.issue);
+    else if (entry.type === "confirmed" || entry.type === "overridden" || entry.type === "answered") {
+      const issue = issueOfCall.get(entry.call);
+      if (issue !== undefined) pending.delete(issue);
+    }
+  }
+  return pending;
 }
 
 /** entail acted on the forge for an entry: its comment posted, and the issue closed if it was to be. */
