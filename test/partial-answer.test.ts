@@ -137,3 +137,20 @@ test("a dry run says what it would file and files nothing", async (t) => {
   assert.match(h.printed.join("\n"), /would file 1 issue from acme\/tally#11[\s\S]*- Count words in endnotes/u);
   assert.equal(callView(REPO, readLog(h.dataDirectory, REPO).find((entry) => entry.type === "call")! as never, { status: "answered" } as never, [], []).parts.length, 3);
 });
+
+test("a part whose title is longer than the forge allows is filed under a cut title, with the whole text in the body", async (t) => {
+  const h = harness(t);
+  const long = `Count words in footnotes ${"and so on ".repeat(40)}`.trim();
+  h.forge.file(11, "Ideas for tally", ["Some ideas:", "", `- ${long}`, "- Count words in endnotes"].join("\n"));
+  h.script(11, verdict({ call: "ask", reason: "Several suggestions.", question }));
+  await h.pass();
+  await answerCall(h.dataDirectory, latestCallOn(h.dataDirectory, REPO, 11), OWNER, "no", "The first.", new Date(), { accept: [0] });
+  h.script(12, verdict());
+  await h.pass();
+
+  const filed = h.forge.createdIssues[0]!;
+  assert.equal(filed.title.length, 256);
+  assert.equal(filed.title, long.slice(0, 256));
+  assert.ok(filed.body.includes(long));
+  assert.ok(h.forge.closed.includes(11));
+});

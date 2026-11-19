@@ -75,7 +75,7 @@ import {
   workStarted,
 } from "./records.ts";
 import { handoffFor, runStart } from "./starts.ts";
-import { SUGGESTED_LABEL, type SuggestReader } from "./suggest.ts";
+import { SUGGESTED_LABEL, TITLE_LIMIT, type SuggestReader } from "./suggest.ts";
 import { collapseWhitespace, readVision, VISION_PATH, visionTextChange, type VisionChange } from "./vision.ts";
 import { addVisionLine, decideGrowth, VISION_GROWTH_PROMPT_VERSION, type GrowthDecision } from "./vision-growth.ts";
 
@@ -884,7 +884,9 @@ async function filePartIssues(options: PassOptions, repo: string, forge: WatchFo
   const filed: (FiledPart & { url: string; already: boolean })[] = [];
   for (const [index, part] of parts.accepted.entries()) {
     const found = marked.get(index);
-    const made = found ?? (await forge.createIssue(part.title, partBody(options.owner, issue, action.id, index, part), []));
+    const long = part.title.length > TITLE_LIMIT;
+    const filing = long ? { title: part.title.slice(0, TITLE_LIMIT), body: `${part.title}${part.body === "" ? "" : `\n\n${part.body}`}` } : part;
+    const made = found ?? (await forge.createIssue(filing.title, partBody(options.owner, issue, action.id, index, filing), []));
     filed.push({ index, number: made.number, url: made.url, already: found !== undefined });
     options.log?.info("part-filed", { repo, issue, for: action.id, index, filed: made.url, alreadyFiled: found !== undefined });
   }
