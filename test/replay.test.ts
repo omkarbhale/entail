@@ -23,6 +23,11 @@ function verdict(call: Verdict["call"], reason = `entail says ${call}`): Verdict
 
 const ticket = (past: Case) => `${past.repo}#${past.issue}`;
 
+/** The owner's call on a case, with a go's criteria naming what the case says they must. */
+function agreeing(past: Case): Verdict {
+  return { ...verdict(past.call), criteria: (past.mustName ?? []).map((name) => ({ source: "reading" as const, criterion: `Read as: this also covers ${name}.`, basis: "The issue does not name it." })) };
+}
+
 test("every case's prompt holds its own issue, its own vision and every other case as precedent, never itself", async () => {
   const book = await readCaseBook(DEFAULT_CASE_BOOK);
   const runner = new ScriptedRunner();
@@ -52,7 +57,7 @@ test("replay counts agreement with the owner's calls and prints disagreements fi
   runner.script(JUDGMENT_KIND, ticket(first!), { output: verdict(first!.call === "go" ? "no" : "go", "entail disagreed here") });
   runner.script(JUDGMENT_KIND, ticket(second!), { failure: { kind: "timeout", message: "too slow" } });
   runner.script(JUDGMENT_KIND, ticket(third!), { output: verdict("ask") });
-  for (const past of rest) runner.script(JUDGMENT_KIND, ticket(past), { output: verdict(past.call) });
+  for (const past of rest) runner.script(JUDGMENT_KIND, ticket(past), { output: agreeing(past) });
 
   const results = await replay(runner, book, checkoutOf);
   assert.deepEqual(
@@ -66,6 +71,31 @@ test("replay counts agreement with the owner's calls and prints disagreements fi
   assert.match(lines[2]!, new RegExp(`^FAILED    issue    ${second!.slug}\\s+owner ${second!.call}, run failed \\(timeout\\): too slow$`, "u"));
   assert.ok(lines.slice(3, 3 + rest.length).every((line) => line.startsWith("agree")));
   assert.equal(lines.at(-1), `agreement: ${rest.length} of ${book.length} (1 failed to run)`);
+});
+
+test("a go agrees only when its criteria name what its case says they must, matched in any case; other calls are not checked for names", async () => {
+  const book = await readCaseBook(DEFAULT_CASE_BOOK);
+  const past = book.find((one) => one.issue === 235)!;
+  assert.deepEqual(past.mustName, ["src/suggest.ts"]);
+  const go = (criterion: string): Verdict => ({ ...verdict("go"), criteria: [{ source: "reading", criterion, basis: "b" }] });
+
+  const runs: [Verdict, boolean, string[]][] = [
+    [go("Read as: suggestion runs (`SRC/Suggest.ts`) read the base branch too."), true, []],
+    [go("Read as: suggestion runs read the base branch too."), false, ["src/suggest.ts"]],
+    [verdict("no"), false, []],
+  ];
+  for (const [answer, agrees, missing] of runs) {
+    const runner = new ScriptedRunner();
+    runner.script(JUDGMENT_KIND, ticket(past), { output: answer });
+    const [result] = await replay(runner, [past], checkoutOf);
+    assert.equal(result!.agrees, agrees);
+    assert.deepEqual(result!.missing, missing);
+  }
+
+  const runner = new ScriptedRunner();
+  runner.script(JUDGMENT_KIND, ticket(past), { output: go("Read as: suggestion runs read the base branch too.") });
+  const line = formatReplay(await replay(runner, [past], checkoutOf)).split("\n")[0]!;
+  assert.match(line, /^DISAGREE  issue    omkarbhale-entail-235\s+owner go, entail go, its criteria not naming src\/suggest\.ts: entail says go$/u);
 });
 
 test("a case's inputs read its vision as missing when it had none, and its repo has no pins", async () => {
@@ -156,7 +186,7 @@ test("the replay report names each case's kind, disagreements first, with what e
   const issues = await readCaseBook(DEFAULT_CASE_BOOK);
   const landings = await readLandingCaseBook(DEFAULT_CASE_BOOK);
   const runner = new ScriptedRunner();
-  for (const past of issues) runner.script(JUDGMENT_KIND, ticket(past), { output: verdict(past.call) });
+  for (const past of issues) runner.script(JUDGMENT_KIND, ticket(past), { output: agreeing(past) });
   const [refused, merged] = landings;
   runner.script(LANDING_KIND, `${refused!.repo}#${refused!.pr}`, {
     output: { ...landing(refused!, "send-back"), beyond: [{ change: "A hover style.", sort: "unwanted", why: "Not asked for." }], needs_to_change: ["Drop the hover style."] },

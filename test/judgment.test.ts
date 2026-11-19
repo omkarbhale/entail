@@ -93,6 +93,24 @@ test("the prompt has entail choose a solution for an issue that states a problem
   assert.match(prompt, /Ask only when the change is hard to undo, or when the possible solutions would give users noticeably different results and nothing tells you which one the owner wants; the question then names the solutions you considered\./u);
 });
 
+test("the prompt has the repo searched for the places an issue's list leaves out, named by path, and nothing restated", () => {
+  const prompt = judgmentPrompt(inputs());
+  assert.match(prompt, /When the issue asks for a change everywhere something is done, or lists the places in the repo a change touches, do not trust its list\./u);
+  assert.match(prompt, /search the repo \(Grep\) for every place that does the thing the issue changes, not only the files it names/u);
+  assert.match(prompt, /search for the plain words as well as the code's names for it/u);
+  assert.match(prompt, /go through the product's features \(each command, run and page\) to see which of them do it, even when they reach it through another file/u);
+  assert.match(prompt, /name it by its path in a reading criterion/u);
+  assert.match(prompt, /Places the issue already names are not restated, and an issue that names no places gets no criterion listing files\./u);
+  assert.match(prompt, /search it for the places an issue's list leaves out \(see Criteria\)/u);
+});
+
+test("a past case's owner-named places show in its precedent", () => {
+  const named = { ...precedent("acme-tally-9", "go"), mustName: ["src/export.ts", "src/report.ts"] };
+  const prompt = judgmentPrompt(inputs({ precedents: [named] }));
+  assert.ok(prompt.includes("By the owner's word, a go on it must name in its criteria: src/export.ts, src/report.ts."));
+  assert.doesNotMatch(judgmentPrompt(inputs()), /By the owner's word/u);
+});
+
 test("a long past issue is clipped in the prompt, never the issue being judged", () => {
   const long = `# Long\n\n${"word ".repeat(2000)}`;
   const prompt = judgmentPrompt(inputs({ issueText: long, precedents: [{ ...precedent("p", "go"), issueText: long }] }));
@@ -134,7 +152,7 @@ test("the prompt names the three outcomes and keeps a go for planning for size, 
   assert.match(prompt, /a go to implement, for work that fits one PR, and a go for planning, for a ticket too large for one PR/u);
   assert.match(prompt, /A go for planning is for size alone, never for risk: a change that is hard to undo is still ask, however large/u);
   assert.match(prompt, /The owner's own answer on this issue that already approved the change, the part that makes it hard to undo included, settles it/u);
-  assert.equal(JUDGMENT_PROMPT_VERSION, "issue-call-4");
+  assert.equal(JUDGMENT_PROMPT_VERSION, "issue-call-5");
 });
 
 test("no routes to no, dropping any criteria or question", () => {

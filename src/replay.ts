@@ -1,12 +1,13 @@
 import { landingPrecedentsFor, precedentsFor, type Case, type LandingCase } from "./case-book.ts";
-import { judge, scopeOf, type JudgeOptions, type Judgment, type JudgmentInputs } from "./judgment.ts";
+import { judge, scopeOf, type IssueCall, type JudgeOptions, type Judgment, type JudgmentInputs } from "./judgment.ts";
 import { judgeLanding, type LandingInputs, type LandingJudgment } from "./landing.ts";
 import type { ModelRunner } from "./model-runner.ts";
 
 /**
  * Replaying the case book: every case goes through the judgment as if it
  * were a new issue, against the vision it was decided under, and its answer
- * is compared with the owner's call. A case never sees itself as precedent.
+ * is compared with the owner's call, and for a go, its criteria with what the
+ * case says they must name. A case never sees itself as precedent.
  *
  * Landing cases replay the same way through the landing judgment: each PR at
  * its judged head, diffed against its base, against the criteria and vision it
@@ -17,8 +18,23 @@ import type { ModelRunner } from "./model-runner.ts";
 export interface ReplayResult {
   case: Case;
   judgment: Judgment;
-  /** Whether entail's call is the owner's; null when the run gave no call. */
+  /**
+   * Whether entail's call is the owner's, and for a go, whether its criteria
+   * name everything the case says they must; null when the run gave no call.
+   */
   agrees: boolean | null;
+  /** What the case says a go's criteria must name and entail's go did not; empty unless entail called go. */
+  missing: string[];
+}
+
+/**
+ * What a case says a go's criteria must name and the call's criteria do not,
+ * matched as text in the criteria, ignoring case. Empty unless the call is a go.
+ */
+export function missingNames(past: Case, call: IssueCall): string[] {
+  if (call.call !== "go") return [];
+  const criteria = call.criteria.map((criterion) => criterion.criterion.toLowerCase());
+  return (past.mustName ?? []).filter((name) => !criteria.some((criterion) => criterion.includes(name.toLowerCase())));
 }
 
 /** A read-only checkout of a case's repo at the case's vision commit. */
@@ -55,7 +71,8 @@ export async function replay(runner: ModelRunner, book: readonly Case[], checkou
       const index = next++;
       const past = book[index]!;
       const judgment = await judge(runner, caseInputs(past, book, await checkoutOf(past)), judgeOptions);
-      results[index] = { case: past, judgment, agrees: judgment.ok ? judgment.call.call === past.call : null };
+      const missing = judgment.ok ? missingNames(past, judgment.call) : [];
+      results[index] = { case: past, judgment, missing, agrees: judgment.ok ? judgment.call.call === past.call && missing.length === 0 : null };
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, book.length)) }, worker));
@@ -132,7 +149,8 @@ export function formatReplay(results: readonly ReplayResult[], landings: readonl
       const { judgment } = result;
       if (!judgment.ok) return { kind: "issue", slug: result.case.slug, owner: result.case.call, agrees: null, line: `run failed (${judgment.failure.kind}): ${judgment.failure.message}` };
       const { call } = judgment;
-      return { kind: "issue", slug: result.case.slug, owner: result.case.call, agrees: result.agrees, line: `entail ${call.call === "go" && scopeOf(call) === "plan" ? "go, for planning" : call.call}${result.agrees ? "" : `: ${call.reason}${call.call === "ask" ? ` Question: ${call.question}` : ""}`}` };
+      const named = result.missing.length === 0 ? "" : `, its criteria not naming ${result.missing.join(", ")}`;
+      return { kind: "issue", slug: result.case.slug, owner: result.case.call, agrees: result.agrees, line: `entail ${call.call === "go" && scopeOf(call) === "plan" ? "go, for planning" : call.call}${named}${result.agrees ? "" : `: ${call.reason}${call.call === "ask" ? ` Question: ${call.question}` : ""}`}` };
     }),
     ...landings.map((result): Row => {
       const { judgment } = result;
