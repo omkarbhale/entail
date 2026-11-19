@@ -1391,7 +1391,7 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
       case "held": {
         const { entry } = item;
         if (entry.type === "blocked") lines.push(`${at}  ${where(entry.issue.number)}  HELD: ${entry.issue.title}`, `      blocked by ${refsText(entry.blockers, item.repo)}, still open; no call until none is${entry.forgeLinks ? "" : " (only the issue's text was checked: the forge's blocked-by links could not be read)"} · hold ${entry.id}`);
-        else lines.push(`${at}  ${where(entry.issue)}  no longer held: the issue was closed`);
+        else lines.push(`${at}  ${where(entry.issue)}  ${entry.why === "reopen-closed" ? "closed again after it was reopened, with nothing to answer" : "no longer held: the issue was closed"}`);
         break;
       }
       case "repo": {

@@ -358,6 +358,10 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
     const issue = work.issue ?? (await forge.issue(work.number));
     if (issue === null) continue;
     await noteReopened(issue, entries, forge, record);
+    if (issue.state !== "open" && work.mentions.length === 0 && pendingReopens(current()).has(issue.number)) {
+      record({ type: "unblocked", issue: issue.number, why: "reopen-closed" });
+      continue;
+    }
     const held = heldIssues(current()).get(issue.number);
     const reopen = issue.state === "open" ? pendingReopens(current()).get(issue.number) : undefined;
     if (reopen !== undefined && reopen.by?.owner === true && work.mentions.length === 0) {

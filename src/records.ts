@@ -208,11 +208,15 @@ export interface BlockedEntry extends EntryBase {
   forgeLinks: boolean;
 }
 
-/** A held issue was closed before any of its blockers was cleared: it is no longer held. */
+/**
+ * A held issue was closed before any of its blockers was cleared: it is no
+ * longer held. Or (`reopen-closed`) an issue reopened after entail closed it was
+ * closed again before any call answered the reopen: nothing is left to answer.
+ */
 export interface UnblockedEntry extends EntryBase {
   type: "unblocked";
   issue: number;
-  why: "closed";
+  why: "closed" | "reopen-closed";
 }
 
 /** A PR as the log names it. */
@@ -448,6 +452,7 @@ export function pendingReopens(entries: readonly Entry[]): Map<number, ReopenedE
       issueOfCall.set(entry.id, entry.issue.number);
       pending.delete(entry.issue.number);
     } else if (entry.type === "acted") pending.delete(entry.issue);
+    else if (entry.type === "unblocked") pending.delete(entry.issue);
     else if (entry.type === "confirmed" || entry.type === "overridden" || entry.type === "answered") {
       const issue = issueOfCall.get(entry.call);
       if (issue !== undefined) pending.delete(issue);
