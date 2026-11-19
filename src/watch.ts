@@ -42,6 +42,7 @@ import {
   mentionKey,
   newEntryId,
   pendingLanding,
+  interruptedStarts,
   pendingStarts,
   pendingWork,
   readLog,
@@ -442,7 +443,15 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
     }
   }
 
-  // Work starts after the go that starts it was posted; a crash before the start is recorded runs it at the next pass.
+  // Work starts after the go that starts it was posted; a crash before the start begins runs it at the next pass.
+  // A start that began and has no outcome was cut off with the command possibly already at work: it is logged as interrupted, never run again.
+  for (const begun of interruptedStarts([...readLog(options.dataDirectory, repo), ...planned])) {
+    if (options.dryRun) continue;
+    const error = "entail stopped while the start command was running; it may have taken effect, so it was not run again";
+    record({ type: "started", for: begun.for, issue: begun.issue, command: begun.command, exit: null, error, interrupted: true });
+    options.log?.warn("start-interrupted", { repo, issue: begun.issue, command: begun.command, error });
+    options.print(`${repo}#${begun.issue}: ${error}`);
+  }
   for (const acted of pendingStarts([...readLog(options.dataDirectory, repo), ...planned])) {
     options.signal?.throwIfAborted();
     await startWork(options, repo, acted, record);
@@ -776,6 +785,8 @@ async function startWork(options: PassOptions, repo: string, acted: ReturnType<t
     options.print(`would start work on ${name} with: ${command}\n${indent(JSON.stringify(handoff, null, 2))}`);
     return;
   }
+  // Recorded before the command runs: a restart that finds it with no outcome does not run the command again.
+  record({ type: "starting", for: acted.id, issue: acted.issue, command });
   const result = await (options.startWork ?? runStart)(command, handoff);
   record({ type: "started", for: acted.id, issue: acted.issue, command, exit: result.exit, ...(result.error === undefined ? {} : { error: result.error }) });
   if (result.exit === 0) {

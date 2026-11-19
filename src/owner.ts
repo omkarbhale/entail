@@ -687,7 +687,7 @@ function logRow(repo: string, entry: CallEntry, statuses: Map<number, CallStatus
     if (started.type !== "started") continue;
     const acted = entries.find((other) => other.type === "acted" && other.id === started.for);
     if (acted?.type !== "acted" || !ours(acted.for)) continue;
-    trail.push({ at: started.at, text: started.exit === 0 ? `Started work: ${started.command}` : `The start command failed (${started.error ?? `exit ${started.exit}`}): ${started.command}` });
+    trail.push({ at: started.at, text: started.exit === 0 ? `Started work: ${started.command}` : started.interrupted === true ? `The start was interrupted and not run again: ${started.command}` : `The start command failed (${started.error ?? `exit ${started.exit}`}): ${started.command}` });
   }
   const reopened = entries.filter((other) => other.type === "reopened" && entries.some((act) => act.type === "acted" && act.id === other.after && act.issue === entry.issue.number && (act.for === entry.id || isActionOn(entries, act.for, entry.id))));
   for (const reopen of reopened) trail.push({ at: reopen.at, text: `Reopened on ${forgeTitle(repo)} after entail closed it` });
@@ -809,6 +809,8 @@ export function logItems(dataDirectory: string, book: readonly Case[], repoFilte
         }
         case "acted":
           items.push({ kind: "acted", repo, at: entry.at, for: entry.for, issue: entry.issue, url: entry.comment.url, closed: entry.closed });
+          break;
+        case "starting":
           break;
         case "started":
           items.push({ kind: "started", repo, at: entry.at, issue: entry.issue, command: entry.command, exit: entry.exit, error: entry.error ?? null });
@@ -1186,7 +1188,7 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         lines.push(`${at}  ${where(item.issue)}  posted ${item.url}${item.closed ? " and closed the issue" : ""}`);
         break;
       case "started":
-        lines.push(`${at}  ${where(item.issue)}  ${item.exit === 0 ? "started work with" : "the start command failed"}: ${item.command}${item.exit === 0 ? "" : ` (${item.error ?? `exit ${item.exit}`})`}`);
+        lines.push(`${at}  ${where(item.issue)}  ${item.exit === 0 ? "started work with" : item.exit === null && item.error?.startsWith("entail stopped while") === true ? "the start was interrupted" : "the start command failed"}: ${item.command}${item.exit === 0 ? "" : ` (${item.error ?? `exit ${item.exit}`})`}`);
         break;
       case "pr-acted": {
         const did = item.merged !== null ? ` and merged at ${item.merged.sha.slice(0, 7)}` : item.closed ? " and closed the PR unmerged" : item.refused !== null ? `; the merge did not happen: ${item.refused}` : "";

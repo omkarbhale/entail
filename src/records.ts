@@ -415,6 +415,19 @@ export function labelProblem(entries: readonly Entry[]): string | null {
   return last?.label.failed ?? null;
 }
 
+/**
+ * entail is about to run the start command for a go that acted. Written
+ * before the command runs, so a restart that finds it with no `started` entry
+ * knows the command may already have taken effect and does not run it again.
+ */
+export interface StartingEntry extends EntryBase {
+  type: "starting";
+  /** The acted entry whose start this is. */
+  for: number;
+  issue: number;
+  command: string;
+}
+
 /** entail ran the start command for a go that acted: by which command, and how it exited. */
 export interface StartedEntry extends EntryBase {
   type: "started";
@@ -425,6 +438,8 @@ export interface StartedEntry extends EntryBase {
   /** The command's exit status; null when it did not exit on its own. */
   exit: number | null;
   error?: string;
+  /** Set when entail stopped while the command ran, so how it ended is unknown; it was not run again. */
+  interrupted?: true;
 }
 
 /** One piece of work a suggestion run found worth filing, as the issue it is filed as. */
@@ -500,6 +515,7 @@ export type Entry =
   | LandingEntry
   | LandingFailedEntry
   | PrActedEntry
+  | StartingEntry
   | StartedEntry
   | SuggestedEntry
   | SuggestionFiledEntry
@@ -866,16 +882,22 @@ export function pendingWork(entries: readonly Entry[], now: Date = new Date()): 
   return pending;
 }
 
-/** The acted entries whose work is still to start, in log order: each with a start and no `started` entry for it. */
+/** The acted entries whose work is still to start, in log order: each with a start, no `starting` marker and no `started` entry. */
 export function pendingStarts(entries: readonly Entry[]): (ActedEntry & { start: NonNullable<ActedEntry["start"]> })[] {
-  const started = new Set(entries.flatMap((entry) => (entry.type === "started" ? [entry.for] : [])));
-  return entries.filter((entry): entry is ActedEntry & { start: NonNullable<ActedEntry["start"]> } => entry.type === "acted" && entry.start !== undefined && !started.has(entry.id));
+  const begun = new Set(entries.flatMap((entry) => (entry.type === "starting" || entry.type === "started" ? [entry.for] : [])));
+  return entries.filter((entry): entry is ActedEntry & { start: NonNullable<ActedEntry["start"]> } => entry.type === "acted" && entry.start !== undefined && !begun.has(entry.id));
 }
 
-/** Whether work on an issue was started already: its start command exited 0, or a start is still to run. */
+/** The starts that began and have no recorded outcome: entail stopped while the command ran. They are not run again. */
+export function interruptedStarts(entries: readonly Entry[]): StartingEntry[] {
+  const ended = new Set(entries.flatMap((entry) => (entry.type === "started" ? [entry.for] : [])));
+  return entries.filter((entry): entry is StartingEntry => entry.type === "starting" && !ended.has(entry.for));
+}
+
+/** Whether work on an issue was started already: its start command exited 0 or was interrupted, or a start is still to run. */
 export function workStarted(entries: readonly Entry[], issue: number): boolean {
   const started = new Map(entries.flatMap((entry) => (entry.type === "started" ? [[entry.for, entry] as const] : [])));
-  return entries.some((entry) => entry.type === "acted" && entry.issue === issue && entry.start !== undefined && (started.has(entry.id) ? started.get(entry.id)!.exit === 0 : true));
+  return entries.some((entry) => entry.type === "acted" && entry.issue === issue && entry.start !== undefined && (started.has(entry.id) ? started.get(entry.id)!.exit === 0 || started.get(entry.id)!.interrupted === true : true));
 }
 
 /** The owner's actions still held, not undone and not yet acted on, with when their windows close. */
