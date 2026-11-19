@@ -370,5 +370,5 @@ test("from the command line the owner allows a collaborator, who answers under t
   assert.equal(await main(["calls", "acme/tally"]), 0);
   assert.match(out.join("\n"), /ANSWERED by Sam \(a collaborator\): go/u);
   assert.equal(await main(["settings", "acme/tally", "--disallow", "Sam"]), 0);
-  assert.equal(out.pop(), "acme/tally: confirm mode on, model claude-opus-5-5 (default), effort high (default), base branch GitHub's default branch (default)", "no collaborators are listed once they are all removed");
+  assert.equal(out.pop(), "acme/tally: confirm mode on, model claude-opus-5-5 (default), effort high (default), base branch GitHub's default branch (default), drift check off, no generic criteria", "no collaborators are listed once they are all removed");
 });
