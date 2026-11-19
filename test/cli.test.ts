@@ -320,3 +320,55 @@ test("open refuses when entail is not running, since there is no board to open",
   assert.equal(await main(["open", "--port", "4999"]), 1);
   assert.match(out.pop()!, /entail is not running, so the board at http:\/\/127\.0\.0\.1:4999\/ is not there\. Start it with: entail service install/u);
 });
+
+test("from the command line the owner allows a collaborator, who answers under their own name; nothing else is theirs", async (t) => {
+  const home = mkdtempSync(join(tmpdir(), "entail-cli-"));
+  const previous = { XDG_DATA_HOME: process.env.XDG_DATA_HOME, LOCALAPPDATA: process.env.LOCALAPPDATA, HOME: process.env.HOME };
+  process.env.XDG_DATA_HOME = home;
+  process.env.LOCALAPPDATA = home;
+  process.env.HOME = home;
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(home, { recursive: true, force: true });
+  });
+  const out: string[] = [];
+  t.mock.method(console, "log", (message: string) => out.push(message));
+  t.mock.method(console, "error", (message: string) => out.push(`error: ${message}`));
+  const dataDirectory = resolveDataDirectory({ platform: process.platform, env: process.env, home });
+  assert.equal(await main(["settings", "--owner", "Omkar"]), 0);
+  appendEntry(dataDirectory, "acme/tally", { type: "enrolled", by: "Omkar", since: "2026-11-12T09:00:00.000Z", confirm: true });
+  appendEntry(dataDirectory, "acme/tally", {
+    type: "call",
+    issue: { number: 12, title: "Count words in footnotes", url: "https://github.com/acme/tally/issues/12", author: "reporter" },
+    trigger: "new",
+    mentions: [],
+    content: "h",
+    issueText: "# Count words in footnotes\n",
+    vision: null,
+    sha: "c".repeat(40),
+    call: { call: "ask", reason: "Unsure.", restsOn: { visionLines: [], cases: [] }, question: "Which reading?", why: "They differ.", large: false, criteria: [] },
+    confirm: true,
+    owner: null,
+    model: "claude-opus-5-5",
+    effort: "low",
+    promptVersion: "issue-call-2",
+    costUsd: null,
+  });
+
+  assert.equal(await main(["answer", "acme/tally#12", "go", "Yes.", "--as", "Sam"]), 1, "nobody is allowed until the owner allows them");
+  assert.match(out.pop()!, /Sam is not allowed to answer board items for acme\/tally: only the owner can allow a collaborator/u);
+  assert.equal(await main(["settings", "acme/tally", "--allow", "omkar"]), 2, "a collaborator cannot take the owner's name");
+  assert.equal(await main(["settings", "acme/tally", "--allow", "Sam"]), 0);
+  assert.match(out.pop()!, /collaborators who may answer board items: Sam/u);
+  assert.equal(await main(["confirm", "acme/tally#12", "--as", "Sam"]), 2, "confirming is the owner's");
+  assert.equal(await main(["answer", "acme/tally#12", "go", "Yes.", "--as", "omkar"]), 2, "the owner's own name is not a collaborator's");
+  assert.equal(await main(["answer", "acme/tally#12", "go", "Yes.", "--as", "sam"]), 0);
+  assert.equal(out.pop(), "acme/tally#12: Sam's answer is recorded under their name as a collaborator's, not Omkar's; entail acts on the issue on its next pass.");
+  assert.equal(await main(["calls", "acme/tally"]), 0);
+  assert.match(out.join("\n"), /ANSWERED by Sam \(a collaborator\): go/u);
+  assert.equal(await main(["settings", "acme/tally", "--disallow", "Sam"]), 0);
+  assert.equal(out.pop(), "acme/tally: confirm mode on, model claude-opus-5-5 (default), effort high (default), base branch GitHub's default branch (default), drift check off, no generic criteria", "no collaborators are listed once they are all removed");
+});

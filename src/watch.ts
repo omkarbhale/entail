@@ -79,6 +79,7 @@ import {
   type VisionSeenEntry,
   type BaseBranchSeenEntry,
   workStarted,
+  byCollaborator,
 } from "./records.ts";
 import { sendBackHandoffFor, type SendBackHandoff } from "./send-backs.ts";
 import { handoffFor, runStart, type Handoff, type StartResult } from "./starts.ts";
@@ -415,13 +416,15 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
     const issue = await forge.issue(pending.call.issue.number);
     if (issue === null) continue;
     const { action } = pending;
-    if (!options.dryRun) await writeCase(join(options.dataDirectory, OWNER_CASE_BOOK), caseFor(repo, pending.call, action));
+    // The case book holds the owner's own calls: a collaborator's answer settles the ticket but never enters it.
+    if (!options.dryRun && !byCollaborator(action)) await writeCase(join(options.dataDirectory, OWNER_CASE_BOOK), caseFor(repo, pending.call, action));
     const word: OwnerWord = {
       action: action.id,
       kind: action.type === "overridden" ? "override" : "answer",
       call: action.to as OwnerCall,
       ...(action.scope === "plan" ? { scope: "plan" as const } : {}),
       words: action.type === "overridden" ? action.reason : action.answer,
+      ...(byCollaborator(action) ? { collaborator: action.by } : {}),
     };
     const entry = await judgeIssue(context, issue, "owner", [], { word, by: action.by, at: action.at, previous: pending.call });
     if (entry === null) {
@@ -516,6 +519,11 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
   return { ok: ok && acted, judged, posted, ...(context.failure === null ? {} : { failure: context.failure }) };
 }
 
+/** Who gave an answer as a pass prints them: a collaborator is said to be one. */
+function answerBy(answer: AnsweredEntry): string {
+  return byCollaborator(answer) ? `${answer.by} (a collaborator)` : answer.by;
+}
+
 /** The sentence a pass prints, and the commit says, for a line added from an answer. */
 function growthSubject(target: CallEntry | LandingEntry): { kind: "issue" | "pr"; number: number; title: string; url: string } {
   if (target.type === "call") return { kind: "issue", ...target.issue };
@@ -553,7 +561,7 @@ async function growVision(context: JudgeContext, record: (entry: NewEntry) => En
             about: name,
             context: work.target.type === "call" ? work.target.issueText : `${work.target.issue === null ? "" : `${work.target.issueText.trim()}\n\n`}The pull request: ${work.target.prText}`,
             question,
-            by: work.answer.by,
+            by: byCollaborator(work.answer) ? `${work.answer.by}, a collaborator the owner allowed to answer (not the owner),` : work.answer.by,
             chose: work.answer.to === "go" && work.answer.scope === "plan" ? "go, for planning" : work.answer.to,
             answer: work.answer.answer,
             vision: reading.vision,
@@ -581,7 +589,7 @@ async function growVision(context: JudgeContext, record: (entry: NewEntry) => En
         }) as Extract<Entry, { type: "vision-considered" }>;
         options.log?.info("vision-considered", { repo, answer: work.answer.id, add: decided.decision.add, model: decided.facts.model, costUsd: decided.facts.estimatedCostUsd });
         if (!decided.decision.add) {
-          options.print(`${name}: ${work.answer.by}'s answer settles this ${subject.kind === "pr" ? "PR" : "ticket"} only; nothing added to the vision: ${oneLine(decided.decision.reason)}`);
+          options.print(`${name}: ${answerBy(work.answer)}'s answer settles this ${subject.kind === "pr" ? "PR" : "ticket"} only; nothing added to the vision: ${oneLine(decided.decision.reason)}`);
           continue;
         }
         considered = entry as typeof considered;
@@ -589,10 +597,11 @@ async function growVision(context: JudgeContext, record: (entry: NewEntry) => En
       if (considered === null || !considered.decision.add) continue;
       const { line, heading } = considered.decision;
       if (options.dryRun) {
-        options.print(`would add to ${repo}'s ${VISION_PATH} from ${work.answer.by}'s answer on ${name}: ${line}`);
+        options.print(`would add to ${repo}'s ${VISION_PATH} from ${answerBy(work.answer)}'s answer on ${name}: ${line}`);
         continue;
       }
-      const message = `Add a line to ${VISION_PATH} from a board answer on ${subject.kind === "pr" ? "PR " : ""}#${subject.number}\n\n${line}\n\nBoard answer ${work.answer.id}`;
+      const origin = byCollaborator(work.answer) ? `\n\nAnswered by ${work.answer.by}, a collaborator the owner allowed to answer; not stated by the owner.` : "";
+      const message = `Add a line to ${VISION_PATH} from a board answer on ${subject.kind === "pr" ? "PR " : ""}#${subject.number}\n\n${line}\n\nBoard answer ${work.answer.id}${origin}`;
       let written = await forge.updateFile(VISION_PATH, (current) => (current === null ? null : addVisionLine(current, line, heading)), message);
       if (!written.changed) {
         // An earlier pass may have committed this line and stopped before recording it: the commit is on the file's history.
@@ -611,6 +620,7 @@ async function growVision(context: JudgeContext, record: (entry: NewEntry) => En
         answer: work.answer.id,
         on: work.target.id,
         by: work.answer.by,
+        ...(byCollaborator(work.answer) ? { collaborator: true as const } : {}),
         about: subject,
         line,
         heading,
@@ -619,7 +629,7 @@ async function growVision(context: JudgeContext, record: (entry: NewEntry) => En
         branch: written.branch,
       });
       options.log?.info("vision-grown", { repo, answer: work.answer.id, commit: written.commit });
-      options.print(`${repo}: added to ${VISION_PATH} automatically, from ${work.answer.by}'s answer on ${name}, at ${written.commit.slice(0, 7)}:\n${indent(line)}\n    ${oneLine(considered.decision.reason)}\n    open calls made under the earlier text are re-checked next pass, and an open PR whose ticket's call moves is told it relied on the old text`);
+      options.print(`${repo}: added to ${VISION_PATH} automatically, from ${answerBy(work.answer)}'s answer on ${name}, at ${written.commit.slice(0, 7)}:\n${indent(line)}\n    ${oneLine(considered.decision.reason)}\n    open calls made under the earlier text are re-checked next pass, and an open PR whose ticket's call moves is told it relied on the old text`);
     } catch (error) {
       if (options.signal?.aborted) throw error;
       ok = false;
@@ -865,7 +875,7 @@ async function judgeIssue(context: JudgeContext, issue: Issue, trigger: Trigger,
   const call = settled.call;
   options.log?.info("judged", { repo, issue: issue.number, trigger, call: call.call, model: judgment.facts.model, costUsd: judgment.facts.estimatedCostUsd });
   logSettlement(options, repo, issue.number, judgment.call, settled);
-  const why = owner === null ? trigger : `the owner's ${owner.word.kind}, ${ownerCallWords(owner.word)}`;
+  const why = owner === null ? trigger : owner.word.collaborator !== undefined ? `${owner.word.collaborator}'s answer, a collaborator's, ${ownerCallWords(owner.word)}` : `the owner's ${owner.word.kind}, ${ownerCallWords(owner.word)}`;
   options.print(`${name} (${why}): ${issue.title}\n${indent(formatCall(call))}`);
   return {
     type: "call",
@@ -899,11 +909,12 @@ function logSettlement(options: PassOptions, repo: string, issue: number, judged
 /** The owner's word as the judgment reads it: one more comment on the issue, from the board. */
 function ownerComment(owner: OwnerRun): { author: string; createdAt: string; body: string } {
   const { word, previous } = owner;
+  const given = word.collaborator === undefined ? "The owner's answer" : `${word.collaborator}'s answer (${word.collaborator} is a collaborator the owner allowed to answer, not the owner)`;
   const body =
     word.kind === "answer" && previous.call.call === "ask"
-      ? `entail asked the owner: ${previous.call.question}\n\nThe owner's answer: ${ownerCallWords(word)}.\n\n${word.words}`
+      ? `entail asked the owner: ${previous.call.question}\n\n${given}: ${ownerCallWords(word)}.\n\n${word.words}`
       : `entail's call was ${previous.call.call === "go" && scopeOf(previous.call) === "plan" ? "go, for planning" : previous.call.call}: ${previous.call.reason}\n\nThe owner overrode it: ${ownerCallWords(word)}.\n\n${word.words}`;
-  return { author: `${owner.by} (the owner, on entail's board)`, createdAt: owner.at, body };
+  return { author: `${owner.by} (${word.collaborator === undefined ? "the owner" : "a collaborator"}, on entail's board)`, createdAt: owner.at, body };
 }
 
 /** The owner's call as words: go, go for planning, or no. */
@@ -939,7 +950,7 @@ async function act(
   const body = composeComment(options.owner, post.markerFor, post.text);
   const name = `${repo}#${post.issue}`;
   // The owner's action reaches the case book as its window closes, before anything is posted for it.
-  if (!options.dryRun && pending.kind !== "call" && pending.kind !== "blocked") await writeCase(join(options.dataDirectory, OWNER_CASE_BOOK), caseFor(repo, pending.call, pending.action));
+  if (!options.dryRun && pending.kind !== "call" && pending.kind !== "blocked" && !byCollaborator(pending.action)) await writeCase(join(options.dataDirectory, OWNER_CASE_BOOK), caseFor(repo, pending.call, pending.action));
   if (options.dryRun) {
     options.print(`would post on ${name}${post.close ? " and close it" : post.reopen ? " and reopen it if closed" : ""}${post.label === null ? "" : `, labelled ${post.label}`}:\n${indent(body)}`);
     if (pending.kind === "call") for (const pr of pending.entry.recheck?.pullRequests ?? []) options.print(`would tell ${repo}#${pr.number} that it relied on the old vision`);
@@ -1599,7 +1610,7 @@ async function actOnPullRequest(
     return true;
   }
   // The owner's action reaches the case book as its window closes, before anything is posted or merged for it.
-  if (pending.kind !== "landing") await writeLandingCase(join(options.dataDirectory, OWNER_CASE_BOOK), landingCaseFor(repo, landing, pending.action));
+  if (pending.kind !== "landing" && !byCollaborator(pending.action)) await writeLandingCase(join(options.dataDirectory, OWNER_CASE_BOOK), landingCaseFor(repo, landing, pending.action));
   const merge = post.merge ? await mergeAtHead(options, forge, landing) : null;
   const body = composeComment(options.owner, post.markerFor, post.text(merge));
   const comments = await forge.comments("pr", post.pr);

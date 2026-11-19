@@ -760,3 +760,45 @@ test("an untrusted certificate on a CLI with no per-host setting is explained bu
   assert.match(refused.body.error, /SSL_CERT_FILE/u);
   assert.equal(refused.body.untrustedCertificate.fixable, false);
 });
+
+test("the owner allows a collaborator on the board; the collaborator answers under their name, and nothing else on the API is theirs", async (t) => {
+  const api = await serve(t);
+  await api.call("POST", "/api/repos", { repo: "acme/tally" });
+  const ask = { call: "ask", reason: "Unsure.", restsOn: { visionLines: [], cases: [] }, question: "Which reading?", why: "They differ.", large: false, criteria: [] } as CallEntry["call"];
+  const entry = aCall(api.dataDirectory, true, { call: ask });
+
+  // A repo with no collaborators set is owner-only.
+  const refused = await api.call("POST", `/api/calls/${entry.id}/answer`, { call: "go", answer: "Yes.", as: "Sam" });
+  assert.equal(refused.status, 403);
+  assert.match(refused.body.error, /only the owner can allow a collaborator/u);
+  assert.equal((await api.call("GET", "/api/repos")).body.repos[0].collaborators.length, 0);
+
+  assert.equal((await api.call("PATCH", "/api/repos/acme/tally", { allow: " Sam " })).status, 200);
+  assert.deepEqual((await api.call("GET", "/api/repos")).body.repos[0].collaborators, ["Sam"]);
+  assert.equal((await api.call("PATCH", "/api/repos/acme/tally", { allow: "omkar" })).status, 400, "a collaborator cannot take the owner's name");
+  assert.equal((await api.call("PATCH", "/api/repos/acme/tally", { allow: "" })).status, 400);
+
+  // A collaborator may only answer, or take back their own answer.
+  for (const action of ["confirm", "override"]) {
+    const denied = await api.call("POST", `/api/calls/${entry.id}/${action}`, { call: "no", reason: "x", as: "Sam" });
+    assert.equal(denied.status, 403, action);
+  }
+  assert.equal((await api.call("POST", `/api/calls/${entry.id}/answer`, { call: "go", answer: "Yes.", as: "Omkar" })).status, 403, "the owner's own name is not a collaborator's");
+  assert.equal((await api.call("POST", `/api/calls/${entry.id}/answer`, { call: "go", answer: "Yes.", as: "Priya" })).status, 403, "only an allowed name answers");
+  assert.deepEqual(readLog(api.dataDirectory, "acme/tally").filter((e) => e.type === "answered"), [], "none of the refusals recorded anything");
+
+  const answered = await api.call("POST", `/api/calls/${entry.id}/answer`, { call: "go", answer: "Yes.", as: "sam" });
+  assert.equal(answered.status, 200);
+  assert.deepEqual([answered.body.type, answered.body.by, answered.body.collaborator, answered.body.holdUntil], ["answered", "Sam", true, "2026-11-12T12:00:10.000Z"]);
+  const view = (await api.call("GET", `/api/calls/${entry.id}`)).body;
+  assert.deepEqual([view.status, view.settledBy.by, view.settledBy.collaborator], ["answered", "Sam", true]);
+  assert.equal((await api.call("POST", `/api/calls/${entry.id}/undo`, { as: "Priya" })).status, 403);
+  assert.equal((await api.call("POST", `/api/calls/${entry.id}/undo`, { as: "Sam" })).status, 200, "a collaborator takes back their own answer");
+
+  // The owner's own answer is unchanged, and a settings change is the owner's alone.
+  const owners = await api.call("POST", `/api/calls/${entry.id}/answer`, { call: "no", answer: "No." });
+  assert.deepEqual([owners.body.by, "collaborator" in owners.body], ["Omkar", false]);
+  assert.equal((await api.call("PATCH", "/api/repos/acme/tally", { disallow: "Sam", as: "Sam" })).status, 400, "settings take no collaborator");
+  assert.equal((await api.call("PATCH", "/api/repos/acme/tally", { disallow: "Sam" })).status, 200);
+  assert.deepEqual((await api.call("GET", "/api/repos")).body.repos[0].collaborators, []);
+});

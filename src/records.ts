@@ -68,6 +68,10 @@ export interface SettingsEntry extends EntryBase, ByOwner {
   driftEveryDays?: number | null;
   /** The repo's generic criteria, replacing the earlier ones; empty clears them. */
   genericCriteria?: string[];
+  /** A collaborator the owner allowed to answer board items for the repo with this change, by name. Only the owner's settings change carries it. */
+  allowed?: string;
+  /** A collaborator the owner took the permission away from with this change. */
+  disallowed?: string;
 }
 
 /**
@@ -102,6 +106,8 @@ export interface OwnerWord {
   /** Set when the owner's go clears the ticket for planning; missing means a go to implement. */
   scope?: "plan";
   words: string;
+  /** Set when the word is a collaborator's answer: their name, so what is posted and judged on never reads as the owner's. */
+  collaborator?: string;
 }
 
 /** One call entail made on an issue, with everything it read to make it. */
@@ -411,12 +417,20 @@ export interface AnsweredEntry extends EntryBase, ByOwner, Held {
    * issue itself, which closes once one new issue is filed for each part accepted.
    */
   parts?: AnswerParts;
+  /**
+   * Set when `by` is a collaborator the owner allowed to answer for the repo,
+   * not the owner: the answer settles the ticket the same way, and is shown,
+   * posted and logged under the collaborator's name, never as the owner's.
+   */
+  collaborator?: true;
 }
 
 /** The owner undid one of their actions while it was held: entail acts on it neither on the forge nor in the case book. */
 export interface UndoneEntry extends EntryBase, ByOwner {
   type: "undone";
   action: number;
+  /** Why entail voided the action, when the owner did not undo it: the collaborator was taken off the repo. */
+  reason?: string;
 }
 
 /** The owner asked entail to judge the issues that were open when the repo was enrolled. */
@@ -620,6 +634,8 @@ export interface VisionGrownEntry extends EntryBase {
   on: number;
   /** Who gave the answer, as the board recorded them. */
   by: string;
+  /** Set when `by` is a collaborator: the line is recorded as theirs, not as stated by the owner. */
+  collaborator?: true;
   /** What the answer was given on: an issue, or a PR. */
   about: { kind: "issue" | "pr"; number: number; title: string; url: string };
   /** The line added, exactly as written into VISION.md. */
@@ -938,12 +954,25 @@ export interface RepoState {
    * when the owner set none, and then landing is as it always was.
    */
   genericCriteria: string[];
+  /** The collaborators the owner allowed to answer board items for the repo, by name; none until the owner allows someone. */
+  collaborators: string[];
   /** The VISION.md a pass last recorded seeing change, or null when none was recorded. */
   vision: { entry: number; commit: string | null; text: string | null } | null;
 }
 
+/** Whether two people's names are the same: ignoring case and runs of whitespace. */
+export function sameName(a: string, b: string): boolean {
+  const key = (name: string) => name.trim().replace(/\s+/gu, " ").toLowerCase();
+  return key(a) === key(b);
+}
+
+/** Whether an owner's action was a collaborator's answer rather than the owner's own word. */
+export function byCollaborator(action: OwnerAction): boolean {
+  return action.type === "answered" && action.collaborator === true;
+}
+
 export function repoState(repo: string, entries: readonly Entry[]): RepoState {
-  const state: RepoState = { repo, enrolled: false, since: null, confirm: true, model: null, effort: null, baseBranch: null, drift: false, driftEveryDays: null, genericCriteria: [], vision: null };
+  const state: RepoState = { repo, enrolled: false, since: null, confirm: true, model: null, effort: null, baseBranch: null, drift: false, driftEveryDays: null, genericCriteria: [], collaborators: [], vision: null };
   for (const entry of entries) {
     if (entry.type === "enrolled") {
       state.enrolled = true;
@@ -959,6 +988,8 @@ export function repoState(repo: string, entries: readonly Entry[]): RepoState {
       if (entry.drift !== undefined) state.drift = entry.drift;
       if (entry.driftEveryDays !== undefined) state.driftEveryDays = entry.driftEveryDays;
       if (entry.genericCriteria !== undefined) state.genericCriteria = entry.genericCriteria;
+      if (entry.disallowed !== undefined) state.collaborators = state.collaborators.filter((name) => !sameName(name, entry.disallowed!));
+      if (entry.allowed !== undefined && !state.collaborators.some((name) => sameName(name, entry.allowed!))) state.collaborators.push(entry.allowed);
     } else if (entry.type === "vision-seen") {
       state.vision = { entry: entry.id, commit: entry.commit, text: entry.text };
     }

@@ -50,6 +50,8 @@ export interface ActionView {
   parts?: { accepted: { title: string; body: string }[]; declined: string[] };
   differently?: true;
   holdUntil?: string;
+  /** Set when `by` is a collaborator the owner allowed to answer, not the owner. */
+  collaborator?: true;
 }
 
 /** The owner's word a call was run again on. */
@@ -60,6 +62,8 @@ export interface OwnerWordView {
   /** Set when the owner's go clears the ticket for planning. */
   scope?: "plan";
   words: string;
+  /** Set when the word is a collaborator's answer: their name. */
+  collaborator?: string;
 }
 
 /** One of a PR's criteria, marked met or unmet with the evidence relied on. */
@@ -309,6 +313,8 @@ export interface RepoView {
   baseBranch: string | null;
   /** What every PR in the repo must meet whatever its ticket, checked at landing; empty when none is set. */
   genericCriteria: string[];
+  /** The collaborators the owner allowed to answer board items for this repo; none until the owner allows someone. */
+  collaborators: string[];
   /** The model and effort its calls are made with now. */
   uses: { model: string; effort: EffortName };
   calls: number;

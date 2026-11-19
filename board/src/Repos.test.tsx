@@ -165,6 +165,29 @@ describe("Repos", () => {
     await waitFor(() => expect(api.sent(/PATCH/u)[1]!.body).toEqual({ genericCriteria: [] }));
   });
 
+  it("allows a collaborator and removes one, each as a change to the repo's settings, and says whose answers they are", async () => {
+    const api = fakeApi({ repos: [aRepo({ collaborators: ["Sam"] })] });
+    api.route((method, path, body) => {
+      if (method === "PATCH" && path === "/api/repos/omkarbhale/entail") {
+        api.state.repos = [aRepo({ collaborators: typeof body.allow === "string" ? ["Sam", body.allow] : [] })];
+        return { status: 200, body: {} };
+      }
+      return undefined;
+    });
+    renderBoard("#/repos");
+    expect(await screen.findByText("Sam")).toBeTruthy();
+    expect(screen.getByText(/shown and posted under their name, never as yours/u)).toBeTruthy();
+    const field = screen.getByRole("textbox", { name: "Collaborator to allow for omkarbhale/entail" });
+    expect(screen.getByRole("button", { name: "Allow" }).hasAttribute("disabled")).toBe(true);
+    await userEvent.type(field, " Priya ");
+    await userEvent.click(screen.getByRole("button", { name: "Allow" }));
+    expect(await screen.findByText("Priya")).toBeTruthy();
+    expect(api.sent(/PATCH/u)[0]!.body).toEqual({ allow: "Priya" });
+    await userEvent.click(screen.getByRole("button", { name: "Remove Sam" }));
+    await waitFor(() => expect(api.sent(/PATCH/u)[1]!.body).toEqual({ disallow: "Sam" }));
+    expect(await screen.findByText("None: only you answer.")).toBeTruthy();
+  });
+
   it("checks a repo now and says what the check found, or that it failed", async () => {
     const api = fakeApi();
     api.route((method, path) => (method === "POST" && path.endsWith("/check") ? { status: 200, body: { repo: "omkarbhale/entail", at: new Date().toISOString(), judged: 0, posted: 0, failed: false } } : undefined));

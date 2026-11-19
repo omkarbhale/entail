@@ -195,9 +195,14 @@ function SuggestionRow({ run, open, toggle }: { run: SuggestionRunView; open: bo
 
 const OWNER_CALL_WORDS = { go: "Go ahead", plan: "Go, for planning", no: "Don’t go ahead", merge: "Merge it", "send-back": "Send it back" } as const;
 
+/** Who acted, named so that a collaborator's answer never reads as the owner's. */
+function named(action: { by: string; collaborator?: true }): string {
+  return action.collaborator === true ? `${action.by}, a collaborator` : action.by;
+}
+
 function Status({ row }: { row: LogRow }) {
   const { call } = row;
-  const by = call.settledBy?.by ?? "you";
+  const by = call.settledBy === null ? "you" : named(call.settledBy);
   const ownerCall = ownerCallOf(call.settledBy);
   switch (call.status) {
     case "waiting":
@@ -243,7 +248,7 @@ function OwnerBlock({ row }: { row: LogRow }) {
     );
   }
   const call = ownerCallOf(action);
-  const head = action.type === "answered" ? `Answered by ${action.by}` : action.differently === true ? `Go, made differently by ${action.by}` : `Overridden by ${action.by}`;
+  const head = action.type === "answered" ? `Answered by ${named(action)}` : action.differently === true ? `Go, made differently by ${action.by}` : `Overridden by ${action.by}`;
   return (
     <div className={`owner${action.type === "overridden" ? " over" : ""}`}>
       <div className="vhead">

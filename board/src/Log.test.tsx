@@ -130,6 +130,23 @@ describe("Log", () => {
     await waitFor(() => expect(filters).toContain("prs"));
   });
 
+  it("names a collaborator's answer as theirs and as a collaborator's, never as the owner's", async () => {
+    const answered = aQuestion({
+      id: 61,
+      status: "answered",
+      judgedAt: at(0),
+      issue: { number: 11, title: "Non-breaking spaces", url: "u11", author: "r" },
+      settledBy: { id: 62, type: "answered", at: at(0), by: "Sam", call: 61, to: "no", answer: "Not this release.", collaborator: true },
+    });
+    fakeApi({ log: () => ({ rows: [aRow(answered, { day: dayOf(0), trail: [{ at: at(0), text: "Sam (a collaborator) answered: no" }] })], suggestions: [], next: null, counts }) });
+    renderBoard("#/log");
+    const row = await screen.findByRole("button", { name: /Non-breaking spaces/u });
+    expect(within(row).getByText("Answered by Sam, a collaborator")).toBeTruthy();
+    expect(within(row).queryByText(/Omkar/u)).toBeNull();
+    await userEvent.click(row);
+    expect(screen.getAllByText("Answered by Sam, a collaborator").length).toBeGreaterThan(1);
+  });
+
   it("shows a PR's call with no cleared ticket behind it as no ticket", async () => {
     const call = { ...aPullRequestCall({ id: 42, judgedAt: at(0) }), issue: null };
     fakeApi({ log: () => ({ rows: [aRow(call, { day: dayOf(0), trail: [] })], suggestions: [], next: null, counts: { ...counts, prs: 1 } }) });
