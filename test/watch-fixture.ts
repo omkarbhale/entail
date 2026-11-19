@@ -371,6 +371,30 @@ export class FakeForge implements WatchForge {
     return [...this.issues.get(number)!.labels];
   }
 
+  /** Every issue entail filed, in order: title, body and labels. */
+  readonly createdIssues: { number: number; title: string; body: string; labels: readonly string[] }[] = [];
+  /** Set to make the next issue filing fail with this message. */
+  refuseCreate: string | null = null;
+
+  async createIssue(title: string, body: string, labels: readonly string[]): Promise<Issue> {
+    this.#check();
+    if (this.refuseCreate !== null) {
+      const refusal = this.refuseCreate;
+      this.refuseCreate = null;
+      throw new Error(refusal);
+    }
+    const number = Math.max(0, ...this.issues.keys()) + 1;
+    const issue = this.file(number, title, body, { author: OWNER_ACCOUNT });
+    issue.labels = [...labels];
+    this.createdIssues.push({ number, title, body, labels });
+    return { ...issue };
+  }
+
+  async openIssues(): Promise<Issue[]> {
+    this.#check();
+    return [...this.issues.values()].filter((issue) => issue.state === "open").map((issue) => ({ ...issue }));
+  }
+
   async closeIssue(number: number): Promise<void> {
     this.#check();
     this.closed.push(number);

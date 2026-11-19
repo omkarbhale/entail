@@ -194,6 +194,30 @@ describe("Waiting", () => {
     expect(api.sent(/answer/u)[0]!.body).toEqual({ call: "no", answer: "Only real whitespace separates words." });
   });
 
+  it("takes some of the parts of an issue that lists several suggestions, and the button waits for a part", async () => {
+    const question = aQuestion({ id: 10, issue: { number: 11, title: "Ideas for tally", url: "u", author: "r" }, parts: ["Count words in footnotes", "Count words in endnotes", "Upload the counts"] });
+    const api = fakeApi({ waiting: { items: [question], held: [], actedAlone: { count: 0, repos: [] } } });
+    renderBoard();
+    const answer = await screen.findByRole("button", { name: "Answer" });
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    await userEvent.click(screen.getByRole("radio", { name: /Take only some of the parts/u }));
+    expect(answer.hasAttribute("disabled")).toBe(true);
+    await userEvent.click(screen.getByRole("checkbox", { name: "Count words in footnotes" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Upload the counts" }));
+    expect(answer.hasAttribute("disabled")).toBe(false);
+    await userEvent.click(answer);
+    const receipt = await screen.findByRole("article", { name: "Answered. #11" });
+    expect(within(receipt).getByText(/Took 2 of 3 parts\. entail files an issue for each and closes #11/u)).toBeTruthy();
+    expect(api.sent(/answer/u)[0]!.body).toEqual({ call: "no", answer: "Took 2 of 3 parts.", accept: [0, 2] });
+  });
+
+  it("offers no parts on a question whose issue lists fewer than two suggestions", async () => {
+    fakeApi({ waiting: { items: [aQuestion({ id: 10 })], held: [], actedAlone: { count: 0, repos: [] } } });
+    renderBoard();
+    await screen.findByRole("button", { name: "Answer" });
+    expect(screen.queryByRole("radio", { name: /Take only some of the parts/u })).toBeNull();
+  });
+
   it("shows a receipt still in its window after a reload, and lets it go when the window closes", async () => {
     const item = aCall({ id: 11, issue: { number: 174, title: "Glitter", url: "u", author: "r" } });
     fakeApi({ waiting: { items: [], held: [held(item, {}, 1_200)], actedAlone: { count: 0, repos: [] } } });

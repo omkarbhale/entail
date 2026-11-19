@@ -59,6 +59,10 @@ export function fakeApi(initial: Partial<FakeState> = {}) {
         holdUntil,
         ...(act[2] === "override" ? { to: body.call, reason: body.reason, ...(body.differently ? { differently: true as const } : {}) } : {}),
         ...(act[2] === "answer" ? { to: body.call, answer: body.answer } : {}),
+        // As entail records a partial answer: the parts taken, and the titles turned down.
+        ...(act[2] === "answer" && Array.isArray(body.accept)
+          ? { parts: { accepted: body.accept.map((position: number) => ({ title: item.parts[position]!, body: "" })), declined: item.parts.filter((_, position) => !body.accept.includes(position)) } }
+          : {}),
       };
       state.waiting = { ...state.waiting, items: state.waiting.items.filter((one) => one.id !== id), held: [...state.waiting.held, { item, action, holdUntil }] };
       return { status: 200, body: action };
@@ -134,6 +138,7 @@ export function aCall(overrides: Partial<CallView> = {}): CallView {
     issue: { number, title: `Issue ${number}`, url: `https://github.com/omkarbhale/entail/issues/${number}`, author: "reporter", createdAt: new Date(Date.now() - 2 * 86_400_000).toISOString() },
     issueText: `# Issue ${number}\n\nThe body.\n`,
     body: "Make the background of the board bright pink with glitter.",
+    parts: [],
     visionCommit: "8973851abcdef",
     call: "no",
     reason: "A louder board does not make any decision faster or clearer.",

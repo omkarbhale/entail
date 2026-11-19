@@ -46,7 +46,7 @@ export const SUGGESTED_LABEL = "entail:suggested";
 export const SUGGEST_TIMEOUT_MS = 60 * 60 * 1000;
 
 /** GitHub refuses an issue title longer than this. */
-const TITLE_LIMIT = 256;
+export const TITLE_LIMIT = 256;
 
 /** At most this many paths of the tree go into the prompt; the run can list the rest itself. */
 const TREE_LIMIT = 2000;

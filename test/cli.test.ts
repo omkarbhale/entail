@@ -51,8 +51,12 @@ test("the owner's commands check their arguments before touching anything", asyn
   assert.equal(await main(["override", "a/b#1", "no"]), 2);
   assert.equal(await main(["answer", "a/b#1"]), 2);
   assert.equal(await main(["confirm", "a/b"]), 2);
+  assert.equal(await main(["answer", "a/b#1", "no", "x", "--accept", "0,a"]), 2);
+  assert.equal(await main(["override", "a/b#1", "no", "x", "--accept", "1"]), 2);
   assert.match(errors[0]!, /enroll takes one repo/u);
   assert.match(errors[3]!, /--interval is a number of seconds/u);
+  assert.match(errors.at(-2)!, /--accept takes the numbers of the parts to take, counted from 1/u);
+  assert.match(errors.at(-1)!, /--accept belongs to answer/u);
 });
 
 test("from the command line the owner sets their name, reads what waits, confirms it and reads the log", async (t) => {

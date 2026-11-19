@@ -46,6 +46,8 @@ export interface ActionView {
   scope?: "plan";
   reason?: string;
   answer?: string;
+  /** Set when the owner took only some of the issue's parts: the ones accepted, each filed as its own issue, and the titles turned down. */
+  parts?: { accepted: { title: string; body: string }[]; declined: string[] };
   differently?: true;
   holdUntil?: string;
 }
@@ -138,6 +140,8 @@ export interface CallView {
   issueText: string;
   /** The issue's own words, or for a PR the PR's description: as judged, without title or comments. */
   body: string;
+  /** The titles of the parts of an issue that lists several suggestions, which the owner can take some of; empty when it lists fewer than two, and on a PR. */
+  parts: string[];
   visionCommit: string | null;
   call: Call;
   /** Set on entail's go when it clears the ticket for planning, not for implementing in one PR. */

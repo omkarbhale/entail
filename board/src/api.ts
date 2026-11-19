@@ -100,7 +100,8 @@ export const api = {
   confirm: (id: number) => request<ActionView>("POST", `/api/calls/${id}/confirm`, {}),
   override: (id: number, call: OwnerCallName, reason: string, differently: boolean) =>
     request<ActionView>("POST", `/api/calls/${id}/override`, differently ? { call, reason, differently } : { call, reason }),
-  answer: (id: number, call: OwnerCallName, answer: string) => request<ActionView>("POST", `/api/calls/${id}/answer`, { call, answer }),
+  answer: (id: number, call: OwnerCallName, answer: string, accept?: number[]) =>
+    request<ActionView>("POST", `/api/calls/${id}/answer`, accept === undefined ? { call, answer } : { call, answer, accept }),
   undo: (id: number) => request<{ undone: ActionView; call: CallView }>("POST", `/api/calls/${id}/undo`, {}),
 
   enroll: (repo: string) => request<EnrollResponse>("POST", "/api/repos", { repo }),
