@@ -1022,6 +1022,7 @@ async function landCommand(args: string[]): Promise<number> {
         base: reading.base,
         issue: issueNumber === null ? null : { number: issueNumber, text: issueText },
         criteria,
+        generic: repoState(repo, entries).genericCriteria,
         vision: reading.vision,
         pins: reading.pins,
         facts: { checks: report.checks, required: report.required, files },
