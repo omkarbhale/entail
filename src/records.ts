@@ -435,6 +435,8 @@ export interface ReopenedEntry extends EntryBase {
   issue: number;
   /** The acted entry whose close was undone on the forge. */
   after: number;
+  /** The forge's id for the reopen itself, so a second reopen after the same close is told from the first; missing on entries logged before it was kept. */
+  event?: number;
   by?: { username: string; owner: boolean } | null;
 }
 

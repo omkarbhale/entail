@@ -9,6 +9,7 @@ import {
   ForgeRequestError,
   type Actor,
   type FileUpdate,
+  type Reopen,
   type Blocker,
   type IssueRef,
   type Change,
@@ -402,15 +403,16 @@ export class FakeForge implements WatchForge {
   }
 
   /** Who the forge says reopened each issue last. */
-  readonly reopeners = new Map<number, Actor | null>();
+  readonly reopeners = new Map<number, { event: number; actor: Actor | null }>();
+  #reopenEvents = 0;
 
   /** Someone reopens an issue on the forge, as the forge's own record names them (`null`: it names no one). */
   reopen(number: number, by: Actor | null): void {
-    this.reopeners.set(number, by);
+    this.reopeners.set(number, { event: ++this.#reopenEvents, actor: by });
     this.edit(number, { state: "open" });
   }
 
-  async reopenedBy(number: number): Promise<Actor | null> {
+  async reopenedBy(number: number): Promise<Reopen | null> {
     this.#check();
     return this.reopeners.get(number) ?? null;
   }

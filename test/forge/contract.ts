@@ -356,7 +356,7 @@ export function forgeContract(subject: ForgeContractSubject): void {
 
     test("who reopened an issue is read from the forge's own record of it: the latest reopen's account, or no one", async (t) => {
       const forge = forgeFor(t, "reopened-by");
-      assert.ok(sameActor((await forge.reopenedBy(7))!, actor(OWNER)), "the latest reopen was the owner's, not the reporter's before it");
+      assert.ok(sameActor((await forge.reopenedBy(7))!.actor!, actor(OWNER)), "the latest reopen was the owner's, not the reporter's before it");
       assert.equal(await forge.reopenedBy(2), null, "an issue never reopened has no one who reopened it");
     });
 

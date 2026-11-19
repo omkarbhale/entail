@@ -1,5 +1,6 @@
 import {
   type Actor,
+  type Reopen,
   type Blocker,
   assertEntailLabel,
   type Change,
@@ -607,12 +608,13 @@ export class GitLabForge implements Forge {
     await this.#sendJson("PUT", `${this.#projectRef}/issues/${pathNumber(issueNumber)}`, { state_event: "close" });
   }
 
-  async reopenedBy(issueNumber: number): Promise<Actor | null> {
+  async reopenedBy(issueNumber: number): Promise<Reopen | null> {
     const params = new URLSearchParams({ per_page: String(PAGE_SIZE) });
     const events = await this.#readPages(`${this.#projectRef}/issues/${pathNumber(issueNumber)}/resource_state_events`, params, () => false);
     const reopened = events.filter((raw): raw is Record<string, unknown> => isObject(raw) && raw.state === "reopened" && typeof raw.id === "number");
     const last = reopened.reduce<Record<string, unknown> | undefined>((latest, raw) => (latest === undefined || (raw.id as number) > (latest.id as number) ? raw : latest), undefined);
-    return last !== undefined && isObject(last.user) ? this.#actor(last.user, "issue state event user") : null;
+    if (last === undefined) return null;
+    return { event: last.id as number, actor: isObject(last.user) ? this.#actor(last.user, "issue state event user") : null };
   }
 
   /** GitLab leaves an open issue open when asked to reopen it. */

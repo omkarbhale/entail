@@ -712,11 +712,13 @@ async function noteReopened(issue: Issue, entries: readonly Entry[], forge: Watc
   if (issue.state !== "open") return null;
   const last = entries.findLast((entry): entry is ActedEntry => entry.type === "acted" && entry.issue === issue.number);
   if (last === undefined || !last.closed) return null;
-  if (entries.some((entry) => entry.type === "reopened" && entry.after === last.id)) return null;
-  const who = await forge.reopenedBy(issue.number);
+  const reopen = await forge.reopenedBy(issue.number);
+  const event = reopen?.event;
+  if (entries.some((entry) => entry.type === "reopened" && entry.after === last.id && entry.event === event)) return null;
+  const who = reopen?.actor ?? null;
   const owner = who === null ? null : await forge.currentActor();
   const by = who === null ? null : { username: who.username, owner: owner !== null && sameActor(who, owner) };
-  return record({ type: "reopened", issue: issue.number, after: last.id, by }) as ReopenedEntry;
+  return record({ type: "reopened", issue: issue.number, after: last.id, ...(event === undefined ? {} : { event }), by }) as ReopenedEntry;
 }
 
 /**

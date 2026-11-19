@@ -131,4 +131,19 @@ for (const kind of ["github", "gitlab"] as const) {
     assert.equal(calls(h).at(-1)!.trigger, "reopen");
     assert.equal(pendingReopens(readLog(h.dataDirectory, h.repo)).size, 0);
   });
+
+  test(`${kind}: an issue reopened, closed again outside entail and reopened by the owner is asked about for the second reopen`, async (t) => {
+    const h = await closedByEntail(t, kind);
+    h.forge.reopen(12, h.forge.account(3003, "collaborator"));
+    h.script(12, "fail");
+    await h.pass();
+    h.forge.edit(12, { state: "closed" });
+    await h.pass();
+    assert.equal(pendingReopens(readLog(h.dataDirectory, h.repo)).size, 0, "the reopen closed again outside entail waits for nothing");
+
+    h.forge.reopen(12, await h.forge.currentActor());
+    await h.pass();
+    assert.deepEqual(reopens(h).map((entry) => entry.by?.owner), [false, true], "each reopen is recorded, though one entail close came before both");
+    assert.equal(calls(h).at(-1)!.trigger, "owner-reopen");
+  });
 }
