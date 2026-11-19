@@ -384,6 +384,27 @@ test("the owner's own word is never replaced by a ruling", async (t) => {
   assert.equal(rerun.call.call, "ask");
 });
 
+test("an owner-made call re-checked after a vision change and judged an ask stays an ask, whatever has been earned", async (t) => {
+  const h = harness(t);
+  for (let i = 0; i < RULING_MIN_ANSWERS; i++) seedAnswered(h.dataDirectory, { kind: "telemetry", to: "no" });
+  h.forge.file(45, "Send usage stats home");
+  h.script(45, dependencyAsk({ question_kind: "telemetry" }));
+  await h.pass();
+  const first = calls(h.dataDirectory).find((entry) => entry.issue.number === 45)!;
+  await overrideCall(h.dataDirectory, first.id, OWNER, "go", "Fine, this once.", new Date(Date.now() - 60_000));
+  h.script(45, verdict());
+  await h.pass();
+  assert.equal(calls(h.dataDirectory).filter((entry) => entry.issue.number === 45).at(-1)!.owner?.call, "go");
+
+  const newVision = "# Vision\n\ntally counts words offline.\ntally never adds a second output format.\n";
+  const sha = "c".repeat(40);
+  h.script(45, dependencyAsk({ question_kind: "telemetry", vision_change: "tally never adds a second output format." } as never));
+  await h.pass({ reader: async () => ({ checkout: "/checkout", sha, vision: { text: newVision, commit: sha }, pins: [] }) });
+  const rechecked = calls(h.dataDirectory).filter((entry) => entry.issue.number === 45).at(-1)!;
+  assert.equal(rechecked.recheck?.previousCall, "go");
+  assert.equal(rechecked.call.call, "ask");
+});
+
 test("a ruling is derived from the log and written nowhere: the repo's vision and the call's reading of it stay as they were", async (t) => {
   const h = harness(t);
   for (let i = 0; i < RULING_MIN_ANSWERS; i++) seedAnswered(h.dataDirectory);

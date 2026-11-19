@@ -968,8 +968,8 @@ async function recheckVision(context: JudgeContext, startEntries: readonly Entry
       continue;
     }
     const facts = { model: judgment.facts.model, effort, promptVersion: RECHECK_PROMPT_VERSION, costUsd: judgment.facts.estimatedCostUsd };
-    // A question the re-check would send to the owner is settled by a ruling the same way a new one is.
-    const settled = settleByRuling(judgment.call, { entries: readLog(options.dataDirectory, repo), issueText: call.issueText, pins: reading.pins, now: now() });
+    // The owner's own word is never replaced by a ruling; any other question the re-check would send to the owner may be.
+    const settled = call.owner !== null ? { call: judgment.call, ruling: null, notSettled: null } : settleByRuling(judgment.call, { entries: readLog(options.dataDirectory, repo), issueText: call.issueText, pins: reading.pins, now: now() });
     logSettlement(options, repo, number, judgment.call, settled);
     options.log?.info("rechecked", { repo, issue: number, from: previous, call: settled.call.call, model: judgment.facts.model, costUsd: judgment.facts.estimatedCostUsd });
     if (settled.call.call === previous) {
