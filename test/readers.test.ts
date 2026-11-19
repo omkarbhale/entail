@@ -50,6 +50,21 @@ test("with a base branch set, the call on an issue, the vision re-check, a PR's 
   await suggesting.release();
 });
 
+test("a drift reading is the base branch's head with the work merged since the last check, and its checkout is released", async (t) => {
+  const { develop, readers } = twoBranches(t);
+  const forge = forgeWith("develop");
+  const first = await readers.driftReader("acme/tally", forge, null);
+  assert.equal(first.sha, develop);
+  assert.equal(first.vision?.text, "# Tally\n\nTally counts words and lines.\n");
+  assert.deepEqual(first.commits.map((commit) => commit.subject), ["vision on develop", "vision on main"], "the base branch's own history, not another branch's");
+  assert.deepEqual(first.commits[0]!.paths.sort(), ["VISION.md", "src/lines.ts"]);
+  assert.equal(first.since, null);
+  await first.release();
+  const next = await readers.driftReader("acme/tally", forge, develop);
+  assert.deepEqual([next.commits, next.merged, next.since], [[], 0, develop], "nothing merged since the last check");
+  await next.release();
+});
+
 test("with no base branch set, the readers read the forge's default branch, as before", async (t) => {
   const { main, readers } = twoBranches(t);
   const reading = await readers.reader("acme/tally", forgeWith(null));

@@ -51,7 +51,10 @@ export interface UnenrolledEntry extends EntryBase, ByOwner {
   type: "unenrolled";
 }
 
-/** A change to the repo's settings. A model or effort of null means the default; a base branch of null, the forge's default branch. */
+/**
+ * A change to the repo's settings. A model or effort of null means the default; a base branch of null, the forge's default branch.
+ * `drift` turns the scheduled drift check on or off; `driftEveryDays` is how often it runs, null meaning the default.
+ */
 export interface SettingsEntry extends EntryBase, ByOwner {
   type: "settings";
   confirm?: boolean;
@@ -61,6 +64,8 @@ export interface SettingsEntry extends EntryBase, ByOwner {
   /** A topic the owner pinned, or took out of the pins file, with this change. */
   pinned?: string;
   unpinned?: string;
+  drift?: boolean;
+  driftEveryDays?: number | null;
 }
 
 /**
@@ -585,6 +590,61 @@ export interface VisionGrownEntry extends EntryBase {
   branch: string;
 }
 
+/** Merged work that drifts from the vision: the finding as a drift check made it, before it is filed. */
+export interface DriftFinding {
+  title: string;
+  body: string;
+  /** The vision line the work drifts from, quoted exactly as the vision has it. */
+  visionLine: string;
+  /** The commits of the merged work the finding is about, as full or abbreviated shas. */
+  commits: string[];
+}
+
+/**
+ * A drift check of merged work against the vision ran, or was skipped with
+ * `skipped` saying why (nothing merged since the last check; no VISION.md).
+ * Each finding is filed as an issue labelled `entail:drift` whose body carries
+ * this entry's id and the finding's index in a hidden marker, so a restart
+ * never files one twice.
+ */
+export interface DriftCheckedEntry extends EntryBase {
+  type: "drift-checked";
+  /** What started the check: the schedule, or the owner running `entail drift`. */
+  trigger: "schedule" | "owner";
+  /** The base branch's commit the check read, and the one the previous check read (the work merged between them was checked). */
+  sha: string;
+  since: string | null;
+  /** How many commits had merged between them. */
+  commits: number;
+  visionCommit: string | null;
+  findings: DriftFinding[];
+  leftOut: LeftOut[];
+  /** Why no model run was made, or null when one was. */
+  skipped: string | null;
+  model: string | null;
+  effort: Effort | null;
+  promptVersion: string | null;
+  costUsd: number | null;
+}
+
+/** One finding of a drift check filed as an issue: found already filed, by its marker, or filed now. */
+export interface DriftFiledEntry extends EntryBase {
+  type: "drift-filed";
+  /** The drift-checked entry. */
+  for: number;
+  /** The finding's index in it. */
+  index: number;
+  issue: { number: number; url: string };
+  already: boolean;
+}
+
+/** A drift check gave no answer: the model run failed, or the repo could not be read. Nothing was filed; the schedule tries again sooner than usual. */
+export interface DriftFailedEntry extends EntryBase {
+  type: "drift-failed";
+  trigger: "schedule" | "owner";
+  reason: string;
+}
+
 export type OwnerAction = ConfirmedEntry | OverriddenEntry | AnsweredEntry;
 
 export type Entry =
@@ -609,6 +669,9 @@ export type Entry =
   | SuggestedEntry
   | SuggestionFiledEntry
   | SuggestFailedEntry
+  | DriftCheckedEntry
+  | DriftFiledEntry
+  | DriftFailedEntry
   | BlockedEntry
   | UnblockedEntry
   | VisionSeenEntry
@@ -823,12 +886,16 @@ export interface RepoState {
    * it diffs against and where it merges.
    */
   baseBranch: string | null;
+  /** Whether merged work is checked against the vision on a schedule. Off until the owner turns it on. */
+  drift: boolean;
+  /** How often that check runs, in days, or null for the default. */
+  driftEveryDays: number | null;
   /** The VISION.md a pass last recorded seeing change, or null when none was recorded. */
   vision: { entry: number; commit: string | null; text: string | null } | null;
 }
 
 export function repoState(repo: string, entries: readonly Entry[]): RepoState {
-  const state: RepoState = { repo, enrolled: false, since: null, confirm: true, model: null, effort: null, baseBranch: null, vision: null };
+  const state: RepoState = { repo, enrolled: false, since: null, confirm: true, model: null, effort: null, baseBranch: null, drift: false, driftEveryDays: null, vision: null };
   for (const entry of entries) {
     if (entry.type === "enrolled") {
       state.enrolled = true;
@@ -841,6 +908,8 @@ export function repoState(repo: string, entries: readonly Entry[]): RepoState {
       if (entry.model !== undefined) state.model = entry.model;
       if (entry.effort !== undefined) state.effort = entry.effort;
       if (entry.baseBranch !== undefined) state.baseBranch = entry.baseBranch;
+      if (entry.drift !== undefined) state.drift = entry.drift;
+      if (entry.driftEveryDays !== undefined) state.driftEveryDays = entry.driftEveryDays;
     } else if (entry.type === "vision-seen") {
       state.vision = { entry: entry.id, commit: entry.commit, text: entry.text };
     }

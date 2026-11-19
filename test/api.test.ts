@@ -133,6 +133,11 @@ test("the board enrolls a repo it can read on GitHub, changes its settings and u
   assert.equal((await api.call("PATCH", "/api/repos/acme/tally", { baseBranch: "develop" })).body.baseBranch, "develop");
   assert.equal((await api.call("PATCH", "/api/repos/acme/tally", { baseBranch: "a..b" })).status, 400);
   assert.equal((await api.call("PATCH", "/api/repos/acme/tally", { baseBranch: null })).body.baseBranch, null);
+  const drifting = await api.call("PATCH", "/api/repos/acme/tally", { drift: true, driftEveryDays: 14 });
+  assert.deepEqual([drifting.status, drifting.body.drift, drifting.body.driftEveryDays], [200, true, 14]);
+  assert.equal((await api.call("PATCH", "/api/repos/acme/tally", { drift: "on" })).status, 400);
+  assert.equal((await api.call("PATCH", "/api/repos/acme/tally", { driftEveryDays: 0 })).status, 400);
+  assert.deepEqual((await api.call("PATCH", "/api/repos/acme/tally", { drift: false, driftEveryDays: null })).body.drift, false);
 
   const { body } = await api.call("GET", "/api/repos");
   const [repo] = body.repos;
@@ -159,7 +164,7 @@ test("the board enrolls a repo it can read on GitHub, changes its settings and u
       ["settings", "Omkar"],
       ["unenrolled", "Omkar"],
     ],
-    "every change to the base branch is logged under the owner's name, like the other settings",
+    "every change to the base branch and the drift check is logged under the owner's name, like the other settings",
   );
   assert.equal(api.woken(), 7);
 });

@@ -104,6 +104,45 @@ describe("Repos", () => {
     expect(await screen.findByText("None pinned.")).toBeTruthy();
   });
 
+  it("turns a repo's drift check on at an interval, shows how the last one went, and turns it off", async () => {
+    const api = fakeApi();
+    api.route((method, path, body) => {
+      if (method === "PATCH" && path === "/api/repos/omkarbhale/entail") {
+        const on = body.drift === true;
+        api.state.repos = [
+          aRepo({
+            drift: on,
+            driftEveryDays: on ? (body.driftEveryDays as number) : null,
+            driftCheck: on ? { nextAt: new Date(Date.now() + 86_400_000).toISOString(), last: { state: "done", at: new Date(Date.now() - 3_600_000).toISOString(), commits: 4, found: 2, filed: 2, skipped: null } } : null,
+          }),
+        ];
+        return { status: 200, body: {} };
+      }
+      return undefined;
+    });
+    renderBoard("#/repos");
+    const select = (await screen.findByRole("combobox", { name: "Drift check" })) as HTMLSelectElement;
+    expect(select.value).toBe("off");
+    expect(screen.getByText("entail does not check merged work against the vision unless you turn this on.")).toBeTruthy();
+    await userEvent.selectOptions(select, "Every two weeks");
+    expect(await screen.findByText("Saved")).toBeTruthy();
+    expect(api.sent(/PATCH/u)[0]!.body).toEqual({ drift: true, driftEveryDays: 14 });
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "Drift check" }) as HTMLSelectElement).value).toBe("14"));
+    expect(screen.getByText(/found 2 drifts, 2 filed\./u)).toBeTruthy();
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Drift check" }), "Off");
+    await waitFor(() => expect(api.sent(/PATCH/u)[1]!.body).toEqual({ drift: false }));
+  });
+
+  it("shows an interval set from the CLI that the board has no choice for, and a check that gave no answer", async () => {
+    const api = fakeApi();
+    api.state.repos = [aRepo({ drift: true, driftEveryDays: 3, driftCheck: { nextAt: null, last: { state: "failed", at: new Date(Date.now() - 7_200_000).toISOString(), reason: "timed out" } } })];
+    renderBoard("#/repos");
+    const select = (await screen.findByRole("combobox", { name: "Drift check" })) as HTMLSelectElement;
+    expect(select.value).toBe("3");
+    expect(screen.getByRole("option", { name: "Every 3 days" })).toBeTruthy();
+    expect(screen.getByText(/The last check gave no answer/u)).toBeTruthy();
+  });
+
   it("checks a repo now and says what the check found, or that it failed", async () => {
     const api = fakeApi();
     api.route((method, path) => (method === "POST" && path.endsWith("/check") ? { status: 200, body: { repo: "omkarbhale/entail", at: new Date().toISOString(), judged: 0, posted: 0, failed: false } } : undefined));

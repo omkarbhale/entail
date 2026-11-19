@@ -277,6 +277,17 @@ export type SuggestingView =
   | { state: "done"; at: string; run: number; suggested: number; filed: number }
   | { state: "failed"; at: string; reason: string };
 
+/** A repo's drift check as its card shows it. */
+export interface DriftCheckView {
+  /** ISO time the next check is due, or null while the check is off. */
+  nextAt: string | null;
+  /** How the last check ended, or null when none was made. */
+  last:
+    | { state: "done"; at: string; commits: number; found: number; filed: number; skipped: string | null }
+    | { state: "failed"; at: string; reason: string }
+    | null;
+}
+
 export interface LogPage {
   rows: LogRow[];
   /** The suggestion runs on this page's days, newest first; only with the "all" filter. */
@@ -319,6 +330,12 @@ export interface RepoView {
   blocked: BlockedView[];
   /** Whether the owner already asked for the open backlog to be judged. */
   backlogAsked: boolean;
+  /** Whether merged work is checked against the vision on a schedule. */
+  drift: boolean;
+  /** How often, in days, or null for the default. */
+  driftEveryDays: number | null;
+  /** The repo's drift check: when the next is due and how the last ended; null while it is off and none was made. */
+  driftCheck: DriftCheckView | null;
   /** A suggestion run in flight for the repo, or how the last one ended; null when none was asked for. */
   suggesting: SuggestingView | null;
   /** Why the latest `entail:` label entail tried to put on an issue here did not go on, or null when it did or none was tried. */

@@ -205,6 +205,7 @@ function RepoCard({ repo, settings, showRepo }: { repo: RepoView; settings: Sett
         </span>
       </div>
       <BaseBranch repo={repo} />
+      <DriftCheck repo={repo} now={now} />
       <SuggestWork repo={repo} now={now} showLog={() => showRepo(repo.repo, "log")} />
       <div className="rrow">
         <span className="lbl">Vision</span>
@@ -442,6 +443,50 @@ function Pins({ repo }: { repo: RepoView }) {
         </form>
         <span className="muted">
           Anything touching a pinned topic comes to you, and a PR changing a pinned path merges only on your answer. Kept in <code title={repo.pins.file}>{repo.pins.file.split("/").slice(-3).join("/")}</code>, one topic per line, which you can also edit by hand.
+        </span>
+      </span>
+    </div>
+  );
+}
+
+/** How often the drift check can be set to run from the board, in days; the CLI takes any whole number. */
+const DRIFT_CHOICES: { days: number; label: string }[] = [
+  { days: 1, label: "Every day" },
+  { days: 7, label: "Every week" },
+  { days: 14, label: "Every two weeks" },
+  { days: 30, label: "Every month" },
+];
+
+/** The repo's drift check: whether entail checks the work merged into it against the vision on a schedule, and how often. Off until turned on. */
+function DriftCheck({ repo, now }: { repo: RepoView; now: number }) {
+  const drift = useSave((change: { drift: boolean; driftEveryDays?: number }) => api.changeRepo(repo.repo, change));
+  const every = repo.driftEveryDays ?? 7;
+  const value = repo.drift ? String(every) : "off";
+  const choices = DRIFT_CHOICES.some((one) => one.days === every) ? DRIFT_CHOICES : [...DRIFT_CHOICES, { days: every, label: `Every ${every} days` }].sort((a, b) => a.days - b.days);
+  const last = repo.driftCheck?.last ?? null;
+  return (
+    <div className="rrow">
+      <label className="lbl" htmlFor={`drift-${repo.repo}`}>
+        Drift check
+      </label>
+      <span className="val">
+        <select
+          id={`drift-${repo.repo}`}
+          value={value}
+          onChange={(event) => drift.mutation.mutate(event.target.value === "off" ? { drift: false } : { drift: true, driftEveryDays: Number(event.target.value) })}
+          disabled={drift.mutation.isPending}
+        >
+          <option value="off">Off</option>
+          {choices.map((one) => (
+            <option key={one.days} value={String(one.days)}>
+              {one.label}
+            </option>
+          ))}
+        </select>
+        <Saved pending={drift.mutation.isPending} saved={drift.saved} />
+        <span className="small muted">
+          {repo.drift ? "entail checks the work merged since the last check against the vision, and files each drift as an issue." : "entail does not check merged work against the vision unless you turn this on."}
+          {last === null ? null : last.state === "failed" ? ` The last check gave no answer ${ago(last.at, now)}.` : last.skipped !== null ? ` The last check ${ago(last.at, now)} had nothing to check.` : ` The last check ${ago(last.at, now)} found ${last.found === 0 ? "no drift" : `${last.found} drift${last.found === 1 ? "" : "s"}, ${last.filed} filed`}.`}
         </span>
       </span>
     </div>

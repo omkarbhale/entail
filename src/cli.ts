@@ -56,6 +56,7 @@ import {
   OwnerError,
   repoName,
   repoViews,
+  runSettings,
   unenroll,
   waitingItems,
 } from "./owner.ts";
@@ -64,6 +65,7 @@ import { clearedGoOn, goCallOn, heldActions, loggedRepos, readLog, readSettings,
 import { formatReplay, replay, replayLandings } from "./replay.ts";
 import { forgeHost, forgeTitle, isRepo, repoSetting } from "./repo-ref.ts";
 import { installService, isWsl, machineServiceSystem, serviceStatus, uninstallService, type ServiceInputs } from "./service.ts";
+import { DEFAULT_DRIFT_EVERY_DAYS, DRIFT_TIMEOUT_MS, driftDue, driftEveryDays, fileUnfiledDrift, formatDrift, runDriftCheck, unfiledChecks } from "./drift.ts";
 import { fileUnfiled, formatSuggestions, runSuggestions, SUGGEST_TIMEOUT_MS, SuggestionRuns } from "./suggest.ts";
 import { machineUpdate, update } from "./update.ts";
 import { forgesByBaseBranch, mirrorReader, mirrorReaders, runPass, type PassOptions } from "./watch.ts";
@@ -78,7 +80,7 @@ const USAGE = `usage:
   entail enroll <owner/repo> [--no-confirm] [--since <time>]
   entail unenroll <owner/repo>
   entail repos [--all] [--json]
-  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--base <branch>|default] [--pin <topic>]... [--unpin <topic>]... [--owner <name>] [--notice <command>|none] [--start <command>|none] [--send-back <command>|none] [--backup <git remote url>|none]
+  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--base <branch>|default] [--drift on|off] [--drift-every <days>|default] [--pin <topic>]... [--unpin <topic>]... [--owner <name>] [--notice <command>|none] [--start <command>|none] [--send-back <command>|none] [--backup <git remote url>|none]
   entail backup status
   entail restore <git remote url>
   entail run [--once] [--dry-run] [--interval <seconds>] [--port <n>]
@@ -95,6 +97,7 @@ const USAGE = `usage:
   entail land <owner/repo>#<pr> [--issue <n>] [--model <model>] [--effort <level>] [--json]
   entail replay [--model <model>] [--effort <level>] [--cases <dir>] [--concurrency <n>] [--json]
   entail suggest <owner/repo> [--model <model>] [--effort <level>] [--json]
+  entail drift <owner/repo> [--model <model>] [--effort <level>] [--json]
 
 enroll     watch a repo: entail makes the call on each issue filed or edited from now
            (or --since) on, and on each /entail mention. A repo starts in confirm mode,
@@ -110,7 +113,10 @@ repos      the enrolled repos with confirm mode, model, effort and what waits on
 settings   with a repo, its confirm mode, model and effort ("default" uses the one for
            every repo), and its base branch: the branch entail reads the repo and its
            vision on, follows and merges PRs into and diffs them against ("default" is
-           the forge's default branch), and its pins: --pin adds a topic and --unpin takes one
+           the forge's default branch), whether entail checks the work merged into it
+           against the vision on a schedule (--drift on|off, off until you turn it on;
+           --drift-every <days>|default, ${DEFAULT_DRIFT_EVERY_DAYS} days by default), and its
+           pins: --pin adds a topic and --unpin takes one
            out of the repo's pins file, each logged with your name, and the pins are listed
            ("anything touching a pinned topic comes to you"; the file also takes hand edits);
            without, your name on comments, the default model and effort, the
@@ -169,6 +175,12 @@ suggest    suggest work for an enrolled repo from its vision and the product as 
            (the board's Suggest work does the same): file each suggestion as an issue
            labelled entail:suggested, which then gets the usual call like any issue, and
            print what it considered and left out. A run may take up to ${SUGGEST_TIMEOUT_MS / 60_000} minutes.
+drift      check the work merged into an enrolled repo since the last drift check against
+           its vision now, as the schedule does while entail runs: file each place it drifts
+           as an issue labelled entail:drift, quoting the vision line, which then gets the
+           usual call like any issue, and print what it left out. A drift on a vision line
+           that already has an open drift issue is not filed again. A check may take up to
+           ${DRIFT_TIMEOUT_MS / 60_000} minutes.
 
 --model    the model to run (default: the setting, ${DEFAULT_MODEL} unless changed)
 --effort   ${EFFORTS.join(", ")} (default: the setting, ${DEFAULT_EFFORT} unless changed; for
@@ -223,6 +235,8 @@ export async function main(argv: string[]): Promise<number> {
         return await replayCommand(rest);
       case "suggest":
         return await suggestCommand(rest);
+      case "drift":
+        return await driftCommand(rest);
       case undefined:
       case "help":
       case "--help":
@@ -412,7 +426,7 @@ function reposCommand(args: string[]): number {
     for (const repo of repos) {
       const own = (value: string | null) => (value === null ? " (default)" : "");
       console.log(
-        `${repo.repo}${repo.enrolled ? "" : " (not enrolled)"}: confirm mode ${repo.confirm ? "on" : "off"}, ${repo.uses.model}${own(repo.model)} at ${repo.uses.effort} effort${own(repo.effort)}${repo.baseBranch === null ? "" : `, base branch ${repo.baseBranch}`}; ${repo.calls} calls, ${repo.waiting} waiting on you` +
+        `${repo.repo}${repo.enrolled ? "" : " (not enrolled)"}: confirm mode ${repo.confirm ? "on" : "off"}, ${repo.uses.model}${own(repo.model)} at ${repo.uses.effort} effort${own(repo.effort)}${repo.baseBranch === null ? "" : `, base branch ${repo.baseBranch}`}${repo.drift ? `, drift check every ${driftEveryDays(repo)} days` : ""}; ${repo.calls} calls, ${repo.waiting} waiting on you` +
           (repo.checked > 0 ? `; you confirmed ${repo.agreed} of the ${repo.checked} calls you checked` : ""),
       );
     }
@@ -436,6 +450,8 @@ async function settingsCommand(args: string[]): Promise<number> {
     base: { type: "string" },
     pin: { type: "string", multiple: true },
     unpin: { type: "string", multiple: true },
+    drift: { type: "string" },
+    "drift-every": { type: "string" },
     owner: { type: "string" },
     notice: { type: "string" },
     start: { type: "string" },
@@ -456,6 +472,15 @@ async function settingsCommand(args: string[]): Promise<number> {
     if (values.model !== undefined) change.model = values.model === "default" ? null : values.model;
     if (values.effort !== undefined) change.effort = values.effort === "default" ? null : values.effort;
     if (values.base !== undefined) change.baseBranch = values.base === "default" ? null : values.base;
+    if (values.drift !== undefined) {
+      if (values.drift !== "on" && values.drift !== "off") throw new UsageError("--drift is on or off");
+      change.drift = values.drift === "on";
+    }
+    if (values["drift-every"] !== undefined) {
+      const days = values["drift-every"] === "default" ? null : Number(values["drift-every"]);
+      if (days !== null && !/^\d+$/u.test(values["drift-every"])) throw new UsageError("--drift-every is a whole number of days, or default");
+      change.driftEveryDays = days;
+    }
     const repo = repoName(positionals[0]!);
     // Each pin is a change of its own, so each is logged on its own.
     const pins = [...(values.unpin ?? []).map((unpin) => ({ unpin })), ...(values.pin ?? []).map((pin) => ({ pin }))];
@@ -467,7 +492,7 @@ async function settingsCommand(args: string[]): Promise<number> {
     if (state === undefined) throw new Error(`${repo} has never been enrolled`);
     const settings = settingsIn(dataDirectory);
     console.log(
-      `${repo}: confirm mode ${state.confirm ? "on" : "off"}, model ${state.model ?? `${settings.model} (default)`}, effort ${state.effort ?? `${settings.effort} (default)`}, base branch ${state.baseBranch ?? `${forgeTitle(repo)}'s default branch (default)`}`,
+      `${repo}: confirm mode ${state.confirm ? "on" : "off"}, model ${state.model ?? `${settings.model} (default)`}, effort ${state.effort ?? `${settings.effort} (default)`}, base branch ${state.baseBranch ?? `${forgeTitle(repo)}'s default branch (default)`}, drift check ${state.drift ? `on, every ${driftEveryDays(state)} days${state.driftEveryDays === null ? " (default)" : ""}` : "off"}`,
     );
     const pinned = readPinsSync(pinsFile(dataDirectory, repoSetting(repo)));
     if (pinned.length > 0) console.log(`pins: ${pinned.join("; ")}`);
@@ -476,6 +501,7 @@ async function settingsCommand(args: string[]): Promise<number> {
   if (values.confirm !== undefined) throw new UsageError("--confirm is a setting of one repo: name it");
   if (values.pin !== undefined || values.unpin !== undefined) throw new UsageError("--pin and --unpin are for one repo: name it");
   if (values.base !== undefined) throw new UsageError("--base is a setting of one repo: name it");
+  if (values.drift !== undefined || values["drift-every"] !== undefined) throw new UsageError("--drift and --drift-every are settings of one repo: name it");
   const change: Record<string, unknown> = {};
   for (const key of ["owner", "model", "effort"] as const) if (values[key] !== undefined) change[key] = values[key];
   if (values.notice !== undefined) change.notice = values.notice === "none" ? null : values.notice;
@@ -573,8 +599,9 @@ async function runCommand(args: string[]): Promise<number> {
   const forges = forgesByBaseBranch(dataDirectory, (repo, baseBranch) => createForge(repoSetting(repo), undefined, baseBranch));
   const seen = new Map<string, ChangeDeduplicator>();
   const cursors = new CursorStore(dataDirectory);
-  const { reader, prReader, suggestReader } = mirrorReaders(dataDirectory);
+  const { reader, prReader, suggestReader, driftReader } = mirrorReaders(dataDirectory);
   const runner = new ClaudeRunner();
+  const driftRunner = new ClaudeRunner({ timeoutMs: DRIFT_TIMEOUT_MS });
   const stop = new AbortController();
   const passOptions = async (): Promise<PassOptions> => ({
     dataDirectory,
@@ -659,6 +686,7 @@ async function runCommand(args: string[]): Promise<number> {
       },
       nextDue: () => nextDue(dataDirectory),
       afterPass: async () => {
+        if (!stop.signal.aborted) await dueDriftChecks(dataDirectory, { forgeFor: forgeOf, read: driftReader, runner: driftRunner, log, signal: stop.signal });
         await notifier.check(waitingItems(dataDirectory, await caseBook(dataDirectory)));
         await notifier.health(health.repos(), new Date());
         await notifier.stalled(repoViews(dataDirectory, settingsIn(dataDirectory)).flatMap((view) => view.stalled.map((stalled) => ({ repo: view.repo, stalled }))));
@@ -1137,6 +1165,65 @@ async function suggestCommand(args: string[]): Promise<number> {
     console.log(`\n${runLine(outcome.facts, choice)}; each filed issue gets entail's usual call on its next pass`);
   } else console.error(`entail: ${outcome.failed.reason}`);
   return outcome.ok ? 0 : 1;
+}
+
+async function driftCommand(args: string[]): Promise<number> {
+  const { values, positionals } = parse(args, RUN_OPTIONS);
+  const repo = oneRepo(positionals, "drift");
+  if (values.effort !== undefined && !(EFFORTS as readonly string[]).includes(values.effort)) throw new UsageError(`--effort must be one of ${EFFORTS.join(", ")}`);
+  const dataDirectory = ensureDataDirectory();
+  const view = repoViews(dataDirectory, settingsIn(dataDirectory)).find((one) => one.repo === repo);
+  if (view === undefined) throw new Error(`${repo} is not enrolled: enroll it first with entail enroll ${repo}`);
+  const choice = { model: values.model ?? view.uses.model, effort: (values.effort as Effort | undefined) ?? view.uses.effort };
+  if (!values.json) console.error(`Checking the work merged into ${repo} against its vision with ${choice.model} at ${choice.effort} effort; this can take a while...`);
+  const outcome = await runDriftCheck({
+    dataDirectory,
+    repo,
+    by: await ownerName(dataDirectory),
+    trigger: "owner",
+    forge: repoForge(dataDirectory, repo),
+    read: mirrorReaders(dataDirectory).driftReader,
+    runner: new ClaudeRunner({ timeoutMs: DRIFT_TIMEOUT_MS }),
+    ...choice,
+  });
+  if (values.json) console.log(JSON.stringify(outcome, null, 2));
+  else if (outcome.ok) {
+    console.log(formatDrift(outcome.check, outcome.filed));
+    if (outcome.facts !== null) console.log(`\n${runLine(outcome.facts, choice)}; each filed issue gets entail's usual call on its next pass`);
+  } else console.error(`entail: ${outcome.failed.reason}`);
+  return outcome.ok ? 0 : 1;
+}
+
+/**
+ * The drift checks that are due, one repo after another, and the findings an
+ * earlier check recorded but did not file. A repo whose check stops on an error
+ * is logged and left for its next try; the others still run.
+ */
+async function dueDriftChecks(
+  dataDirectory: string,
+  options: { forgeFor: (repo: string) => Forge; read: Parameters<typeof runDriftCheck>[0]["read"]; runner: ClaudeRunner; log: OperationalLog; signal: AbortSignal },
+): Promise<void> {
+  const now = new Date();
+  for (const repo of loggedRepos(dataDirectory)) {
+    if (options.signal.aborted) return;
+    const entries = readLog(dataDirectory, repo);
+    const state = repoState(repo, entries);
+    if (!state.enrolled) continue;
+    const due = state.drift && driftDue(entries, now);
+    if (!due && unfiledChecks(entries).length === 0) continue;
+    try {
+      const by = await ownerName(dataDirectory, repo);
+      if (!due) {
+        await fileUnfiledDrift(dataDirectory, repo, options.forgeFor(repo), by);
+        continue;
+      }
+      const choice = runSettings(state, settingsIn(dataDirectory));
+      const outcome = await runDriftCheck({ dataDirectory, repo, by, trigger: "schedule", forge: options.forgeFor(repo), read: options.read, runner: options.runner, ...choice, signal: options.signal, log: options.log });
+      console.log(outcome.ok ? `${repo}: drift check: ${outcome.check.findings.length} finding${outcome.check.findings.length === 1 ? "" : "s"}, ${outcome.filed.length} filed` : `${repo}: drift check gave no answer: ${outcome.failed.reason}`);
+    } catch (error) {
+      options.log.warn("drift-error", { repo, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
 }
 
 /** When the earliest owner's action still in its undo window comes due, across the enrolled repos. */
