@@ -20,6 +20,7 @@ import {
   type ForgeInstance,
   ForgeCutOffError,
   ForgeLoggedOutError,
+  ForgeUntrustedCertificateError,
   ForgeRequestError,
   MergePendingError,
   type ForgeSetting,
@@ -868,6 +869,9 @@ export class GitHubForge implements Forge {
     } catch (error) {
       if (error instanceof TransportError && error.loggedOut) {
         throw new ForgeLoggedOutError(this.setting.host, error.message);
+      }
+      if (error instanceof TransportError && error.untrustedCertificate) {
+        throw new ForgeUntrustedCertificateError(this.setting.host, "gh", error.message);
       }
       if (error instanceof TransportError && error.cutOff) {
         throw new ForgeCutOffError(this.setting.host, request.method, request.path, error.message);

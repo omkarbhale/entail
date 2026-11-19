@@ -76,10 +76,13 @@ export const HOLD_MS = 10_000;
 /** An owner's request entail cannot carry out, with the HTTP status it answers to. */
 export class OwnerError extends Error {
   readonly status: 400 | 404 | 409 | 502;
-  constructor(status: 400 | 404 | 409 | 502, message: string) {
+  /** More for the board to read than the message, sent with it in the answer. */
+  readonly extra: Record<string, unknown>;
+  constructor(status: 400 | 404 | 409 | 502, message: string, extra: Record<string, unknown> = {}) {
     super(message);
     this.name = "OwnerError";
     this.status = status;
+    this.extra = extra;
   }
 }
 

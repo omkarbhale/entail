@@ -29,7 +29,8 @@ import { ensureDataDirectory } from "./data-directory.ts";
 import { EventBus, watchLogs } from "./events.ts";
 import { createForge } from "./forge/create-forge.ts";
 import type { Forge, ForgeSetting } from "./forge/forge.ts";
-import { allChecksFinished } from "./forge/forge.ts";
+import { allChecksFinished, ForgeUntrustedCertificateError } from "./forge/forge.ts";
+import { gitCaCertificate, TRUST_CLI, untrustedCertificateMessage } from "./forge/trust.ts";
 import { Health } from "./health.ts";
 import { formatCall, judge, type JudgeOptions } from "./judgment.ts";
 import { formatLandingCall, judgeLanding } from "./landing.ts";
@@ -348,8 +349,16 @@ async function enrollCommand(args: string[]): Promise<number> {
   // Reading the repo checks it exists and the forge's CLI can see it, and that
   // entail serves its forge's version, as a self-hosted GitLab's may not be.
   const forge = createForge(repoSetting(repo));
-  await forge.project();
-  const { unsupported } = await forge.instance();
+  let unsupported: string | null;
+  try {
+    await forge.project();
+    ({ unsupported } = await forge.instance());
+  } catch (error) {
+    if (!(error instanceof ForgeUntrustedCertificateError)) throw error;
+    // Name the CA certificate file git already trusts for the host, so the steps can be followed as they stand.
+    const file = error.cli === TRUST_CLI ? await gitCaCertificate(error.host) : null;
+    throw new Error(untrustedCertificateMessage(error.host, error.cli, error.detail, file));
+  }
   if (unsupported !== null) throw new Error(`${repo} cannot be enrolled: ${unsupported}`);
   const state = enroll(dataDirectory, repo, await ownerName(dataDirectory, repo), { confirm: values["no-confirm"] !== true, ...(since ? { since } : {}) });
   console.log(`${repo} is enrolled: entail judges issues filed from ${state.since} on, and each /entail mention. Confirm mode is ${state.confirm ? "on" : "off"}.`);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
 import { test, type TestContext } from "node:test";
 import { createForge } from "../../src/forge/create-forge.ts";
-import { ForgeCutOffError, ForgeLoggedOutError, ForgeRequestError, projectKey, RateLimitedError } from "../../src/forge/forge.ts";
+import { ForgeCutOffError, ForgeLoggedOutError, ForgeRequestError, ForgeUntrustedCertificateError, projectKey, RateLimitedError } from "../../src/forge/forge.ts";
 import { CHANGE_OVERLAP_MS, GitLabForge, REQUIRED_PIPELINE, unsupportedGitLabVersion } from "../../src/forge/gitlab.ts";
 import { type Exchange, loadRecording, RecordedTransport } from "./recorded-transport.ts";
 
@@ -663,4 +663,18 @@ test("a single read cut off mid-stream is a dropped connection, and a body that 
   ]);
   await assert.rejects(forge.pullRequest(4), (error: unknown) => error instanceof ForgeCutOffError && /Stream error/.test(error.message));
   await assert.rejects(forge.pullRequest(5), (error: unknown) => error instanceof ForgeRequestError && /not JSON/.test(error.message));
+});
+
+test("a host whose certificate glab does not trust is explained in plain words, with the step that makes glab trust it", async (t) => {
+  const message = `glab api GET projects/acme%2Ftally on ${SELF_HOSTED}: ERROR Get "https://${SELF_HOSTED}/api/v4/projects/acme%2Ftally": tls: failed to verify certificate: x509: certificate signed by unknown authority.`;
+  const { forge } = forgeOn(t, [{ request: { method: "GET", path: "projects/acme%2Ftally" }, error: { message, untrustedCertificate: true } }]);
+  await assert.rejects(forge.project(), (error: unknown) => {
+    assert.ok(error instanceof ForgeUntrustedCertificateError);
+    assert.equal(error.host, SELF_HOSTED);
+    assert.equal(error.cli, "glab");
+    assert.match(error.message, /glab does not trust the certificate of gitlab\.example\.org/u);
+    assert.match(error.message, /git trusting the host does not carry over/u);
+    assert.match(error.message, /glab config set ca_cert \/path\/to\/ca\.pem --host gitlab\.example\.org/u);
+    return true;
+  });
 });

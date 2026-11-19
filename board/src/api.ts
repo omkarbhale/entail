@@ -22,14 +22,28 @@ export type * from "../../src/api-types.ts";
  */
 
 /** A request entail refused, or one that never reached it. */
+/** A host whose certificate the forge's CLI refuses as signed by an authority it does not know. */
+export interface UntrustedCertificate {
+  host: string;
+  cli: string;
+  /** Whether entail can set the CLI to trust the host's certificate authority: only `glab` has a per-host setting for it. */
+  fixable: boolean;
+  /** The CA certificate file git is set to trust for the host, when git names one. */
+  caCertificate: string | null;
+  command: string | null;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   /** Whether entail did not answer at all, so nothing can have been recorded. */
   readonly network: boolean;
-  constructor(status: number, message: string, network: boolean) {
+  /** Set when the forge's CLI does not trust the host's certificate, with what the board needs to offer the fix. */
+  readonly untrustedCertificate: UntrustedCertificate | null;
+  constructor(status: number, message: string, network: boolean, untrustedCertificate: UntrustedCertificate | null = null) {
     super(message);
     this.status = status;
     this.network = network;
+    this.untrustedCertificate = untrustedCertificate;
   }
 }
 
@@ -52,7 +66,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   if (!response.ok) {
     const message = typeof parsed === "object" && parsed !== null && typeof (parsed as { error?: unknown }).error === "string" ? (parsed as { error: string }).error : `entail answered ${response.status}`;
-    throw new ApiError(response.status, message, response.status >= 500 && response.status !== 502);
+    const untrusted = typeof parsed === "object" && parsed !== null ? ((parsed as { untrustedCertificate?: UntrustedCertificate }).untrustedCertificate ?? null) : null;
+    throw new ApiError(response.status, message, response.status >= 500 && response.status !== 502, untrusted);
   }
   return parsed as T;
 }
@@ -89,6 +104,7 @@ export const api = {
   undo: (id: number) => request<{ undone: ActionView; call: CallView }>("POST", `/api/calls/${id}/undo`, {}),
 
   enroll: (repo: string) => request<EnrollResponse>("POST", "/api/repos", { repo }),
+  trustCertificate: (host: string, caCertificate: string) => request<{ host: string; caCertificate: string }>("POST", "/api/trust", { cli: "glab", host, caCertificate }),
   unenroll: (repo: string) => request<unknown>("DELETE", `/api/repos/${repoPath(repo)}`, {}),
   changeRepo: (repo: string, change: { confirm?: boolean; model?: string | null; effort?: string | null; baseBranch?: string | null }) => request<unknown>("PATCH", `/api/repos/${repoPath(repo)}`, change),
   check: (repo: string) => request<CheckResponse>("POST", `/api/repos/${repoPath(repo)}/check`, {}),

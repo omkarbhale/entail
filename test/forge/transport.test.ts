@@ -262,3 +262,27 @@ test("a CLI that is not installed fails as missing, not as logged out", async (t
     (error: unknown) => error instanceof TransportError && !error.cliMissing,
   );
 });
+
+const UNKNOWN_AUTHORITY =
+  'ERROR Get "https://git.example.org/api/v4/projects/acme%2Ftally": tls: failed to verify certificate: x509: certificate signed by unknown authority.\n';
+
+test("a certificate signed by an authority the CLI does not know is told apart from any other failure to connect", async (t) => {
+  const cli = fakeCli(t, "", 1, UNKNOWN_AUTHORITY);
+  await assert.rejects(
+    new CliTransport("glab", { executable: cli.path }).request({ host: "git.example.org", method: "GET", path: "projects/acme%2Ftally" }),
+    (error: unknown) => error instanceof TransportError && error.untrustedCertificate && !error.loggedOut && !error.cutOff,
+  );
+  const mac = fakeCli(t, "", 1, 'Get "https://git.example.org/": tls: failed to verify certificate: x509: “git.example.org” certificate is not trusted\n');
+  await assert.rejects(
+    new CliTransport("gh", { executable: mac.path }).request({ host: "git.example.org", method: "GET", path: "user" }),
+    (error: unknown) => error instanceof TransportError && error.untrustedCertificate,
+  );
+});
+
+test("an expired certificate or one for another name is not an untrusted authority, which a trusted CA would not fix", async (t) => {
+  const cli = fakeCli(t, "", 1, 'Get "https://git.example.org/": tls: failed to verify certificate: x509: certificate has expired or is not yet valid\n');
+  await assert.rejects(
+    new CliTransport("glab", { executable: cli.path }).request({ host: "git.example.org", method: "GET", path: "user" }),
+    (error: unknown) => error instanceof TransportError && !error.untrustedCertificate,
+  );
+});

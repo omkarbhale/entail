@@ -180,6 +180,60 @@ describe("Repos", () => {
     expect(api.sent(/POST \/api\/repos\/gitlab%3A%2F%2Fgit\.example\.com%2Facme%2Ftally\/check/u)).toHaveLength(1);
   });
 
+  it("explains a host whose certificate glab does not trust, and trusts it and enrolls again only after the owner confirms the host and the file", async () => {
+    const api = fakeApi({ repos: [] });
+    let trusted = false;
+    api.route((method, path, body) => {
+      if (method === "POST" && path === "/api/repos") {
+        if (!trusted) {
+          return {
+            status: 502,
+            body: {
+              error: "entail could not read gitlab://git.example.com/acme/tally on GitLab: glab does not trust the certificate of git.example.com",
+              untrustedCertificate: { host: "git.example.com", cli: "glab", fixable: true, caCertificate: "/etc/ca/team.pem", command: "glab config set ca_cert /etc/ca/team.pem --host git.example.com" },
+            },
+          };
+        }
+        const repo = aRepo({ repo: body.repo, calls: 0, waiting: 0, checked: 0, agreed: 0, vision: null, checkedAt: null });
+        api.state.repos = [...api.state.repos, repo];
+        return { status: 201, body: { repo, openIssues: 0 } };
+      }
+      if (method === "POST" && path === "/api/trust") {
+        trusted = true;
+        return { status: 200, body: { host: body.host, caCertificate: body.caCertificate } };
+      }
+      return undefined;
+    });
+    renderBoard("#/repos");
+    await userEvent.type(await screen.findByRole("textbox", { name: "Repo to enroll" }), "gitlab://git.example.com/acme/tally");
+    await userEvent.click(screen.getByRole("button", { name: "Enroll" }));
+    expect(await screen.findByText(/glab does not trust the certificate of git\.example\.com.*Nothing was enrolled\./u)).toBeTruthy();
+    const file = screen.getByRole("textbox", { name: "CA certificate file to trust for git.example.com" }) as HTMLInputElement;
+    expect(file.value).toBe("/etc/ca/team.pem");
+    expect(api.sent(/POST \/api\/trust/u), "nothing is written before the owner confirms").toHaveLength(0);
+    await userEvent.click(screen.getByRole("button", { name: "Trust git.example.com with this file and enroll" }));
+    await screen.findByRole("link", { name: /gitlab:\/\/git\.example\.com\/acme\/tally/u });
+    expect(api.sent(/POST \/api\/trust/u).map((sent) => sent.body)).toEqual([{ cli: "glab", host: "git.example.com", caCertificate: "/etc/ca/team.pem" }]);
+    expect(api.sent(/POST \/api\/repos$/u)).toHaveLength(2);
+  });
+
+  it("asks for the CA certificate file when git names none, and offers the fix only once one is given", async () => {
+    const api = fakeApi({ repos: [] });
+    api.route((method, path) => {
+      if (method === "POST" && path === "/api/repos") {
+        return { status: 502, body: { error: "entail could not read gitlab://git.example.com/acme/tally on GitLab: glab does not trust it", untrustedCertificate: { host: "git.example.com", cli: "glab", fixable: true, caCertificate: null, command: null } } };
+      }
+      return undefined;
+    });
+    renderBoard("#/repos");
+    await userEvent.type(await screen.findByRole("textbox", { name: "Repo to enroll" }), "gitlab://git.example.com/acme/tally");
+    await userEvent.click(screen.getByRole("button", { name: "Enroll" }));
+    const file = (await screen.findByRole("textbox", { name: "CA certificate file to trust for git.example.com" })) as HTMLInputElement;
+    expect(file.value).toBe("");
+    expect(screen.getByText(/git names no CA certificate file for this host/u)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Trust git.example.com with this file and enroll" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("asks before unenrolling, saying what happens to what waits", async () => {
     const api = fakeApi();
     api.route((method) => {

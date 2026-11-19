@@ -19,6 +19,7 @@ import {
   type ForgeInstance,
   ForgeCutOffError,
   ForgeLoggedOutError,
+  ForgeUntrustedCertificateError,
   ForgeRequestError,
   type ForgeSetting,
   type ForgeTarget,
@@ -719,6 +720,9 @@ export class GitLabForge implements Forge {
     } catch (error) {
       if (error instanceof TransportError && error.loggedOut) {
         throw new ForgeLoggedOutError(this.setting.host, error.message);
+      }
+      if (error instanceof TransportError && error.untrustedCertificate) {
+        throw new ForgeUntrustedCertificateError(this.setting.host, "glab", error.message);
       }
       if (error instanceof TransportError && error.cutOff) {
         throw new ForgeCutOffError(this.setting.host, request.method, request.path, error.message);

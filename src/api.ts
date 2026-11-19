@@ -1,13 +1,14 @@
 import { DrainingError } from "./loop.ts";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { extname, join, normalize, sep } from "node:path";
+import { extname, isAbsolute, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BackupView, CheckResponse, EnrollResponse, FailingView, LogFilter, SettingsView, StatusView, SuggestResponse } from "./api-types.ts";
 import { checkRemote, readBackupState, shownRemote } from "./backup.ts";
 import type { Case } from "./case-book.ts";
 import type { EventBus } from "./events.ts";
-import type { Forge } from "./forge/forge.ts";
+import { type Forge, ForgeUntrustedCertificateError } from "./forge/forge.ts";
+import { gitCaCertificate, TRUST_CLI, trustCertificate, trustCommand, untrustedCertificateMessage } from "./forge/trust.ts";
 import { failingView, type Health } from "./health.ts";
 import { EFFORTS, type Effort } from "./model-runner.ts";
 import {
@@ -33,7 +34,7 @@ import {
 } from "./owner.ts";
 import { SuggestionRunningError, type SuggestionRuns } from "./suggest.ts";
 import { loggedRepos, readLog, readSettings, repoState, writeSettings, type GlobalSettings } from "./records.ts";
-import { forgeTitle } from "./repo-ref.ts";
+import { forgeTitle, isSelfHostedHost } from "./repo-ref.ts";
 
 /**
  * entail's board and the small JSON API behind it, on the loopback
@@ -65,6 +66,9 @@ import { forgeTitle } from "./repo-ref.ts";
  *   POST   /api/repos/:owner/:name/backlog    judges the issues open on the forge that have no call yet
  *   POST   /api/repos/:owner/:name/suggest    {"model"?: string, "effort"?: string}: starts a run that suggests work from the vision and the product,
  *                                             filing each suggestion as an issue labelled entail:suggested; 202 with the run, 409 while one runs for the repo
+ *   POST   /api/trust                         {"cli": "glab", "host": "git.example.com", "caCertificate": "/abs/ca.pem"}: sets glab to trust that CA file for that
+ *                                             self-hosted host, after the owner confirmed both on the board; enrolling a host glab does not trust answers 502
+ *                                             with `untrustedCertificate` (host, cli, fixable, caCertificate, command) for the board to offer it
  *   GET    /api/settings                      the owner's name, the default model and effort, the notice and start commands and the backup remote with how its last push went
  *   PATCH  /api/settings                      {"owner"?: string, "model"?: string, "effort"?: string, "notice"?: string|null, "start"?: string|null, "backup"?: string|null},
  *                                             checked as `entail settings` checks them
@@ -132,6 +136,12 @@ export interface ApiOptions {
   board?: string | null;
   /** Where the board is served, for the status line and notices. */
   url?: string;
+  /**
+   * How the board helps with a host whose certificate `glab` does not trust:
+   * the CA certificate file git is set to trust for a host, and setting `glab`
+   * to trust a file for a host. The real ones unless a test replaces them.
+   */
+  trust?: { caCertificate: (host: string) => Promise<string | null>; apply: (host: string, file: string) => Promise<void> };
   /** The entail script this process runs, so `entail update` can tell which checkout it runs from. */
   cli?: string;
 }
@@ -148,7 +158,7 @@ export function createApi(options: ApiOptions): Server {
   return createServer((request, response) => {
     handle(options, request, response).catch((error: unknown) => {
       if (response.headersSent) return response.end();
-      if (error instanceof OwnerError) send(response, error.status, { error: error.message });
+      if (error instanceof OwnerError) send(response, error.status, { ...error.extra, error: error.message });
       else if (error instanceof DrainingError) send(response, 409, { error: "entail is stopping for an update; check again once it has restarted" });
       else send(response, 500, { error: error instanceof Error ? error.message : String(error) });
     });
@@ -250,7 +260,7 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
         await forge.project();
         const { unsupported } = await forge.instance();
         return { openIssues: (await forge.openIssueNumbers()).length, unsupported };
-      });
+      }, options);
       if (unsupported !== null) throw new OwnerError(409, `${repo} cannot be enrolled: ${unsupported}`);
       enroll(dataDirectory, repo, await options.owner(repo), { ...(typeof body.confirm === "boolean" ? { confirm: body.confirm } : {}), ...(since ? { since } : {}) }, now());
       const view = repoViews(dataDirectory, settings(), checkedAt(options)).find((candidate) => candidate.repo === repo)!;
@@ -272,7 +282,7 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
     }
     if (action === "backlog" && method === "POST") {
       if (options.forgeFor === undefined) throw new OwnerError(409, `entail cannot read ${forgeTitle(name)} from here`);
-      const open = await reach(name, () => options.forgeFor!(name).openIssueNumbers());
+      const open = await reach(name, () => options.forgeFor!(name).openIssueNumbers(), options);
       const issues = askBacklog(dataDirectory, name, await options.owner(), open, now());
       return send(response, 200, changed({ repo: name, issues }));
     }
@@ -303,6 +313,23 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
     return send(response, 405, { error: `${method} is not allowed on ${path}` });
   }
 
+  if (path === "/api/trust") {
+    if (method !== "POST") return send(response, 405, { error: `${method} is not allowed on ${path}` });
+    // The one place entail writes a forge CLI's trust setting, and only for the
+    // host and the file the owner confirmed on the board.
+    const body = await readJson(request);
+    if (body.cli !== TRUST_CLI) throw new OwnerError(400, `only ${TRUST_CLI} has a per-host trusted certificate setting; cli is "${TRUST_CLI}"`);
+    if (typeof body.host !== "string" || !isSelfHostedHost(body.host)) throw new OwnerError(400, "host is the host name of a self-hosted GitLab, with no scheme or port");
+    if (typeof body.caCertificate !== "string" || !isAbsolute(body.caCertificate)) throw new OwnerError(400, "caCertificate is the absolute path of the CA certificate file to trust");
+    const host = body.host.toLowerCase();
+    try {
+      await (options.trust?.apply ?? trustCertificate)(host, body.caCertificate);
+    } catch (error) {
+      throw new OwnerError(409, error instanceof Error ? error.message : String(error));
+    }
+    return send(response, 200, { host, cli: TRUST_CLI, caCertificate: body.caCertificate });
+  }
+
   if (path === "/api/settings") {
     if (method === "GET") return send(response, 200, settingsView(settings(), dataDirectory));
     if (method === "PATCH") {
@@ -331,10 +358,18 @@ function failingOf(health: Health, repo: string): FailingView | null {
   return failing === null ? null : failingView(failing);
 }
 
-async function reach<T>(repo: string, read: () => Promise<T>): Promise<T> {
+async function reach<T>(repo: string, read: () => Promise<T>, options?: ApiOptions): Promise<T> {
   try {
     return await read();
   } catch (error) {
+    if (error instanceof ForgeUntrustedCertificateError) {
+      // The board offers to fix this, after the owner says so; nothing is changed here.
+      const fixable = error.cli === TRUST_CLI && isSelfHostedHost(error.host);
+      const file = fixable ? await (options?.trust?.caCertificate ?? gitCaCertificate)(error.host).catch(() => null) : null;
+      throw new OwnerError(502, `entail could not read ${repo} on ${forgeTitle(repo)}: ${untrustedCertificateMessage(error.host, error.cli, error.detail, file)}`, {
+        untrustedCertificate: { host: error.host, cli: error.cli, fixable, caCertificate: file, command: fixable && file !== null ? trustCommand(error.host, file) : null },
+      });
+    }
     throw new OwnerError(502, `entail could not read ${repo} on ${forgeTitle(repo)}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
