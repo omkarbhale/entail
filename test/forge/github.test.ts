@@ -733,3 +733,11 @@ test("updateFile creates a file the base branch does not have, and a refusal is 
   ]);
   await assert.rejects(forge.updateFile("VISION.md", (current) => (current === null ? "New.\n" : null), "m"), (error: unknown) => error instanceof ForgeRequestError && error.status === 409);
 });
+
+test("commitsTouching lists the base branch's newest commits on a file with their full messages", async (t) => {
+  const { forge } = forgeOn(t, [
+    REPO_READ,
+    { request: { method: "GET", path: "repos/acme/tally/commits?sha=main&path=VISION.md&per_page=30" }, response: { status: 200, body: [{ sha: "c2", commit: { message: "Add\n\nLine." } }, { sha: "c1", commit: { message: "Older" } }] } },
+  ]);
+  assert.deepEqual(await forge.commitsTouching("VISION.md"), [{ commit: "c2", message: "Add\n\nLine." }, { commit: "c1", message: "Older" }]);
+});

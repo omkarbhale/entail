@@ -472,6 +472,9 @@ export interface Forge {
    */
   updateFile(path: string, change: (current: string | null) => string | null, message: string): Promise<FileUpdate>;
 
+  /** The newest commits on the base branch that touched `path`, newest first, with each one's full message. */
+  commitsTouching(path: string): Promise<{ commit: string; message: string }[]>;
+
   /**
    * Merges a PR only at `sha`, never bypassing rules and never through the
    * forge's auto-merge. Every definitive outcome but merged is returned as a

@@ -129,6 +129,23 @@ test("a forge that refuses the write is tried again next pass without another mo
   assert.equal(h.forge.fileCommits.length, 1);
 });
 
+test("a line committed before entail could record it is recorded as grown with its commit on the next pass, and the owner is told", async (t) => {
+  const h = harness(t);
+  h.scriptGrowth(11, GENERAL);
+  h.forge.failAfterFileCommit = true;
+  await answered(h);
+  assert.equal(h.forge.fileCommits.length, 1);
+  assert.deepEqual(grown(h), []);
+  await h.pass();
+  assert.equal(h.forge.fileCommits.length, 1);
+  assert.equal(growthRuns(h).length, 1);
+  const [entry] = grown(h);
+  assert.equal(entry!.line, GENERAL.line);
+  assert.equal(entry!.commit, h.forge.fileCommits[0]!.commit);
+  assert.ok(h.printed.some((text) => /added to VISION\.md automatically/u.test(text)));
+  assert.equal(considered(h).at(-1)!.decision.add, true);
+});
+
 test("a run that gave no decision is tried again next pass", async (t) => {
   const h = harness(t);
   h.scriptGrowth(11, "fail", GENERAL);

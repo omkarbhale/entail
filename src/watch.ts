@@ -158,6 +158,7 @@ export type WatchForge = Pick<
   | "pullRequestState"
   | "closePullRequest"
   | "updateFile"
+  | "commitsTouching"
 >;
 
 /** A repo read at its base branch's head, for the judgment: the default branch, or the base branch the owner set. */
@@ -545,11 +546,13 @@ async function growVision(context: JudgeContext, record: (entry: NewEntry) => En
         options.print(`would add to ${repo}'s ${VISION_PATH} from ${work.answer.by}'s answer on ${name}: ${line}`);
         continue;
       }
-      const written = await forge.updateFile(
-        VISION_PATH,
-        (current) => (current === null ? null : addVisionLine(current, line, heading)),
-        `Add a line to ${VISION_PATH} from a board answer on ${subject.kind === "pr" ? "PR " : ""}#${subject.number}`,
-      );
+      const message = `Add a line to ${VISION_PATH} from a board answer on ${subject.kind === "pr" ? "PR " : ""}#${subject.number}\n\n${line}`;
+      let written = await forge.updateFile(VISION_PATH, (current) => (current === null ? null : addVisionLine(current, line, heading)), message);
+      if (!written.changed) {
+        // An earlier pass may have committed this line and stopped before recording it: the commit is on the file's history.
+        const earlier = (await forge.commitsTouching(VISION_PATH)).find((entry) => entry.message.trim() === message.trim());
+        if (earlier !== undefined) written = { changed: true, commit: earlier.commit, branch: (await forge.project()).baseBranch };
+      }
       if (!written.changed) {
         // The vision has no file to grow, or already says it: nothing was added, and the answer is not weighed again.
         record({ type: "vision-considered", answer: work.answer.id, decision: { add: false, reason: `${considered.decision.reason} Nothing was added: the vision has no ${VISION_PATH} to add to, or already says it.` }, visionCommit: considered.visionCommit, model: considered.model, effort: considered.effort, promptVersion: considered.promptVersion, costUsd: null });

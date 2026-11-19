@@ -289,6 +289,8 @@ export class FakeForge implements WatchForge {
   readonly fileCommits: { path: string; content: string; message: string; commit: string }[] = [];
   /** Set to make the forge refuse the next file commit with this message, as a protected branch does. */
   refuseFileCommit: string | null = null;
+  /** Set to make the next file commit land and then fail, as when entail stops before it records the commit. */
+  failAfterFileCommit = false;
 
   async updateFile(path: string, change: (current: string | null) => string | null, message: string): Promise<FileUpdate> {
     this.#check();
@@ -302,7 +304,16 @@ export class FakeForge implements WatchForge {
     const commit = (this.fileCommits.length + 1).toString(16).padStart(40, "c");
     this.visionFile = next;
     this.fileCommits.push({ path, content: next, message, commit });
+    if (this.failAfterFileCommit) {
+      this.failAfterFileCommit = false;
+      throw new ForgeRequestError(this.setting.host, 500, "PUT", path, "the connection dropped after the commit");
+    }
     return { changed: true, commit, branch: this.baseBranch ?? "main" };
+  }
+
+  async commitsTouching(_path: string): Promise<{ commit: string; message: string }[]> {
+    this.#check();
+    return this.fileCommits.map(({ commit, message }) => ({ commit, message })).reverse();
   }
 
   async project(): Promise<Project> {

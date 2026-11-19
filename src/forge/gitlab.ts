@@ -646,6 +646,14 @@ export class GitLabForge implements Forge {
     return { changed: true, commit: this.#field(written, "last_commit_id", "string", path), branch: baseBranch };
   }
 
+  async commitsTouching(filePath: string): Promise<{ commit: string; message: string }[]> {
+    const { baseBranch } = await this.project();
+    const path = `${this.#projectRef}/repository/commits?${new URLSearchParams({ ref_name: baseBranch, path: filePath, per_page: "30" })}`;
+    const list = await this.#getJson(path);
+    if (!Array.isArray(list)) throw new ForgeRequestError(this.setting.host, 200, "GET", path, "expected a list of commits");
+    return list.map((raw) => ({ commit: this.#field(raw, "id", "string", path), message: this.#field(raw, "message", "string", path) }));
+  }
+
   /**
    * Merges through `merge` pinned to `sha`, with the project's own merge
    * method and without `auto_merge`, so GitLab merges now or refuses.

@@ -784,6 +784,14 @@ export class GitHubForge implements Forge {
     return { changed: true, commit: field(isObject(result) ? result.commit : undefined, "sha", "string", path), branch: baseBranch };
   }
 
+  async commitsTouching(filePath: string): Promise<{ commit: string; message: string }[]> {
+    const { baseBranch } = await this.project();
+    const path = `repos/${this.setting.path}/commits?${new URLSearchParams({ sha: baseBranch, path: filePath, per_page: "30" })}`;
+    const list = await this.#getJson(path);
+    if (!Array.isArray(list)) throw this.#malformed(200, "file commits", "expected a list");
+    return list.map((raw) => ({ commit: field(raw, "sha", "string", "file commit"), message: field(isObject(raw) ? raw.commit : undefined, "message", "string", "file commit") }));
+  }
+
   /**
    * Merges through `merge-async`, pinned to `sha`, as a direct merge that
    * bypasses no rules. GitHub may run the merge in the background, so a

@@ -700,3 +700,11 @@ test("updateFile on GitLab refuses a file that moved since it was read", async (
   ]);
   await assert.rejects(forge.updateFile("VISION.md", (current) => `${current}B.\n`, "m"), (error: unknown) => error instanceof ForgeRequestError && error.status === 400);
 });
+
+test("commitsTouching lists the base branch's newest commits on a file with their full messages", async (t) => {
+  const { forge } = forgeOn(t, [
+    PROJECT_READ,
+    { request: { method: "GET", path: `${PROJECT}/repository/commits?ref_name=main&path=VISION.md&per_page=30` }, response: { status: 200, body: [{ id: "c2", message: "Add\n\nLine." }] } },
+  ]);
+  assert.deepEqual(await forge.commitsTouching("VISION.md"), [{ commit: "c2", message: "Add\n\nLine." }]);
+});
