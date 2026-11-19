@@ -134,6 +134,8 @@ export function sourceLabel(criterion: CriterionView, item: CallView): string {
       return "edge entail drew";
     case "answer":
       return "the owner's answer";
+    case "owner":
+      return "the repo's generic criteria";
   }
 }
 

@@ -1,4 +1,5 @@
 import { matchesGlob } from "node:path";
+import { GENERIC_BASIS } from "./records.ts";
 import { issueTitle, type ForgeFacts, type LandingCase, type LandingCriterion } from "./case-book.ts";
 import { allChecksPassed, requiredChecksReported, type ChangedFile } from "./forge/forge.ts";
 import type { RestsOn } from "./judgment.ts";
@@ -41,7 +42,7 @@ export type BeyondSort = (typeof BEYOND_SORTS)[number];
  * leaves the product better, `criteria` is empty, and `beyond` is everything
  * the PR does, sorted against the vision.
  */
-function landingSchema(ticket: boolean) {
+function landingSchema(ticket: boolean, generic = false) {
   return object({
     call: oneOf(
       ["merge", "send-back", "ask"],
@@ -71,7 +72,11 @@ function landingSchema(ticket: boolean) {
         met: boolean("Whether the PR meets it."),
         evidence: string("What in the diff, the repo at the PR's head or the forge's facts you relied on, naming files or code; for unmet, what is missing."),
       }),
-      ticket ? "One entry per criterion given, in the order given; empty when none was given." : "Always empty: no criteria were given.",
+      ticket
+        ? "One entry per criterion given, in the order given; empty when none was given."
+        : generic
+          ? "One entry per generic criterion given, in the order given."
+          : "Always empty: no criteria were given.",
     ),
     beyond: ticket
       ? arrayOf(
@@ -121,6 +126,9 @@ export const LANDING_SCHEMA = landingSchema(true);
 
 /** The answer on a PR with no cleared ticket behind it, judged on the vision alone. */
 export const VISION_ONLY_LANDING_SCHEMA = landingSchema(false);
+
+/** The same, in a repo whose generic criteria are checked on a PR with no ticket too. */
+export const VISION_ONLY_GENERIC_LANDING_SCHEMA = landingSchema(false, true);
 
 export type LandingAnswer = Infer<typeof LANDING_SCHEMA>;
 
@@ -290,6 +298,8 @@ export interface LandingInputs {
   linked?: LinkedIssue[];
   /** The criteria entail set at intake; none with no issue. */
   criteria: LandingCriterion[];
+  /** The repo's generic criteria, checked on every PR beside the ticket's; missing or empty when the owner set none. */
+  generic?: string[];
   vision: { text: string; commit: string } | null;
   pins: string[];
   facts: ForgeFacts;
@@ -305,6 +315,18 @@ export interface LandingInputs {
 /** How much of a diff goes into the prompt; the rest is read in the checkout. */
 export const DIFF_LIMIT = 120_000;
 
+/**
+ * Everything a PR is checked against, in the order the answer marks it: the
+ * ticket's criteria, then the repo's generic ones. Each generic criterion is
+ * the owner's own words with the basis that says where it comes from.
+ */
+export function landingCriteria(inputs: Pick<LandingInputs, "criteria" | "generic">): LandingCriterion[] {
+  return [...inputs.criteria, ...(inputs.generic ?? []).map((text) => ({ criterion: text, basis: GENERIC_BASIS }))];
+}
+
+/** What the generic criteria ask of the judge, said only when the repo has some. */
+const GENERIC_RULE = `The criteria marked as generic are the owner's standing requirements for every PR in this repo, whatever its ticket: mark each met or unmet like any other. Where a generic criterion can be checked from what the forge reports below (the checks that ran, which files the PR changes), that is its evidence: cite it. What the PR's own description says about itself, such as "tests added" or "docs updated", proves nothing; look at the files and the checks.`;
+
 /** The landing judgment's prompt. */
 export function landingPrompt(inputs: LandingInputs): string {
   const name = `${inputs.repo}#${inputs.pr.number}`;
@@ -316,10 +338,12 @@ export function landingPrompt(inputs: LandingInputs): string {
     inputs.pins.length === 0
       ? "The owner has pinned no topics for this repo."
       : `The owner pinned these topics for this repo; a change to a pinned topic the issue did not approve is the owner's to make:\n\n${inputs.pins.map((pin) => `- ${pin}`).join("\n")}`;
+  const given = landingCriteria(inputs);
+  const generic = (inputs.generic ?? []).length > 0;
   const criteria =
-    inputs.criteria.length === 0
+    given.length === 0
       ? "entail set no criteria for this issue beyond solving its problem. Answer with an empty criteria list."
-      : inputs.criteria.map((c, index) => `${index + 1}. ${c.criterion}${c.basis.trim() === "" ? "" : `\n   (Basis: ${c.basis.trim()})`}`).join("\n");
+      : `${given.map((c, index) => `${index + 1}. ${c.criterion}${c.basis.trim() === "" ? "" : `\n   (Basis: ${c.basis.trim()})`}`).join("\n")}${generic ? `\n\n${GENERIC_RULE}` : ""}`;
   const precedents = inputs.precedents.length === 0 ? "There are no past landing cases yet." : inputs.precedents.map(landingPrecedent).join("\n\n");
   const sendBacks =
     inputs.sendBacks.length === 0
@@ -328,7 +352,7 @@ export function landingPrompt(inputs: LandingInputs): string {
           .map((back) => `At ${back.head}:\n${back.needsToChange.map((item) => `- ${item}`).join("\n")}`)
           .join("\n\n")}`;
   const diff = inputs.diff.length <= DIFF_LIMIT ? inputs.diff : `${inputs.diff.slice(0, DIFF_LIMIT)}\n[…the diff is cut here; read the rest in the checkout]`;
-  if (inputs.issue === null) return visionOnlyPrompt(inputs, { name, vision, pins, precedents, sendBacks, diff });
+  if (inputs.issue === null) return visionOnlyPrompt(inputs, { name, vision, pins, precedents, sendBacks, diff, criteria });
   const issueName = `${inputs.repo}#${inputs.issue.number}`;
 
   return `You are making the owner's landing call on ${name}, a pull request that closes ${issueName}.
@@ -415,16 +439,17 @@ Now answer the owner's question for this PR: does it solve the issue's problem, 
  */
 function visionOnlyPrompt(
   inputs: LandingInputs,
-  parts: { name: string; vision: string; pins: string; precedents: string; sendBacks: string; diff: string },
+  parts: { name: string; vision: string; pins: string; precedents: string; sendBacks: string; diff: string; criteria: string },
 ): string {
   const { name } = parts;
+  const generic = (inputs.generic ?? []).length > 0;
   const linked =
     inputs.linked === undefined || inputs.linked.length === 0
       ? ""
       : `\n\n## Issues it is linked to\n\nThe forge links this PR to these issues, none of them with a go that has acted, so none puts criteria behind it. Where one was closed as no, its reason stands unless the vision now says otherwise; where one waits on the owner, a PR that settles what the owner has yet to decide is the owner's call: ask.\n\n${inputs.linked
           .map((one) => `- ${inputs.repo}#${one.number}: ${one.standing}`)
           .join("\n")}`;
-  return `You are making the owner's landing call on ${name}, a pull request with no cleared ticket behind it: the forge links it to no issue whose go has acted, because it closes none or the go on the one it closes still waits for the owner. There is no issue and there are no criteria to check.
+  return `You are making the owner's landing call on ${name}, a pull request with no cleared ticket behind it: the forge links it to no issue whose go has acted, because it closes none or the go on the one it closes still waits for the owner. ${generic ? "There is no issue, and the only criteria to check are the repo's generic ones." : "There is no issue and there are no criteria to check."}
 
 The question is the owner's: does this PR leave the product better, judged on the vision and the product alone? If it does, it should be merged.
 
@@ -439,7 +464,7 @@ Answer merge, send-back or ask.
 Judge substance, not wording. Read the diff and, where it helps, the repo at the PR's head; the checkout you are in is that head. The PR's description is its author's account and proves nothing: CI results and changed files come from the forge, below, and whether the work is right comes from the code. With no ticket behind it, the vision is the owner's word on what better means: where it speaks it decides, and where it is silent judge the change on its merits.
 
 1. **Better.** Does the PR leave the product better? Answer it in \`solves\`: solved means it does. Say what shows it, quoting the vision lines it rests on.
-2. **The criteria.** There are none. Answer with an empty criteria list.
+2. **The criteria.** ${generic ? "Mark each generic criterion below met or unmet, in the order given, with the evidence you relied on." : "There are none. Answer with an empty criteria list."}
 3. **What the PR does.** List what the PR does that is worth the owner's notice, in \`beyond\`, and sort each against the vision:
    - **needed**: it is the PR's own change and the vision or the product's plain good supports it, or it follows from that change: the job could not be done well without it. Tests, docs and build changes that go with the change are part of it.
    - **harmless**: not needed, but it does not make the product worse and the owner would not mind: a small tidy-up, a clearer message, a refactor nearby.
@@ -469,7 +494,7 @@ ${parts.pins}
 
 ## Past landing cases
 
-${parts.precedents}${linked}
+${parts.precedents}${linked}${generic ? `\n\n## The repo's generic criteria\n\n${parts.criteria}` : ""}
 
 ## What the forge reports at ${inputs.head}
 
@@ -534,7 +559,7 @@ export async function judgeLanding(runner: ModelRunner, inputs: LandingInputs, o
       ticket: `${inputs.repo}#${inputs.pr.number}`,
       prompt: landingPrompt(inputs),
       promptVersion: landingPromptVersion(inputs.issue),
-      schema: inputs.issue === null ? VISION_ONLY_LANDING_SCHEMA : LANDING_SCHEMA,
+      schema: inputs.issue !== null ? LANDING_SCHEMA : (inputs.generic ?? []).length > 0 ? VISION_ONLY_GENERIC_LANDING_SCHEMA : VISION_ONLY_LANDING_SCHEMA,
       checkout: inputs.checkout,
       sha: inputs.head,
       model,
@@ -543,7 +568,7 @@ export async function judgeLanding(runner: ModelRunner, inputs: LandingInputs, o
     runOptions,
   );
   if (!result.ok) return result;
-  const routed = routeLanding(result.output, { criteria: inputs.criteria, facts: inputs.facts, touched: touched(inputs.facts.files, inputs.pins), ticketless: inputs.issue === null });
+  const routed = routeLanding(result.output, { criteria: landingCriteria(inputs), facts: inputs.facts, touched: touched(inputs.facts.files, inputs.pins), ticketless: inputs.issue === null });
   if (!routed.ok) return { ok: false, failure: { kind: "no-structured-output", message: routed.problem }, facts: result.facts };
   return { ok: true, call: routed.call, answer: result.output, facts: result.facts };
 }

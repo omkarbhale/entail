@@ -66,6 +66,8 @@ export interface SettingsEntry extends EntryBase, ByOwner {
   unpinned?: string;
   drift?: boolean;
   driftEveryDays?: number | null;
+  /** The repo's generic criteria, replacing the earlier ones; empty clears them. */
+  genericCriteria?: string[];
 }
 
 /**
@@ -299,8 +301,8 @@ export interface LandingEntry extends EntryBase {
   vision: { commit: string; text: string } | null;
   /** With no issue: the issues the forge linked the PR to, and where each stood, as the judgment read them. */
   linked?: { number: number; standing: string }[];
-  /** The criteria the issue's go set, which the PR was judged against; none with no issue. */
-  criteria: Criterion[];
+  /** The criteria the issue's go set, then the repo's generic ones, which the PR was judged against; none with no issue and no generic criteria. */
+  criteria: (Omit<Criterion, "source"> & { source: Criterion["source"] | "owner" })[];
   /** CI and the changed files, read from the forge at the head. */
   facts: ForgeFacts;
   /** What the changed files touch that only the owner can let merge. */
@@ -930,12 +932,18 @@ export interface RepoState {
   drift: boolean;
   /** How often that check runs, in days, or null for the default. */
   driftEveryDays: number | null;
+  /**
+   * What every PR in the repo must satisfy whatever its ticket: checked at
+   * landing beside the ticket's own criteria and shown on every go. Empty
+   * when the owner set none, and then landing is as it always was.
+   */
+  genericCriteria: string[];
   /** The VISION.md a pass last recorded seeing change, or null when none was recorded. */
   vision: { entry: number; commit: string | null; text: string | null } | null;
 }
 
 export function repoState(repo: string, entries: readonly Entry[]): RepoState {
-  const state: RepoState = { repo, enrolled: false, since: null, confirm: true, model: null, effort: null, baseBranch: null, drift: false, driftEveryDays: null, vision: null };
+  const state: RepoState = { repo, enrolled: false, since: null, confirm: true, model: null, effort: null, baseBranch: null, drift: false, driftEveryDays: null, genericCriteria: [], vision: null };
   for (const entry of entries) {
     if (entry.type === "enrolled") {
       state.enrolled = true;
@@ -950,6 +958,7 @@ export function repoState(repo: string, entries: readonly Entry[]): RepoState {
       if (entry.baseBranch !== undefined) state.baseBranch = entry.baseBranch;
       if (entry.drift !== undefined) state.drift = entry.drift;
       if (entry.driftEveryDays !== undefined) state.driftEveryDays = entry.driftEveryDays;
+      if (entry.genericCriteria !== undefined) state.genericCriteria = entry.genericCriteria;
     } else if (entry.type === "vision-seen") {
       state.vision = { entry: entry.id, commit: entry.commit, text: entry.text };
     }
@@ -1229,6 +1238,17 @@ export function linkCriterion(issue: number, baseBranch: string | null = null): 
     basis: "entail judges a PR against an issue's criteria only when GitHub's own link data says it closes that issue.",
   };
 }
+
+/**
+ * A repo's generic criterion as a go carries it and the landing call checks
+ * it: the owner's own words, set once for the repo, not asked per ticket.
+ */
+export function genericCriterion(text: string): { criterion: string; source: "owner"; basis: string } {
+  return { criterion: text, source: "owner", basis: GENERIC_BASIS };
+}
+
+/** Where a generic criterion comes from, as every landing and go shows it. */
+export const GENERIC_BASIS = "a generic criterion the owner set for this repo: every PR here must meet it, whatever its ticket";
 
 // PRs.
 

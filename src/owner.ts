@@ -152,13 +152,18 @@ export interface RepoSettingsChange {
   drift?: boolean;
   /** How often that check runs, in whole days, or null for the default. */
   driftEveryDays?: number | null;
+  /** The generic criteria every PR in the repo must meet; empty or null clears them. */
+  genericCriteria?: string[];
 }
+
+/** The most generic criteria a repo can have, and the longest one. */
+export const GENERIC_CRITERIA_LIMIT = { count: 20, length: 500 } as const;
 
 /** Checks a settings change as it arrives from the board or the command line. */
 export function checkSettingsChange(change: Record<string, unknown>): RepoSettingsChange {
   const checked: RepoSettingsChange = {};
   for (const key of Object.keys(change)) {
-    if (!["confirm", "model", "effort", "baseBranch", "pin", "unpin", "drift", "driftEveryDays"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
+    if (!["confirm", "model", "effort", "baseBranch", "pin", "unpin", "drift", "driftEveryDays", "genericCriteria"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
   }
   if (change.confirm !== undefined) {
     if (typeof change.confirm !== "boolean") throw new OwnerError(400, "confirm is true or false");
@@ -194,6 +199,14 @@ export function checkSettingsChange(change: Record<string, unknown>): RepoSettin
     }
     checked.driftEveryDays = days;
   }
+  if (change.genericCriteria !== undefined) {
+    const list = change.genericCriteria === null ? [] : change.genericCriteria;
+    const problem = `genericCriteria is a list of up to ${GENERIC_CRITERIA_LIMIT.count} criteria of up to ${GENERIC_CRITERIA_LIMIT.length} characters each, or null for none`;
+    if (!Array.isArray(list) || list.length > GENERIC_CRITERIA_LIMIT.count || list.some((item) => typeof item !== "string")) throw new OwnerError(400, problem);
+    const texts = (list as string[]).map((item) => item.replace(/\s+/gu, " ").trim());
+    if (texts.some((item) => item === "" || item.length > GENERIC_CRITERIA_LIMIT.length)) throw new OwnerError(400, problem);
+    checked.genericCriteria = [...new Set(texts)];
+  }
   return checked;
 }
 
@@ -214,6 +227,10 @@ export function changeRepoSettings(dataDirectory: string, repoText: string, by: 
   const setting = repoSetting(repo);
   if (change.unpin !== undefined && removePin(dataDirectory, setting, change.unpin)) pins.unpinned = change.unpin;
   if (change.pin !== undefined && addPin(dataDirectory, setting, change.pin)) pins.pinned = change.pin;
+  if (change.genericCriteria !== undefined) {
+    const criteria = change.genericCriteria;
+    if (criteria.length !== state.genericCriteria.length || criteria.some((item, index) => item !== state.genericCriteria[index])) changed.genericCriteria = criteria;
+  }
   if (Object.keys(changed).length + Object.keys(pins).length > 0) appendEntry(dataDirectory, repo, { type: "settings", by, ...changed, ...pins }, now);
   return repoState(repo, readLog(dataDirectory, repo));
 }
@@ -1406,6 +1423,7 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
             entry.baseBranch === undefined ? null : `base branch ${entry.baseBranch ?? `the default (${forgeTitle(item.repo)}'s)`}`,
             entry.drift === undefined ? null : `drift check ${entry.drift ? "on" : "off"}`,
             entry.driftEveryDays === undefined ? null : `drift check every ${entry.driftEveryDays === null ? `the default ${DEFAULT_DRIFT_EVERY_DAYS}` : entry.driftEveryDays} days`,
+            entry.genericCriteria === undefined ? null : entry.genericCriteria.length === 0 ? "no generic criteria" : `generic criteria: ${entry.genericCriteria.map((text) => `"${text}"`).join("; ")}`,
           ].filter((change) => change !== null);
           if (changes.length > 0) lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} set ${changes.join(", ")}`);
           if (entry.unpinned !== undefined) lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} took the pin "${entry.unpinned}" off`);
