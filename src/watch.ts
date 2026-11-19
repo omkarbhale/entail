@@ -80,7 +80,6 @@ import {
   type BaseBranchSeenEntry,
   workStarted,
   byCollaborator,
-  type AnsweredEntry,
 } from "./records.ts";
 import { sendBackHandoffFor, type SendBackHandoff } from "./send-backs.ts";
 import { handoffFor, runStart, type Handoff, type StartResult } from "./starts.ts";
