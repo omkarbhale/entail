@@ -443,7 +443,7 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
     }
   }
 
-  // Work starts after the go that starts it was posted; a crash before the start is recorded runs it at the next pass.
+  // Work starts after the go that starts it was posted; a crash before the start begins runs it at the next pass.
   // A start that began and has no outcome was cut off with the command possibly already at work: it is logged as interrupted, never run again.
   for (const begun of interruptedStarts([...readLog(options.dataDirectory, repo), ...planned])) {
     if (options.dryRun) continue;
