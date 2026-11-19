@@ -14,7 +14,8 @@ describe("Repos", () => {
     expect(within(document.querySelector("main")!).getByRole("link", { name: "Settings" }).getAttribute("href")).toBe("#/settings");
     expect(screen.getByText(/You’ve checked 6 of its calls here and agreed with 5\./u)).toBeTruthy();
     expect(screen.getByText("It agrees with you often enough to try confirm mode off.")).toBeTruthy();
-    expect(screen.getByText("pricing · the board's look")).toBeTruthy();
+    expect(screen.getByText("pricing")).toBeTruthy();
+    expect(screen.getByText("the board's look")).toBeTruthy();
     expect(screen.getByRole("link", { name: /VISION\.md at 8973851/u })).toBeTruthy();
     expect(screen.getByText(/^watching · checked 4\ds ago$/u)).toBeTruthy();
   });
@@ -78,6 +79,29 @@ describe("Repos", () => {
     await userEvent.clear(screen.getByRole("textbox", { name: "Base branch" }));
     await userEvent.click(screen.getByRole("button", { name: "Use the default" }));
     await waitFor(() => expect(api.sent(/PATCH/u)[1]!.body).toEqual({ baseBranch: null }));
+  });
+
+  it("pins a topic and unpins one, each as a change to the repo's settings", async () => {
+    const api = fakeApi({ repos: [aRepo({ pins: { file: "/data/pins/github.com/omkarbhale/entail.md", topics: ["pricing"] } })] });
+    api.route((method, path, body) => {
+      if (method === "PATCH" && path === "/api/repos/omkarbhale/entail") {
+        const topics = typeof body.pin === "string" ? ["pricing", body.pin] : [];
+        api.state.repos = [aRepo({ pins: { file: "/data/pins/github.com/omkarbhale/entail.md", topics } })];
+        return { status: 200, body: {} };
+      }
+      return undefined;
+    });
+    renderBoard("#/repos");
+    const field = await screen.findByRole("textbox", { name: "Topic to pin for omkarbhale/entail" });
+    expect(screen.getByRole("button", { name: "Pin" }).hasAttribute("disabled")).toBe(true);
+    await userEvent.type(field, " src/billing/ ");
+    await userEvent.click(screen.getByRole("button", { name: "Pin" }));
+    expect(await screen.findByText("src/billing/")).toBeTruthy();
+    expect(api.sent(/PATCH/u)[0]!.body).toEqual({ pin: "src/billing/" });
+    expect((screen.getByRole("textbox", { name: "Topic to pin for omkarbhale/entail" }) as HTMLInputElement).value).toBe("");
+    await userEvent.click(screen.getByRole("button", { name: "Unpin src/billing/" }));
+    await waitFor(() => expect(api.sent(/PATCH/u)[1]!.body).toEqual({ unpin: "src/billing/" }));
+    expect(await screen.findByText("None pinned.")).toBeTruthy();
   });
 
   it("checks a repo now and says what the check found, or that it failed", async () => {

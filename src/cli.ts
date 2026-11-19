@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { homedir, release } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,7 +58,7 @@ import {
   unenroll,
   waitingItems,
 } from "./owner.ts";
-import { pinsFile } from "./pins.ts";
+import { parsePins, pinsFile } from "./pins.ts";
 import { clearedGoOn, goCallOn, heldActions, loggedRepos, readLog, readSettings, repoState, sendBacksPosted, type GlobalSettings } from "./records.ts";
 import { formatReplay, replay, replayLandings } from "./replay.ts";
 import { forgeHost, forgeTitle, isRepo, repoSetting } from "./repo-ref.ts";
@@ -76,7 +77,7 @@ const USAGE = `usage:
   entail enroll <owner/repo> [--no-confirm] [--since <time>]
   entail unenroll <owner/repo>
   entail repos [--all] [--json]
-  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--base <branch>|default] [--owner <name>] [--notice <command>|none] [--start <command>|none] [--backup <git remote url>|none]
+  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--base <branch>|default] [--pin <topic>]... [--unpin <topic>]... [--owner <name>] [--notice <command>|none] [--start <command>|none] [--backup <git remote url>|none]
   entail backup status
   entail restore <git remote url>
   entail run [--once] [--dry-run] [--interval <seconds>] [--port <n>]
@@ -106,7 +107,10 @@ repos      the enrolled repos with confirm mode, model, effort and what waits on
 settings   with a repo, its confirm mode, model and effort ("default" uses the one for
            every repo), and its base branch: the branch entail reads the repo and its
            vision on, follows and merges PRs into and diffs them against ("default" is
-           the forge's default branch); without, your name on comments, the default model and effort, the
+           the forge's default branch), and its pins: --pin adds a topic and --unpin takes one
+           out of the repo's pins file, each logged with your name, and the pins are listed
+           ("anything touching a pinned topic comes to you"; the file also takes hand edits);
+           without, your name on comments, the default model and effort, the
            notice command entail runs with one line and a link when something starts
            waiting on you, and the start command entail runs when a go acts, with the
            issue, the reason and the criteria as JSON on its standard input (see examples/
@@ -384,12 +388,22 @@ function reposCommand(args: string[]): number {
   return 0;
 }
 
+function readPinsSync(file: string): string[] {
+  try {
+    return parsePins(readFileSync(file, "utf8"));
+  } catch {
+    return [];
+  }
+}
+
 async function settingsCommand(args: string[]): Promise<number> {
   const { values, positionals } = parse(args, {
     confirm: { type: "string" },
     model: { type: "string" },
     effort: { type: "string" },
     base: { type: "string" },
+    pin: { type: "string", multiple: true },
+    unpin: { type: "string", multiple: true },
     owner: { type: "string" },
     notice: { type: "string" },
     start: { type: "string" },
@@ -410,18 +424,24 @@ async function settingsCommand(args: string[]): Promise<number> {
     if (values.effort !== undefined) change.effort = values.effort === "default" ? null : values.effort;
     if (values.base !== undefined) change.baseBranch = values.base === "default" ? null : values.base;
     const repo = repoName(positionals[0]!);
-    const state =
-      Object.keys(change).length === 0
-        ? repoViews(dataDirectory, settingsIn(dataDirectory), { all: true }).find((view) => view.repo === repo)
-        : changeRepoSettings(dataDirectory, repo, await ownerName(dataDirectory), checkSettingsChange(change));
+    // Each pin is a change of its own, so each is logged on its own.
+    const pins = [...(values.unpin ?? []).map((unpin) => ({ unpin })), ...(values.pin ?? []).map((pin) => ({ pin }))];
+    for (const one of pins) checkSettingsChange(one);
+    const by = Object.keys(change).length + pins.length === 0 ? "" : await ownerName(dataDirectory);
+    let changed = Object.keys(change).length === 0 ? undefined : changeRepoSettings(dataDirectory, repo, by, checkSettingsChange(change));
+    for (const one of pins) changed = changeRepoSettings(dataDirectory, repo, by, checkSettingsChange(one));
+    const state = changed ?? repoViews(dataDirectory, settingsIn(dataDirectory), { all: true }).find((view) => view.repo === repo);
     if (state === undefined) throw new Error(`${repo} has never been enrolled`);
     const settings = settingsIn(dataDirectory);
     console.log(
       `${repo}: confirm mode ${state.confirm ? "on" : "off"}, model ${state.model ?? `${settings.model} (default)`}, effort ${state.effort ?? `${settings.effort} (default)`}, base branch ${state.baseBranch ?? `${forgeTitle(repo)}'s default branch (default)`}`,
     );
+    const pinned = readPinsSync(pinsFile(dataDirectory, repoSetting(repo)));
+    if (pinned.length > 0) console.log(`pins: ${pinned.join("; ")}`);
     return 0;
   }
   if (values.confirm !== undefined) throw new UsageError("--confirm is a setting of one repo: name it");
+  if (values.pin !== undefined || values.unpin !== undefined) throw new UsageError("--pin and --unpin are for one repo: name it");
   if (values.base !== undefined) throw new UsageError("--base is a setting of one repo: name it");
   const change: Record<string, unknown> = {};
   for (const key of ["owner", "model", "effort"] as const) if (values[key] !== undefined) change[key] = values[key];

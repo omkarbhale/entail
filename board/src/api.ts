@@ -90,7 +90,7 @@ export const api = {
 
   enroll: (repo: string) => request<EnrollResponse>("POST", "/api/repos", { repo }),
   unenroll: (repo: string) => request<unknown>("DELETE", `/api/repos/${repoPath(repo)}`, {}),
-  changeRepo: (repo: string, change: { confirm?: boolean; model?: string | null; effort?: string | null; baseBranch?: string | null }) => request<unknown>("PATCH", `/api/repos/${repoPath(repo)}`, change),
+  changeRepo: (repo: string, change: { confirm?: boolean; model?: string | null; effort?: string | null; baseBranch?: string | null; pin?: string; unpin?: string }) => request<unknown>("PATCH", `/api/repos/${repoPath(repo)}`, change),
   check: (repo: string) => request<CheckResponse>("POST", `/api/repos/${repoPath(repo)}/check`, {}),
   backlog: (repo: string) => request<{ repo: string; issues: number[] }>("POST", `/api/repos/${repoPath(repo)}/backlog`, {}),
   suggest: (repo: string, choice: { model: string; effort: string }) => request<SuggestResponse>("POST", `/api/repos/${repoPath(repo)}/suggest`, choice),

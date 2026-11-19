@@ -55,6 +55,9 @@ export interface SettingsEntry extends EntryBase, ByOwner {
   model?: string | null;
   effort?: Effort | null;
   baseBranch?: string | null;
+  /** A topic the owner pinned, or took out of the pins file, with this change. */
+  pinned?: string;
+  unpinned?: string;
 }
 
 /**

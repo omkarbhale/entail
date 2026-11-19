@@ -22,7 +22,7 @@ import { ciGreen } from "./landing.ts";
 import { scopeOf } from "./judgment.ts";
 import { isBranchName } from "./git.ts";
 import { EFFORTS, type Effort } from "./model-runner.ts";
-import { parsePins, pinsFile } from "./pins.ts";
+import { addPin, normalizePin, parsePins, pinsFile, removePin } from "./pins.ts";
 import {
   appendEntry,
   callStatuses,
@@ -135,13 +135,16 @@ export interface RepoSettingsChange {
   effort?: Effort | null;
   /** A branch name, or null for the forge's default branch. */
   baseBranch?: string | null;
+  /** A topic to add to the repo's pins, and one to take out; the pins file itself is the setting. */
+  pin?: string;
+  unpin?: string;
 }
 
 /** Checks a settings change as it arrives from the board or the command line. */
 export function checkSettingsChange(change: Record<string, unknown>): RepoSettingsChange {
   const checked: RepoSettingsChange = {};
   for (const key of Object.keys(change)) {
-    if (!["confirm", "model", "effort", "baseBranch"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
+    if (!["confirm", "model", "effort", "baseBranch", "pin", "unpin"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
   }
   if (change.confirm !== undefined) {
     if (typeof change.confirm !== "boolean") throw new OwnerError(400, "confirm is true or false");
@@ -160,6 +163,12 @@ export function checkSettingsChange(change: Record<string, unknown>): RepoSettin
     if (branch !== null && (typeof branch !== "string" || !isBranchName(branch))) throw new OwnerError(400, "baseBranch is a branch name, or null for the forge's default branch");
     checked.baseBranch = branch as string | null;
   }
+  for (const key of ["pin", "unpin"] as const) {
+    if (change[key] === undefined) continue;
+    const topic = typeof change[key] === "string" ? normalizePin(change[key]) : null;
+    if (topic === null) throw new OwnerError(400, `${key} is one topic on one line, not starting with #`);
+    checked[key] = topic;
+  }
   return checked;
 }
 
@@ -172,7 +181,13 @@ export function changeRepoSettings(dataDirectory: string, repoText: string, by: 
   if (change.model !== undefined && change.model !== state.model) changed.model = change.model;
   if (change.effort !== undefined && change.effort !== state.effort) changed.effort = change.effort;
   if (change.baseBranch !== undefined && change.baseBranch !== state.baseBranch) changed.baseBranch = change.baseBranch;
-  if (Object.keys(changed).length > 0) appendEntry(dataDirectory, repo, { type: "settings", by, ...changed }, now);
+  // The pins file is the one record of the pins, edited by hand as well; a topic
+  // already (or no longer) in it changes nothing and is not logged.
+  const pins: { pinned?: string; unpinned?: string } = {};
+  const setting = repoSetting(repo);
+  if (change.unpin !== undefined && removePin(dataDirectory, setting, change.unpin)) pins.unpinned = change.unpin;
+  if (change.pin !== undefined && addPin(dataDirectory, setting, change.pin)) pins.pinned = change.pin;
+  if (Object.keys(changed).length + Object.keys(pins).length > 0) appendEntry(dataDirectory, repo, { type: "settings", by, ...changed, ...pins }, now);
   return repoState(repo, readLog(dataDirectory, repo));
 }
 
@@ -1247,7 +1262,9 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
             entry.effort === undefined ? null : `effort ${entry.effort ?? "the default"}`,
             entry.baseBranch === undefined ? null : `base branch ${entry.baseBranch ?? `the default (${forgeTitle(item.repo)}'s)`}`,
           ].filter((change) => change !== null);
-          lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} set ${changes.join(", ")}`);
+          if (changes.length > 0) lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} set ${changes.join(", ")}`);
+          if (entry.unpinned !== undefined) lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} took the pin "${entry.unpinned}" off`);
+          if (entry.pinned !== undefined) lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} pinned "${entry.pinned}"`);
         }
         if (entry.type === "undone") lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} undid their action ${entry.action}; nothing was sent to ${forgeTitle(item.repo)}`);
         if (entry.type === "backlog") lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} asked entail to judge the open backlog: ${entry.issues.length === 0 ? "nothing left to judge" : entry.issues.map((issue) => `#${issue}`).join(", ")}`);

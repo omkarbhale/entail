@@ -1,5 +1,6 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ForgeSetting } from "./forge/forge.ts";
 
 /** Where pins are kept inside the data directory. */
@@ -36,4 +37,52 @@ export async function readPins(dataDirectory: string, setting: Pick<ForgeSetting
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+}
+
+/**
+ * A topic as the pins file holds it: one line, trimmed, with no list marker or
+ * leading `#`, so that reading the file back gives exactly this topic. Null
+ * when the text cannot be one pin.
+ */
+export function normalizePin(text: string): string | null {
+  if (/[\r\n]/u.test(text)) return null;
+  const pins = parsePins(text);
+  return pins.length === 1 && pins[0] === text.trim().replace(/^[-*]\s+/u, "").trim() ? pins[0]! : null;
+}
+
+function readPinsText(file: string): string {
+  try {
+    return readFileSync(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  }
+}
+
+/**
+ * Adds a topic to a repo's pins file, creating it when there is none, and
+ * leaves everything already in it as it is: headings, notes and the owner's
+ * own list markers. False when the topic was already pinned.
+ */
+export function addPin(dataDirectory: string, setting: Pick<ForgeSetting, "host" | "path">, topic: string): boolean {
+  const file = pinsFile(dataDirectory, setting);
+  const text = readPinsText(file);
+  if (parsePins(text).includes(topic)) return false;
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${text === "" || text.endsWith("\n") ? text : `${text}\n`}- ${topic}\n`);
+  return true;
+}
+
+/**
+ * Takes a topic out of a repo's pins file: the lines that pin it, and nothing
+ * else. False when it was not pinned.
+ */
+export function removePin(dataDirectory: string, setting: Pick<ForgeSetting, "host" | "path">, topic: string): boolean {
+  const file = pinsFile(dataDirectory, setting);
+  const text = readPinsText(file);
+  const lines = text.split(/(?<=\n)/u);
+  const kept = lines.filter((line) => parsePins(line)[0] !== topic);
+  if (kept.length === lines.length) return false;
+  writeFileSync(file, kept.join(""));
+  return true;
 }
