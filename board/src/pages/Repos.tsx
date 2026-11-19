@@ -205,6 +205,7 @@ function RepoCard({ repo, settings, showRepo }: { repo: RepoView; settings: Sett
         </span>
       </div>
       <BaseBranch repo={repo} />
+      <GenericCriteria repo={repo} />
       <SuggestWork repo={repo} now={now} showLog={() => showRepo(repo.repo, "log")} />
       <div className="rrow">
         <span className="lbl">Vision</span>
@@ -445,6 +446,39 @@ function Pins({ repo }: { repo: RepoView }) {
         </span>
       </span>
     </div>
+  );
+}
+
+/**
+ * What every PR in the repo must meet whatever its ticket, one per line: each
+ * landing call checks them beside the ticket's own criteria, and each go
+ * lists them. Empty is none.
+ */
+function GenericCriteria({ repo }: { repo: RepoView }) {
+  const current = repo.genericCriteria.join("\n");
+  const [text, setText] = useState(current);
+  useEffect(() => setText(current), [current]);
+  const save = useSave((value: string[]) => api.changeRepo(repo.repo, { genericCriteria: value }));
+  const wanted = [...new Set(text.split("\n").map((line) => line.trim()).filter((line) => line !== ""))];
+  const unchanged = wanted.join("\n") === current;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!unchanged) save.mutation.mutate(wanted);
+  };
+  return (
+    <form className="rrow" onSubmit={submit}>
+      <label className="lbl" htmlFor={`generic-${repo.repo}`}>
+        Generic criteria
+      </label>
+      <span className="val">
+        <textarea id={`generic-${repo.repo}`} className="field" rows={3} placeholder="One per line, such as: Tests were added or run" value={text} onChange={(event) => setText(event.target.value)} spellCheck={false} />
+        <button className="btn sm" type="submit" disabled={save.mutation.isPending || unchanged}>
+          {wanted.length === 0 && repo.genericCriteria.length > 0 ? "Clear criteria" : "Save criteria"}
+        </button>
+        <Saved pending={save.mutation.isPending} saved={save.saved} />
+        <span className="small muted">What every PR here must meet, whatever its ticket. Each landing call checks them beside the ticket’s criteria, and each go lists them.</span>
+      </span>
+    </form>
   );
 }
 

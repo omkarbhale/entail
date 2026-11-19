@@ -104,6 +104,28 @@ describe("Repos", () => {
     expect(await screen.findByText("None pinned.")).toBeTruthy();
   });
 
+  it("sets a repo's generic criteria, one per line, and clears them", async () => {
+    const api = fakeApi();
+    api.route((method, path, body) => {
+      if (method === "PATCH" && path === "/api/repos/omkarbhale/entail") {
+        api.state.repos = [aRepo({ genericCriteria: body.genericCriteria })];
+        return { status: 200, body: {} };
+      }
+      return undefined;
+    });
+    renderBoard("#/repos");
+    const field = await screen.findByRole("textbox", { name: "Generic criteria" });
+    expect(screen.getByRole("button", { name: "Save criteria" }).hasAttribute("disabled")).toBe(true);
+    await userEvent.type(field, "Tests were added or run{Enter}  {Enter}Docs were updated{Enter}Tests were added or run");
+    await userEvent.click(screen.getByRole("button", { name: "Save criteria" }));
+    expect(await screen.findByText("Saved")).toBeTruthy();
+    expect(api.sent(/PATCH/u)[0]!.body).toEqual({ genericCriteria: ["Tests were added or run", "Docs were updated"] });
+    await waitFor(() => expect((screen.getByRole("textbox", { name: "Generic criteria" }) as HTMLTextAreaElement).value).toBe("Tests were added or run\nDocs were updated"));
+    await userEvent.clear(screen.getByRole("textbox", { name: "Generic criteria" }));
+    await userEvent.click(screen.getByRole("button", { name: "Clear criteria" }));
+    await waitFor(() => expect(api.sent(/PATCH/u)[1]!.body).toEqual({ genericCriteria: [] }));
+  });
+
   it("checks a repo now and says what the check found, or that it failed", async () => {
     const api = fakeApi();
     api.route((method, path) => (method === "POST" && path.endsWith("/check") ? { status: 200, body: { repo: "omkarbhale/entail", at: new Date().toISOString(), judged: 0, posted: 0, failed: false } } : undefined));

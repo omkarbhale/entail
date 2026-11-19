@@ -99,17 +99,25 @@ test("from the command line the owner sets their name, reads what waits, confirm
   });
 
   assert.equal(await main(["settings", "acme/tally", "--confirm", "off", "--model", "default"]), 0);
-  assert.equal(out.pop(), "acme/tally: confirm mode off, model claude-opus-5-5 (default), effort medium (default), base branch GitHub's default branch (default)");
+  assert.equal(out.pop(), "acme/tally: confirm mode off, model claude-opus-5-5 (default), effort medium (default), base branch GitHub's default branch (default), no generic criteria");
+  assert.equal(await main(["settings", "acme/tally", "--criterion", "Tests were added or run", "--criterion", "Docs were updated"]), 0);
+  assert.match(out.pop()!, /generic criteria: "Tests were added or run"; "Docs were updated"$/u);
+  assert.equal(await main(["repos"]), 0);
+  assert.match(out.pop()!, /, 2 generic criteria; 1 calls/u);
+  assert.equal(await main(["settings", "--criterion", "x"]), 2, "generic criteria are a setting of one repo");
+  assert.equal(await main(["settings", "acme/tally", "--criterion", "none", "--criterion", "x"]), 2, "none is not a criterion beside others");
+  assert.equal(await main(["settings", "acme/tally", "--criterion", "none"]), 0);
+  assert.match(out.pop()!, /no generic criteria$/u);
   assert.equal(await main(["repos"]), 0);
   assert.match(out.pop()!, /^acme\/tally: confirm mode off, claude-opus-5-5 \(default\) at medium effort \(default\); 1 calls, 1 waiting on you$/u);
   assert.equal(await main(["settings", "acme/tally", "--base", "develop"]), 0);
-  assert.equal(out.pop(), "acme/tally: confirm mode off, model claude-opus-5-5 (default), effort medium (default), base branch develop");
+  assert.equal(out.pop(), "acme/tally: confirm mode off, model claude-opus-5-5 (default), effort medium (default), base branch develop, no generic criteria");
   assert.equal(await main(["repos"]), 0);
   assert.match(out.pop()!, /^acme\/tally: confirm mode off, claude-opus-5-5 \(default\) at medium effort \(default\), base branch develop; 1 calls, 1 waiting on you$/u);
   assert.equal(await main(["settings", "acme/tally", "--base", "a..b"]), 2, "a branch git would refuse is refused");
   assert.equal(await main(["settings", "--base", "develop"]), 2, "the base branch is a setting of one repo");
   assert.equal(await main(["settings", "acme/tally", "--base", "default"]), 0);
-  assert.equal(out.pop(), "acme/tally: confirm mode off, model claude-opus-5-5 (default), effort medium (default), base branch GitHub's default branch (default)");
+  assert.equal(out.pop(), "acme/tally: confirm mode off, model claude-opus-5-5 (default), effort medium (default), base branch GitHub's default branch (default), no generic criteria");
   assert.equal(await main(["settings", "acme/tally", "--pin", "src/billing/", "--pin", "pricing"]), 0);
   assert.equal(out.pop(), "pins: src/billing/; pricing");
   assert.equal(await main(["settings", "acme/tally", "--unpin", "src/billing/"]), 0);

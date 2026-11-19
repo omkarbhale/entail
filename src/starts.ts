@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { GoScope } from "./judgment.ts";
-import { criteriaOf, goScope, linkCriterion, type Pending } from "./records.ts";
+import { criteriaOf, genericCriterion, goScope, linkCriterion, type Pending } from "./records.ts";
 import { cmdArguments, killTree } from "./windows.ts";
 
 /**
@@ -57,7 +57,7 @@ export interface Handoff {
  * confirm mode off, the owner's confirmation of a go, a go run again on the
  * owner's word, or a go made differently. Null for anything else.
  */
-export function handoffFor(repo: string, pending: Pending, baseBranch: string | null = null): Handoff | null {
+export function handoffFor(repo: string, pending: Pending, baseBranch: string | null = null, generic: readonly string[] = []): Handoff | null {
   const of = (call: Extract<Pending, { kind: "call" }>["entry"]) => ({
     repo,
     issue: { number: call.issue.number, url: call.issue.url, title: call.issue.title },
@@ -71,19 +71,19 @@ export function handoffFor(repo: string, pending: Pending, baseBranch: string | 
       if (entry.owner !== null) {
         if (entry.owner.call !== "go") return null;
         const reason = entry.owner.kind === "answer" && entry.call.call === "go" ? entry.call.reason : entry.owner.words;
-        return { ...of(entry), call: entry.id, by: "owner", reason, criteria: [...criteriaOf(entry.call), linkCriterion(entry.issue.number, baseBranch)] };
+        return { ...of(entry), call: entry.id, by: "owner", reason, criteria: [...criteriaOf(entry.call), ...generic.map(genericCriterion), linkCriterion(entry.issue.number, baseBranch)] };
       }
       if (entry.call.call !== "go" || entry.confirm) return null;
-      return { ...of(entry), call: entry.id, by: "entail", reason: entry.call.reason, criteria: [...entry.call.criteria, linkCriterion(entry.issue.number, baseBranch)] };
+      return { ...of(entry), call: entry.id, by: "entail", reason: entry.call.reason, criteria: [...entry.call.criteria, ...generic.map(genericCriterion), linkCriterion(entry.issue.number, baseBranch)] };
     }
     case "confirmed": {
       const { call, action } = pending;
       if (call.call.call !== "go") return null;
-      return { ...of(call), call: action.id, by: "owner", reason: call.call.reason, criteria: [...call.call.criteria, linkCriterion(call.issue.number, baseBranch)] };
+      return { ...of(call), call: action.id, by: "owner", reason: call.call.reason, criteria: [...call.call.criteria, ...generic.map(genericCriterion), linkCriterion(call.issue.number, baseBranch)] };
     }
     case "owner-go": {
       const { call, action } = pending;
-      return { ...of(call), call: action.id, by: "owner", reason: call.call.reason, criteria: [{ criterion: action.reason, source: "owner", basis: "the owner's go, made differently, word for word" }, linkCriterion(call.issue.number, baseBranch)] };
+      return { ...of(call), call: action.id, by: "owner", reason: call.call.reason, criteria: [{ criterion: action.reason, source: "owner", basis: "the owner's go, made differently, word for word" }, ...generic.map(genericCriterion), linkCriterion(call.issue.number, baseBranch)] };
     }
     default:
       return null;

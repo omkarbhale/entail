@@ -78,7 +78,7 @@ const USAGE = `usage:
   entail enroll <owner/repo> [--no-confirm] [--since <time>]
   entail unenroll <owner/repo>
   entail repos [--all] [--json]
-  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--base <branch>|default] [--pin <topic>]... [--unpin <topic>]... [--owner <name>] [--notice <command>|none] [--start <command>|none] [--backup <git remote url>|none]
+  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--base <branch>|default] [--pin <topic>]... [--unpin <topic>]... [--criterion <text>... |none] [--owner <name>] [--notice <command>|none] [--start <command>|none] [--backup <git remote url>|none]
   entail backup status
   entail restore <git remote url>
   entail run [--once] [--dry-run] [--interval <seconds>] [--port <n>]
@@ -412,7 +412,7 @@ function reposCommand(args: string[]): number {
     for (const repo of repos) {
       const own = (value: string | null) => (value === null ? " (default)" : "");
       console.log(
-        `${repo.repo}${repo.enrolled ? "" : " (not enrolled)"}: confirm mode ${repo.confirm ? "on" : "off"}, ${repo.uses.model}${own(repo.model)} at ${repo.uses.effort} effort${own(repo.effort)}${repo.baseBranch === null ? "" : `, base branch ${repo.baseBranch}`}; ${repo.calls} calls, ${repo.waiting} waiting on you` +
+        `${repo.repo}${repo.enrolled ? "" : " (not enrolled)"}: confirm mode ${repo.confirm ? "on" : "off"}, ${repo.uses.model}${own(repo.model)} at ${repo.uses.effort} effort${own(repo.effort)}${repo.baseBranch === null ? "" : `, base branch ${repo.baseBranch}`}${repo.genericCriteria.length === 0 ? "" : `, ${repo.genericCriteria.length} generic criteri${repo.genericCriteria.length === 1 ? "on" : "a"}`}; ${repo.calls} calls, ${repo.waiting} waiting on you` +
           (repo.checked > 0 ? `; you confirmed ${repo.agreed} of the ${repo.checked} calls you checked` : ""),
       );
     }
@@ -436,6 +436,7 @@ async function settingsCommand(args: string[]): Promise<number> {
     base: { type: "string" },
     pin: { type: "string", multiple: true },
     unpin: { type: "string", multiple: true },
+    criterion: { type: "string", multiple: true },
     owner: { type: "string" },
     notice: { type: "string" },
     start: { type: "string" },
@@ -455,6 +456,10 @@ async function settingsCommand(args: string[]): Promise<number> {
     if (values.model !== undefined) change.model = values.model === "default" ? null : values.model;
     if (values.effort !== undefined) change.effort = values.effort === "default" ? null : values.effort;
     if (values.base !== undefined) change.baseBranch = values.base === "default" ? null : values.base;
+    if (values.criterion !== undefined) {
+      if (values.criterion.includes("none") && values.criterion.length > 1) throw new UsageError("--criterion none clears the generic criteria; it cannot be given beside others");
+      change.genericCriteria = values.criterion.length === 1 && values.criterion[0] === "none" ? [] : values.criterion;
+    }
     const repo = repoName(positionals[0]!);
     // Each pin is a change of its own, so each is logged on its own.
     const pins = [...(values.unpin ?? []).map((unpin) => ({ unpin })), ...(values.pin ?? []).map((pin) => ({ pin }))];
@@ -466,7 +471,9 @@ async function settingsCommand(args: string[]): Promise<number> {
     if (state === undefined) throw new Error(`${repo} has never been enrolled`);
     const settings = settingsIn(dataDirectory);
     console.log(
-      `${repo}: confirm mode ${state.confirm ? "on" : "off"}, model ${state.model ?? `${settings.model} (default)`}, effort ${state.effort ?? `${settings.effort} (default)`}, base branch ${state.baseBranch ?? `${forgeTitle(repo)}'s default branch (default)`}`,
+      `${repo}: confirm mode ${state.confirm ? "on" : "off"}, model ${state.model ?? `${settings.model} (default)`}, effort ${state.effort ?? `${settings.effort} (default)`}, base branch ${state.baseBranch ?? `${forgeTitle(repo)}'s default branch (default)`}, ${
+        state.genericCriteria.length === 0 ? "no generic criteria" : `generic criteria: ${state.genericCriteria.map((text) => `"${text}"`).join("; ")}`
+      }`,
     );
     const pinned = readPinsSync(pinsFile(dataDirectory, repoSetting(repo)));
     if (pinned.length > 0) console.log(`pins: ${pinned.join("; ")}`);
@@ -475,6 +482,7 @@ async function settingsCommand(args: string[]): Promise<number> {
   if (values.confirm !== undefined) throw new UsageError("--confirm is a setting of one repo: name it");
   if (values.pin !== undefined || values.unpin !== undefined) throw new UsageError("--pin and --unpin are for one repo: name it");
   if (values.base !== undefined) throw new UsageError("--base is a setting of one repo: name it");
+  if (values.criterion !== undefined) throw new UsageError("--criterion is a setting of one repo: name it");
   const change: Record<string, unknown> = {};
   for (const key of ["owner", "model", "effort"] as const) if (values[key] !== undefined) change[key] = values[key];
   if (values.notice !== undefined) change.notice = values.notice === "none" ? null : values.notice;

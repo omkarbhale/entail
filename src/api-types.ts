@@ -15,7 +15,7 @@ export type TriggerName = "new" | "edit" | "mention" | "owner" | "backlog" | "la
 export type CallStatusName = "waiting" | "auto" | "confirmed" | "overridden" | "answered" | "owner" | "superseded" | "closed";
 
 export interface CriterionView {
-  source: "vision" | "reading" | "edge" | "answer";
+  source: "vision" | "reading" | "edge" | "answer" | "owner";
   criterion: string;
   basis: string;
 }
@@ -296,6 +296,8 @@ export interface RepoView {
   effort: EffortName | null;
   /** The branch entail works against in place of the forge's default branch, or null for the forge's default. */
   baseBranch: string | null;
+  /** What every PR in the repo must meet whatever its ticket, checked at landing; empty when none is set. */
+  genericCriteria: string[];
   /** The model and effort its calls are made with now. */
   uses: { model: string; effort: EffortName };
   calls: number;

@@ -33,6 +33,7 @@ node dist/cli.js backup status                 # the backup remote, its last pus
 node dist/cli.js restore <git remote>          # on a new machine: bring the records back from the backup remote
 node dist/cli.js suggest owner/repo            # suggest work from the vision and the product, filed as entail:suggested issues
 node dist/cli.js settings owner/repo --base develop # work against develop instead of the forge's default branch (--base default undoes it)
+node dist/cli.js settings owner/repo --criterion "Tests were added or run" # a generic criterion every PR in the repo must meet (--criterion none clears them)
 ```
 
 `node dist/cli.js help` lists every command and option. Every setting `entail settings` changes is on the board too, once entail is running: the ones for every repo on its Settings page, each repo's own on its card on Repos.
@@ -60,6 +61,15 @@ A Server answers more slowly to new features than github.com does, and entail do
 ## Watching
 
 `run` polls each enrolled repo. Each issue filed after it was enrolled gets a call, and gets one again whenever its title or body is edited; a comment with a line starting `/entail` gets a call on its issue too, on any issue. Each call is one model run, Opus 5.5 at high effort unless the settings say otherwise (`entail settings`, for every repo or one; every one of them is on the board too, on Settings or the repo's card), paid on the logged-in `claude`.
+
+## Generic criteria
+
+A repo can have generic criteria: what every PR in it must satisfy whatever its ticket, such as that tests were added or run, that docs were updated or that a changelog entry exists. They are a setting fixed once per repo, never a question asked per ticket. Set them with `entail settings owner/repo --criterion "<text>"`, repeating `--criterion` for each one (the list replaces the earlier one; `--criterion none` clears it), or on the repo's card on the board's Repos page, one per line. Each change is logged under the owner's name like the other settings, and `entail repos` shows how many a repo has. They work the same on GitHub and GitLab.
+
+- Every landing call on the repo checks them beside the ticket's own criteria: each is marked met or unmet with its evidence in the same checklist, on the board and in the comment, and an unmet one sends the PR back like any other. A PR with no cleared ticket is checked against them too.
+- Where a criterion can be checked from what the forge reports, such as the checks that ran or which files the PR changes, that is its evidence; what the PR's description says about itself proves nothing.
+- A posted go lists them after its own criteria, and the handoff to the start command carries them in its criteria with the source `owner`, so the implementer knows them before writing the PR.
+- A repo with none set lands PRs exactly as before.
 
 ## The base branch
 

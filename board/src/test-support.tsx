@@ -227,6 +227,7 @@ export function aRepo(overrides: Partial<RepoView> = {}): RepoView {
     model: null,
     effort: null,
     baseBranch: null,
+    genericCriteria: [],
     uses: { model: "claude-opus-5-5", effort: "low" },
     calls: 6,
     waiting: 2,

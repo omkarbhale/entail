@@ -52,6 +52,7 @@ import {
   type ActedEntry,
   type AnsweredEntry,
   type BlockedEntry,
+  genericCriterion,
   repoState,
   SEND_BACK_LIMIT,
   JUDGMENT_ATTEMPTS,
@@ -831,10 +832,11 @@ async function act(
   const taking = pending.kind === "owner-no" && pending.action.type === "answered" ? pending.action : null;
   const filing = taking?.parts === undefined ? null : { action: taking, parts: taking.parts };
   const filed = filing === null ? [] : await filePartIssues(options, repo, forge, pending.kind === "owner-no" ? pending.call : null, filing.action, filing.parts);
-  const post = postFor(pending, options.owner, repo, forge.baseBranch, filed);
+  const { genericCriteria } = repoState(repo, entries());
+  const post = postFor(pending, options.owner, repo, forge.baseBranch, genericCriteria, filed);
   if (post === null) return false;
   const command = options.settings.start ?? null;
-  const handoff = command === null ? null : handoffFor(repo, pending, forge.baseBranch);
+  const handoff = command === null ? null : handoffFor(repo, pending, forge.baseBranch, genericCriteria);
   const start = command !== null && handoff !== null && !workStarted(entries(), handoff.issue.number) ? { start: { command, handoff } } : {};
   const body = composeComment(options.owner, post.markerFor, post.text);
   const name = `${repo}#${post.issue}`;
@@ -1393,6 +1395,7 @@ async function judgePullRequest(
         base: reading.base,
         issue: go === null ? null : { number: go.issue.number, text: go.issueText },
         criteria,
+        generic: state.genericCriteria,
         ...(go === null ? { linked } : {}),
         vision: reading.vision,
         pins: reading.pins,
@@ -1426,7 +1429,7 @@ async function judgePullRequest(
       base: reading.base,
       vision: reading.vision,
       ...(go === null && linked.length > 0 ? { linked } : {}),
-      criteria,
+      criteria: [...criteria, ...state.genericCriteria.map(genericCriterion)],
       facts,
       touched: touched(files, reading.pins),
       call,
