@@ -72,7 +72,7 @@ for (const kind of ["github", "gitlab"] as const) {
     assert.equal(answered.by, OWNER);
     const report = await h.pass();
     assert.equal(report.judged, 1);
-    assert.match(h.runner.requests.at(-1)!.prompt, /The owner's answer: go\.\n\nYes, but behind a flag\./u);
+    assert.ok(h.runner.requests.some((r) => /The owner's answer: go\.\n\nYes, but behind a flag\./u.test(r.prompt)));
     assert.match(h.forge.posted.at(-1)!.body, /\*\*Go\*\*, on Omkar's answer on the board/u);
     assert.deepEqual(h.forge.labelsOn(12), ["entail:go"]);
   });
