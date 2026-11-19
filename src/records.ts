@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import type { ForgeFacts, LandingOwnerCall, OwnerCall } from "./case-book.ts";
 import { scopeOf, type Criterion, type GoScope, type IssueCall } from "./judgment.ts";
 import type { LandingCall } from "./landing.ts";
+import type { GrowthDecision } from "./vision-growth.ts";
 import { DEFAULT_EFFORT, EFFORTS, type Effort } from "./model-runner.ts";
 import { forgeHost, isSelfHostedHost, repoOf, repoSetting } from "./repo-ref.ts";
 import type { IssueRef } from "./forge/forge.ts";
@@ -501,6 +502,51 @@ export interface SuggestFailedEntry extends EntryBase, ByOwner {
   reason: string;
 }
 
+/**
+ * What entail decided about one board answer for the vision: whether it
+ * makes sense as a general statement, and if so the line and the section it
+ * goes under. Recorded before anything is written, so a write that fails is
+ * retried from this decision and the model is not run again.
+ */
+export interface VisionConsideredEntry extends EntryBase {
+  type: "vision-considered";
+  /** The answered entry this decision is about. */
+  answer: number;
+  decision: GrowthDecision;
+  /** The commit of VISION.md the answer was weighed against; null when the repo had none. */
+  visionCommit: string | null;
+  model: string;
+  effort: Effort;
+  promptVersion: string;
+  costUsd: number | null;
+}
+
+/**
+ * entail added a line to VISION.md on the base branch because of a board
+ * answer. This entry is where the line's origin is kept: added automatically,
+ * from which answer, given by whom. VISION.md itself carries no mark.
+ */
+export interface VisionGrownEntry extends EntryBase {
+  type: "vision-grown";
+  /** The vision-considered entry that decided the line. */
+  considered: number;
+  /** The answered entry, and the call or landing entry it answered. */
+  answer: number;
+  on: number;
+  /** Who gave the answer, as the board recorded them. */
+  by: string;
+  /** What the answer was given on: an issue, or a PR. */
+  about: { kind: "issue" | "pr"; number: number; title: string; url: string };
+  /** The line added, exactly as written into VISION.md. */
+  line: string;
+  /** The heading of the section it went under; null when it went at the end. */
+  heading: string | null;
+  reason: string;
+  /** The commit that wrote it, on the base branch. */
+  commit: string;
+  branch: string;
+}
+
 export type OwnerAction = ConfirmedEntry | OverriddenEntry | AnsweredEntry;
 
 export type Entry =
@@ -527,6 +573,8 @@ export type Entry =
   | UnblockedEntry
   | VisionSeenEntry
   | RecheckedEntry
+  | VisionConsideredEntry
+  | VisionGrownEntry
   | BaseBranchSeenEntry;
 
 /** An entry as written, before it has an id and a time. */
@@ -883,6 +931,50 @@ export function pendingWork(entries: readonly Entry[], now: Date = new Date()): 
     else if (!rerunFor.has(entry.id)) pending.push({ kind: "rerun", action: entry, call });
   }
   return pending;
+}
+
+/** One board answer the vision has yet to weigh, or a line decided and not yet written. */
+export type GrowthWork =
+  | { kind: "consider"; answer: AnsweredEntry; target: CallEntry | LandingEntry }
+  | { kind: "write"; considered: VisionConsideredEntry & { decision: { add: true } }; answer: AnsweredEntry; target: CallEntry | LandingEntry };
+
+/**
+ * Answers given on the board from this time on are weighed for the vision;
+ * those given before it settled their tickets when the vision did not grow
+ * from answers, and are never weighed.
+ */
+export const GROWTH_STARTS_AT = "2026-11-19T00:00:00.000Z";
+
+/**
+ * What the vision has yet to do with the board answers, in log order: each
+ * answer past its undo window and not undone that was not weighed yet, and
+ * each decided line not written yet.
+ */
+export function pendingGrowth(entries: readonly Entry[], now: Date = new Date()): GrowthWork[] {
+  const undone = undoneActions(entries);
+  const targets = new Map<number, CallEntry | LandingEntry>();
+  const considered = new Map<number, VisionConsideredEntry>();
+  const grown = new Set<number>();
+  for (const entry of entries) {
+    if (entry.type === "call" || entry.type === "landing") targets.set(entry.id, entry);
+    else if (entry.type === "vision-considered") considered.set(entry.answer, entry);
+    else if (entry.type === "vision-grown") grown.add(entry.considered);
+  }
+  const work: GrowthWork[] = [];
+  for (const entry of entries) {
+    if (entry.type !== "answered" || undone.has(entry.id) || isHeld(entry, now) || Date.parse(entry.at) < Date.parse(GROWTH_STARTS_AT)) continue;
+    const target = targets.get(entry.call);
+    if (target === undefined) continue;
+    const decided = considered.get(entry.id);
+    if (decided === undefined) work.push({ kind: "consider", answer: entry, target });
+    else if (decided.decision.add && !grown.has(decided.id)) work.push({ kind: "write", considered: decided as VisionConsideredEntry & { decision: { add: true } }, answer: entry, target });
+  }
+  return work;
+}
+
+/** The lines entail added to the vision from board answers, oldest first. */
+export function visionGrowth(entries: readonly Entry[]): VisionGrownEntry[] {
+  return entries.filter((entry): entry is VisionGrownEntry => entry.type === "vision-grown");
 }
 
 /** The acted entries whose work is still to start, in log order: each with a start, no `starting` marker and no `started` entry. */

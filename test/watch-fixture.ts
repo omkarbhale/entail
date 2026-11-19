@@ -6,7 +6,9 @@ import { ChangeDeduplicator } from "../src/changes.ts";
 import { CursorStore } from "../src/cursors.ts";
 import {
   checksByName,
+  ForgeRequestError,
   type Actor,
+  type FileUpdate,
   type Blocker,
   type IssueRef,
   type Change,
@@ -27,6 +29,7 @@ import {
 import type { Verdict } from "../src/judgment.ts";
 import { JUDGMENT_KIND } from "../src/judgment.ts";
 import { LANDING_KIND, type LandingAnswer } from "../src/landing.ts";
+import { VISION_GROWTH_KIND, type VisionGrowthAnswer } from "../src/vision-growth.ts";
 import { appendEntry, type GlobalSettings } from "../src/records.ts";
 import { ScriptedRunner } from "../src/scripted-runner.ts";
 import { runPass, type PassOptions, type PassReport, type WatchForge } from "../src/watch.ts";
@@ -280,6 +283,39 @@ export class FakeForge implements WatchForge {
     this.editPull(number, { state: "closed" });
   }
 
+  /** VISION.md on the base branch as the forge holds it; null when the repo has none. */
+  visionFile: string | null = VISION;
+  /** Every commit entail made to a file on the base branch, in order. */
+  readonly fileCommits: { path: string; content: string; message: string; commit: string }[] = [];
+  /** Set to make the forge refuse the next file commit with this message, as a protected branch does. */
+  refuseFileCommit: string | null = null;
+  /** Set to make the next file commit land and then fail, as when entail stops before it records the commit. */
+  failAfterFileCommit = false;
+
+  async updateFile(path: string, change: (current: string | null) => string | null, message: string): Promise<FileUpdate> {
+    this.#check();
+    const next = change(this.visionFile);
+    if (next === null || next === this.visionFile) return { changed: false };
+    if (this.refuseFileCommit !== null) {
+      const refusal = this.refuseFileCommit;
+      this.refuseFileCommit = null;
+      throw new ForgeRequestError(this.setting.host, 403, "PUT", path, refusal);
+    }
+    const commit = (this.fileCommits.length + 1).toString(16).padStart(40, "c");
+    this.visionFile = next;
+    this.fileCommits.push({ path, content: next, message, commit });
+    if (this.failAfterFileCommit) {
+      this.failAfterFileCommit = false;
+      throw new ForgeRequestError(this.setting.host, 500, "PUT", path, "the connection dropped after the commit");
+    }
+    return { changed: true, commit, branch: this.baseBranch ?? "main" };
+  }
+
+  async commitsTouching(_path: string): Promise<{ commit: string; message: string }[]> {
+    this.#check();
+    return this.fileCommits.map(({ commit, message }) => ({ commit, message })).reverse();
+  }
+
   async project(): Promise<Project> {
     this.#check();
     return { forge: this.kind, host: this.setting.host, id: 77, path: REPO, defaultBranch: "main", baseBranch: this.baseBranch ?? "main" };
@@ -383,6 +419,9 @@ export function landingAnswer(overrides: Partial<LandingAnswer> = {}): LandingAn
   };
 }
 
+/** The weighing of an answer that settles its own ticket and adds nothing to the vision. */
+export const NO_GROWTH: VisionGrowthAnswer = { general: false, line: "", heading: null, reason: "The answer rules on this ticket only." };
+
 export interface Harness {
   dataDirectory: string;
   /** The repo as entail names it: `acme/tally`, or `gitlab:acme/tally` on GitLab. */
@@ -394,6 +433,8 @@ export interface Harness {
   script(issue: number, ...verdicts: (Verdict | "fail")[]): void;
   /** Scripts the next landing judgment on a PR. */
   scriptLanding(pr: number, ...answers: (LandingAnswer | "fail")[]): void;
+  /** Scripts the next weighing of a board answer on an issue or PR for the vision. Unscripted, an answer adds nothing. */
+  scriptGrowth(number: number, ...answers: (VisionGrowthAnswer | "fail")[]): void;
   /** The PR heads the landing judgment read, in order. */
   prReads: { pr: number; head: string }[];
   pass(overrides?: Partial<PassOptions>): Promise<PassReport>;
@@ -406,7 +447,7 @@ export function harness(t: TestContext, options: { confirm?: boolean; settings?:
   const forge = new FakeForge(options.forge);
   const { repo } = forge;
   appendEntry(dataDirectory, repo, { type: "enrolled", by: OWNER, since: ENROLLED_AT, confirm: options.confirm ?? true }, new Date(ENROLLED_AT));
-  const runner = new ScriptedRunner();
+  const runner = new ScriptedRunner().fallback(VISION_GROWTH_KIND, { output: NO_GROWTH, facts: { estimatedCostUsd: 0.01 } });
   const printed: string[] = [];
   const cursors = new CursorStore(dataDirectory);
   const seen = new Map<string, ChangeDeduplicator>();
@@ -444,6 +485,13 @@ export function harness(t: TestContext, options: { confirm?: boolean; settings?:
         LANDING_KIND,
         `${repo}#${pr}`,
         ...answers.map((a) => (a === "fail" ? { failure: { kind: "error" as const, message: "the run broke" } } : { output: a, facts: { estimatedCostUsd: 0.07 } })),
+      );
+    },
+    scriptGrowth(number, ...answers) {
+      runner.script(
+        VISION_GROWTH_KIND,
+        `${repo}#${number}`,
+        ...answers.map((a) => (a === "fail" ? { failure: { kind: "error" as const, message: "the run broke" } } : { output: a, facts: { estimatedCostUsd: 0.02 } })),
       );
     },
     script(issue, ...verdicts) {

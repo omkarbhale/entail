@@ -678,3 +678,33 @@ test("a host whose certificate glab does not trust is explained in plain words, 
     return true;
   });
 });
+
+const PROJECT_READ: Exchange = { request: { method: "GET", path: PROJECT }, response: { status: 200, body: { id: 5001, default_branch: "main" } } };
+const encoded = (text: string) => Buffer.from(text, "utf8").toString("base64");
+
+test("updateFile reads the file on the base branch, commits the change pinned to its last commit, and reads the commit it made", async (t) => {
+  const { forge } = forgeOn(t, [
+    PROJECT_READ,
+    { request: { method: "GET", path: `${PROJECT}/repository/files/VISION.md?ref=main` }, response: { status: 200, body: { encoding: "base64", content: encoded("# Vision\n\nOne.\n"), last_commit_id: "old1" } } },
+    { request: { method: "PUT", path: `${PROJECT}/repository/files/VISION.md`, body: { branch: "main", content: "# Vision\n\nOne.\nTwo.\n", commit_message: "Add a line", last_commit_id: "old1" } }, response: { status: 200, body: { file_path: "VISION.md", branch: "main" } } },
+    { request: { method: "GET", path: `${PROJECT}/repository/files/VISION.md?ref=main` }, response: { status: 200, body: { encoding: "base64", content: encoded("# Vision\n\nOne.\nTwo.\n"), last_commit_id: "new2" } } },
+  ]);
+  assert.deepEqual(await forge.updateFile("VISION.md", (current) => `${current}Two.\n`, "Add a line"), { changed: true, commit: "new2", branch: "main" });
+});
+
+test("updateFile on GitLab refuses a file that moved since it was read", async (t) => {
+  const { forge } = forgeOn(t, [
+    PROJECT_READ,
+    { request: { method: "GET", path: `${PROJECT}/repository/files/VISION.md?ref=main` }, response: { status: 200, body: { encoding: "base64", content: encoded("A.\n"), last_commit_id: "old1" } } },
+    { request: { method: "PUT", path: `${PROJECT}/repository/files/VISION.md`, body: { branch: "main", content: "A.\nB.\n", commit_message: "m", last_commit_id: "old1" } }, response: { status: 400, body: { message: "You are attempting to update a file that has changed since you started editing it." } } },
+  ]);
+  await assert.rejects(forge.updateFile("VISION.md", (current) => `${current}B.\n`, "m"), (error: unknown) => error instanceof ForgeRequestError && error.status === 400);
+});
+
+test("commitsTouching lists the base branch's newest commits on a file with their full messages", async (t) => {
+  const { forge } = forgeOn(t, [
+    PROJECT_READ,
+    { request: { method: "GET", path: `${PROJECT}/repository/commits?ref_name=main&path=VISION.md&per_page=30` }, response: { status: 200, body: [{ id: "c2", message: "Add\n\nLine." }] } },
+  ]);
+  assert.deepEqual(await forge.commitsTouching("VISION.md"), [{ commit: "c2", message: "Add\n\nLine." }]);
+});

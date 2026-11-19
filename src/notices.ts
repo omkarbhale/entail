@@ -2,6 +2,9 @@ import { spawn } from "node:child_process";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CallView, StalledView } from "./api-types.ts";
+import type { VisionGrownEntry } from "./records.ts";
+import { blobUrl } from "./repo-ref.ts";
+import { VISION_PATH } from "./vision.ts";
 import { FAILING_NOTICE_AFTER_MS, failureReason, type Failing } from "./health.ts";
 import { cmdArguments } from "./windows.ts";
 
@@ -53,6 +56,17 @@ function span(ms: number): string {
   if (minutes < 120) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
   const hours = Math.round(minutes / 60);
   return hours < 48 ? `${hours} hours` : `${Math.round(hours / 24)} days`;
+}
+
+/**
+ * The line that tells the owner a line was added to a repo's vision from a
+ * board answer: whose answer, on what, and the line itself. Unlike a notice
+ * of something waiting, this one states the change, since nothing waits on the
+ * owner and the vision is theirs; the link is VISION.md at the commit.
+ */
+export function grownLine(repo: string, grown: Pick<VisionGrownEntry, "by" | "line"> & { about: Pick<VisionGrownEntry["about"], "kind" | "number"> }): string {
+  const where = `${grown.about.kind === "pr" ? "PR " : ""}#${grown.about.number}`;
+  return `entail: added to ${repo}'s ${VISION_PATH} from ${grown.by}'s answer on ${where}: ${grown.line}`;
 }
 
 export interface NoticeResult {
@@ -163,6 +177,33 @@ export class Notifier {
     return sent;
   }
 
+  /**
+   * Tells the owner once for each line entail added to a vision, whoever's
+   * answer it came from. Each is remembered in `notices.json` by its entry,
+   * once the command delivered it, so a restart does not tell it again and a
+   * line that was not told is tried again. With no notice command set the
+   * owner still has the log, `entail calls` and the line printed by the pass.
+   */
+  async grown(items: readonly { repo: string; grown: Pick<VisionGrownEntry, "id" | "by" | "line" | "commit"> & { about: Pick<VisionGrownEntry["about"], "kind" | "number"> } }[]): Promise<string[]> {
+    const state = this.#read();
+    const told = new Set(state.grown);
+    const command = this.#options.command();
+    const sent: string[] = [];
+    const keys = items.map(({ repo, grown }) => `${repo}#${grown.id}`);
+    const kept = new Set(keys.filter((key) => told.has(key)));
+    for (const [index, { repo, grown }] of items.entries()) {
+      if (kept.has(keys[index]!) || command === null) continue;
+      const line = grownLine(repo, grown);
+      const result = await (this.#options.send ?? sendNotice)(command, line, blobUrl(repo, grown.commit, VISION_PATH));
+      this.#options.onResult?.({ ...result, line });
+      if (!result.ok) continue;
+      sent.push(line);
+      kept.add(keys[index]!);
+    }
+    this.#write({ ...state, grown: [...kept].sort() });
+    return sent;
+  }
+
   async check(items: readonly (Pick<CallView, "call" | "repo" | "kind"> & { issue: { number: number } | null; pr?: { number: number } | null })[]): Promise<{ sent: boolean; line: string | null }> {
     // A PR with no cleared ticket behind it is known by its own number.
     const keys = items.map((item) => (item.issue === null ? `${item.repo}#${item.kind}#pr-${item.pr?.number ?? 0}` : `${item.repo}#${item.kind}#${item.issue.number}`));
@@ -184,7 +225,7 @@ export class Notifier {
     this.#write({ ...this.#read(), waiting: [...keys] });
   }
 
-  #read(): { waiting: string[]; failing: string[]; stalled: string[] } {
+  #read(): { waiting: string[]; failing: string[]; stalled: string[]; grown: string[] } {
     let value: unknown = null;
     try {
       value = JSON.parse(readFileSync(join(this.#options.dataDirectory, NOTICES_FILE), "utf8"));
@@ -195,10 +236,10 @@ export class Notifier {
       const list = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
       return Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
     };
-    return { waiting: strings("waiting"), failing: strings("failing"), stalled: strings("stalled") };
+    return { waiting: strings("waiting"), failing: strings("failing"), stalled: strings("stalled"), grown: strings("grown") };
   }
 
-  #write(told: { waiting: string[]; failing: string[]; stalled: string[] }): void {
+  #write(told: { waiting: string[]; failing: string[]; stalled: string[]; grown: string[] }): void {
     const path = join(this.#options.dataDirectory, NOTICES_FILE);
     const staging = `${path}.new-${process.pid}`;
     writeFileSync(staging, `${JSON.stringify(told, null, 2)}\n`, { mode: 0o600 });

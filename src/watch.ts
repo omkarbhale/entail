@@ -44,6 +44,7 @@ import {
   newEntryId,
   pendingLanding,
   interruptedStarts,
+  pendingGrowth,
   pendingStarts,
   pendingWork,
   readLog,
@@ -73,7 +74,8 @@ import {
 } from "./records.ts";
 import { handoffFor, runStart } from "./starts.ts";
 import { SUGGESTED_LABEL, type SuggestReader } from "./suggest.ts";
-import { collapseWhitespace, readVision, visionTextChange, type VisionChange } from "./vision.ts";
+import { collapseWhitespace, readVision, VISION_PATH, visionTextChange, type VisionChange } from "./vision.ts";
+import { addVisionLine, decideGrowth, VISION_GROWTH_PROMPT_VERSION, type GrowthDecision } from "./vision-growth.ts";
 
 /**
  * One pass over the enrolled repos: read what changed on each since the last
@@ -156,6 +158,8 @@ export type WatchForge = Pick<
   | "merge"
   | "pullRequestState"
   | "closePullRequest"
+  | "updateFile"
+  | "commitsTouching"
 >;
 
 /** A repo read at its base branch's head, for the judgment: the default branch, or the base branch the owner set. */
@@ -444,6 +448,9 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
     }
   }
 
+  // A board answer that makes sense as a general statement grows the vision, and the owner is told; most answers add nothing.
+  if (!(await growVision(context, record, () => [...readLog(options.dataDirectory, repo), ...planned]))) acted = false;
+
   // Work starts after the go that starts it was posted; a crash before the start begins runs it at the next pass.
   // A start that began and has no outcome was cut off with the command possibly already at work: it is logged as interrupted, never run again.
   for (const begun of interruptedStarts([...readLog(options.dataDirectory, repo), ...planned])) {
@@ -462,6 +469,122 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
   // A judgment that did not run is tried again: the changes are read again from the old cursor.
   if (!ok) options.seen.delete(repo);
   return { ok: ok && acted, judged, posted, ...(context.failure === null ? {} : { failure: context.failure }) };
+}
+
+/** The sentence a pass prints, and the commit says, for a line added from an answer. */
+function growthSubject(target: CallEntry | LandingEntry): { kind: "issue" | "pr"; number: number; title: string; url: string } {
+  if (target.type === "call") return { kind: "issue", ...target.issue };
+  return { kind: "pr", number: target.pr.number, title: target.pr.title, url: target.pr.url };
+}
+
+/**
+ * Weighs each board answer given since the vision started to grow from them,
+ * once, and writes the line of each that makes sense as a general statement
+ * into VISION.md on the base branch, then records where it came from. The
+ * decision is recorded before the write, so a write the forge refused (a
+ * protected branch, a file that moved) is tried again next pass without
+ * another model run. Returns false when something could not be done.
+ */
+async function growVision(context: JudgeContext, record: (entry: NewEntry) => Entry, entries: () => Entry[]): Promise<boolean> {
+  const { options, state, forge } = context;
+  const { repo } = state;
+  const now = () => options.now?.() ?? new Date();
+  let ok = true;
+  for (const work of pendingGrowth(entries(), now())) {
+    options.signal?.throwIfAborted();
+    const subject = growthSubject(work.target);
+    const name = `${repo}#${subject.number}`;
+    let considered = work.kind === "write" ? work.considered : null;
+    try {
+      if (work.kind === "consider") {
+        const reading = await context.reading();
+        const { model, effort } = runSettings(state, options.settings);
+        const question =
+          work.target.type === "call" ? (work.target.call.call === "ask" ? work.target.call.question : "") : (work.target.call.question?.question ?? "");
+        const decided = await decideGrowth(
+          options.runner,
+          {
+            repo,
+            about: name,
+            context: work.target.type === "call" ? work.target.issueText : `${work.target.issue === null ? "" : `${work.target.issueText.trim()}\n\n`}The pull request: ${work.target.prText}`,
+            question,
+            by: work.answer.by,
+            chose: work.answer.to === "go" && work.answer.scope === "plan" ? "go, for planning" : work.answer.to,
+            answer: work.answer.answer,
+            vision: reading.vision,
+            checkout: reading.checkout,
+            sha: reading.sha,
+          },
+          { model, effort, ...(options.signal === undefined ? {} : { signal: options.signal }) },
+        );
+        if (!decided.ok) {
+          options.log?.warn("vision-growth-failed", { repo, answer: work.answer.id, failure: decided.failure.kind, message: decided.failure.message });
+          context.failure = failureAt(options, `weighing the answer on #${subject.number} for the vision`, `${decided.failure.kind}: ${decided.failure.message}`, decided.failure.resetAt);
+          options.print(`${name}: weighing the answer for the vision gave no decision (${decided.failure.kind}): ${decided.failure.message}; it is tried again next pass`);
+          ok = false;
+          continue;
+        }
+        const entry = record({
+          type: "vision-considered",
+          answer: work.answer.id,
+          decision: decided.decision,
+          visionCommit: reading.vision?.commit ?? null,
+          model: decided.facts.model,
+          effort,
+          promptVersion: VISION_GROWTH_PROMPT_VERSION,
+          costUsd: decided.facts.estimatedCostUsd,
+        }) as Extract<Entry, { type: "vision-considered" }>;
+        options.log?.info("vision-considered", { repo, answer: work.answer.id, add: decided.decision.add, model: decided.facts.model, costUsd: decided.facts.estimatedCostUsd });
+        if (!decided.decision.add) {
+          options.print(`${name}: ${work.answer.by}'s answer settles this ${subject.kind === "pr" ? "PR" : "ticket"} only; nothing added to the vision: ${oneLine(decided.decision.reason)}`);
+          continue;
+        }
+        considered = entry as typeof considered;
+      }
+      if (considered === null || !considered.decision.add) continue;
+      const { line, heading } = considered.decision;
+      if (options.dryRun) {
+        options.print(`would add to ${repo}'s ${VISION_PATH} from ${work.answer.by}'s answer on ${name}: ${line}`);
+        continue;
+      }
+      const message = `Add a line to ${VISION_PATH} from a board answer on ${subject.kind === "pr" ? "PR " : ""}#${subject.number}\n\n${line}\n\nBoard answer ${work.answer.id}`;
+      let written = await forge.updateFile(VISION_PATH, (current) => (current === null ? null : addVisionLine(current, line, heading)), message);
+      if (!written.changed) {
+        // An earlier pass may have committed this line and stopped before recording it: the commit is on the file's history.
+        const earlier = (await forge.commitsTouching(VISION_PATH)).find((entry) => entry.message.trim() === message.trim());
+        if (earlier !== undefined) written = { changed: true, commit: earlier.commit, branch: (await forge.project()).baseBranch };
+      }
+      if (!written.changed) {
+        // The vision has no file to grow, or already says it: nothing was added, and the answer is not weighed again.
+        record({ type: "vision-considered", answer: work.answer.id, decision: { add: false, reason: `${considered.decision.reason} Nothing was added: the vision has no ${VISION_PATH} to add to, or already says it.` }, visionCommit: considered.visionCommit, model: considered.model, effort: considered.effort, promptVersion: considered.promptVersion, costUsd: null });
+        options.print(`${name}: nothing was added to the vision: it has no ${VISION_PATH}, or already says it`);
+        continue;
+      }
+      record({
+        type: "vision-grown",
+        considered: considered.id,
+        answer: work.answer.id,
+        on: work.target.id,
+        by: work.answer.by,
+        about: subject,
+        line,
+        heading,
+        reason: considered.decision.reason,
+        commit: written.commit,
+        branch: written.branch,
+      });
+      options.log?.info("vision-grown", { repo, answer: work.answer.id, commit: written.commit });
+      options.print(`${repo}: added to ${VISION_PATH} automatically, from ${work.answer.by}'s answer on ${name}, at ${written.commit.slice(0, 7)}:\n${indent(line)}\n    ${oneLine(considered.decision.reason)}\n    open calls made under the earlier text are re-checked next pass, and an open PR whose ticket's call moves is told it relied on the old text`);
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      ok = false;
+      const message = error instanceof Error ? error.message : String(error);
+      options.log?.warn("vision-growth-failed", { repo, answer: work.answer.id, error: message });
+      context.failure = failureAt(options, `adding to the vision from the answer on #${subject.number}`, message, error instanceof RateLimitedError ? error.resetAt : undefined);
+      options.print(`${name}: entail could not write the line into ${VISION_PATH}: ${message}; it tries again next pass`);
+    }
+  }
+  return ok;
 }
 
 /**

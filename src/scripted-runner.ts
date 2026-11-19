@@ -31,11 +31,18 @@ export class ScriptedRunner implements ModelRunner {
   /** Every request made, in order. */
   readonly requests: ModelRunRequest[] = [];
   readonly #outcomes = new Map<string, ScriptedOutcome[]>();
+  readonly #fallbacks = new Map<string, ScriptedOutcome>();
 
   /** Adds outcomes for runs of this kind for this ticket (null for none). */
   script(kind: string, ticket: string | null, ...outcomes: ScriptedOutcome[]): this {
     const key = keyOf(kind, ticket);
     this.#outcomes.set(key, [...(this.#outcomes.get(key) ?? []), ...outcomes]);
+    return this;
+  }
+
+  /** What runs of this kind return for any ticket with no outcome scripted of its own, however many there are. */
+  fallback(kind: string, outcome: ScriptedOutcome): this {
+    this.#fallbacks.set(kind, outcome);
     return this;
   }
 
@@ -47,7 +54,7 @@ export class ScriptedRunner implements ModelRunner {
   async run<T>(request: ModelRunRequest<T>, options: RunOptions = {}): Promise<ModelRunResult<T>> {
     options.signal?.throwIfAborted();
     this.requests.push(request as ModelRunRequest);
-    const outcome = this.#outcomes.get(keyOf(request.kind, request.ticket))?.shift();
+    const outcome = this.#outcomes.get(keyOf(request.kind, request.ticket))?.shift() ?? this.#fallbacks.get(request.kind);
     if (outcome === undefined) {
       throw new Error(`no scripted outcome for kind ${request.kind} on ticket ${request.ticket ?? "(none)"}`);
     }

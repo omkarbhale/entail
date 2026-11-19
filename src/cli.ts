@@ -60,7 +60,7 @@ import {
   waitingItems,
 } from "./owner.ts";
 import { parsePins, pinsFile } from "./pins.ts";
-import { clearedGoOn, goCallOn, heldActions, loggedRepos, readLog, readSettings, repoState, sendBacksPosted, type GlobalSettings } from "./records.ts";
+import { clearedGoOn, goCallOn, heldActions, loggedRepos, readLog, readSettings, repoState, sendBacksPosted, visionGrowth, type GlobalSettings } from "./records.ts";
 import { formatReplay, replay, replayLandings } from "./replay.ts";
 import { forgeHost, forgeTitle, isRepo, repoSetting } from "./repo-ref.ts";
 import { installService, isWsl, machineServiceSystem, serviceStatus, uninstallService, type ServiceInputs } from "./service.ts";
@@ -637,6 +637,7 @@ async function runCommand(args: string[]): Promise<number> {
         await notifier.check(waitingItems(dataDirectory, await caseBook(dataDirectory)));
         await notifier.health(health.repos(), new Date());
         await notifier.stalled(repoViews(dataDirectory, settingsIn(dataDirectory)).flatMap((view) => view.stalled.map((stalled) => ({ repo: view.repo, stalled }))));
+        await notifier.grown(loggedRepos(dataDirectory).flatMap((repo) => visionGrowth(readLog(dataDirectory, repo)).map((grown) => ({ repo, grown }))));
         // Last, so a push that waits on the network never holds up a notice.
         await backUp(dataDirectory, settingsIn(dataDirectory).backup ?? null, { log });
       },
