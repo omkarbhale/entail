@@ -11,7 +11,7 @@ export type Call = "go" | "no" | "ask" | "merge" | "send-back";
  */
 export type OwnerCallName = "go" | "plan" | "no" | "merge" | "send-back";
 export type EffortName = "low" | "medium" | "high" | "xhigh" | "max";
-export type TriggerName = "new" | "edit" | "mention" | "owner" | "backlog" | "landing" | "vision" | "opened" | "push";
+export type TriggerName = "new" | "edit" | "mention" | "owner" | "backlog" | "landing" | "vision" | "reopen" | "owner-reopen" | "opened" | "push";
 export type CallStatusName = "waiting" | "auto" | "confirmed" | "overridden" | "answered" | "owner" | "superseded" | "closed";
 
 export interface CriterionView {

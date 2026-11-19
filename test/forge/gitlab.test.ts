@@ -233,6 +233,7 @@ const FREE_ENDPOINTS = [
   /^projects\/[^/?]+\/issues\?/,
   /^projects\/[^/?]+\/issues\/\d+$/,
   /^projects\/[^/?]+\/issues\/\d+\/closed_by\?/,
+  /^projects\/[^/?]+\/issues\/\d+\/resource_state_events\?/,
   /^projects\/[^/?]+\/(issues|merge_requests)\/\d+\/notes(\?|$)/,
   /^projects\/[^/?]+\/labels(\/[^/?]+)?$/,
   /^projects\/[^/?]+\/merge_requests\?/,

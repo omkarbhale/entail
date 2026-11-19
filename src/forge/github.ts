@@ -827,6 +827,13 @@ export class GitHubForge implements Forge {
     await this.#sendJson("PATCH", path, { state: "closed", state_reason: reason === "not-planned" ? "not_planned" : "completed" });
   }
 
+  async reopenedBy(issueNumber: number): Promise<Actor | null> {
+    const events = await this.#readPages(`repos/${this.setting.path}/issues/${pathNumber(issueNumber)}/events?per_page=${PAGE_SIZE}`, (body) => body);
+    const reopened = events.filter((raw) => isObject(raw) && raw.event === "reopened");
+    const last = reopened.at(-1);
+    return isObject(last) && isObject(last.actor) ? this.#actor(last.actor, "issue event actor") : null;
+  }
+
   async reopenIssue(issueNumber: number): Promise<void> {
     const path = `repos/${this.setting.path}/issues/${issueNumber}`;
     await this.#sendJson("PATCH", path, { state: "open" });

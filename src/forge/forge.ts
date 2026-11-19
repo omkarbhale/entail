@@ -453,6 +453,15 @@ export interface Forge {
   /** Closes an issue; on GitHub, with the reason given. An issue already closed stays closed. */
   closeIssue(issueNumber: number, reason: CloseReason): Promise<void>;
 
+  /**
+   * Who last reopened an issue, as the forge's own record of the issue says it
+   * (GitHub's issue events, GitLab's state events), or null when the forge
+   * names no one: the issue was never reopened, or the account is gone. It is
+   * read from the forge and never taken from the issue's text. Compare the
+   * account with {@link sameActor}.
+   */
+  reopenedBy(issueNumber: number): Promise<Actor | null>;
+
   /** Reopens an issue, as when the owner overrides a no to go. An open issue stays open. */
   reopenIssue(issueNumber: number): Promise<void>;
 

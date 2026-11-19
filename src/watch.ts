@@ -12,6 +12,7 @@ import {
   projectKey,
   RateLimitedError,
   requiredChecksReported,
+  sameActor,
   type Change,
   type Forge,
   type Issue,
@@ -48,12 +49,14 @@ import {
   interruptedStarts,
   pendingGrowth,
   pendingHandoffs,
+  pendingReopens,
   pendingStarts,
   pendingWork,
   readLog,
   type ActedEntry,
   type AnsweredEntry,
   type BlockedEntry,
+  type ReopenedEntry,
   repoState,
   SEND_BACK_LIMIT,
   JUDGMENT_ATTEMPTS,
@@ -157,6 +160,8 @@ export type WatchForge = Pick<
   | "createIssue"
   | "openIssues"
   | "reopenIssue"
+  | "reopenedBy"
+  | "currentActor"
   | "pullRequest"
   | "openPullRequests"
   | "linkedIssues"
@@ -344,20 +349,29 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
   const works = issueWork(fresh, entries, state);
   if (options.actOnly !== true) {
     for (const number of await heldToWeigh(forge, heldIssues(entries), fresh, works)) works.push({ number, issue: null, mentions: [] });
+    // A reopen no call answers yet, such as one whose judgment gave none, is weighed again though the issue did not change.
+    for (const number of pendingReopens(entries).keys()) if (!works.some((work) => work.number === number)) works.push({ number, issue: null, mentions: [] });
     works.sort((a, b) => a.number - b.number);
   }
   for (const work of works) {
     options.signal?.throwIfAborted();
     const issue = work.issue ?? (await forge.issue(work.number));
     if (issue === null) continue;
-    noteReopened(issue, entries, record);
+    await noteReopened(issue, entries, forge, record);
     const held = heldIssues(current()).get(issue.number);
+    const reopen = issue.state === "open" ? pendingReopens(current()).get(issue.number) : undefined;
+    if (reopen !== undefined && reopen.by?.owner === true && work.mentions.length === 0) {
+      // The owner reopened what entail closed: the issue comes to them as a question, with no model run.
+      const asked = await askAboutReopen(context, issue, reopen, current());
+      if (asked !== null) record(asked);
+      continue;
+    }
     if (held !== undefined && issue.state !== "open" && work.mentions.length === 0) {
       // Closed while held: nothing is left to wait for.
       record({ type: "unblocked", issue: issue.number, why: "closed" });
       continue;
     }
-    const trigger = work.mentions.length > 0 ? "mention" : held !== undefined ? held.trigger : triggerFor(issue, work, entries, state);
+    const trigger = work.mentions.length > 0 ? "mention" : held !== undefined ? held.trigger : reopen !== undefined ? "reopen" : triggerFor(issue, work, entries, state);
     if (trigger === null) continue;
     const outcome = await holdOrJudge(context, issue, trigger, work.mentions, held, record);
     if (outcome === "failed") {
@@ -681,16 +695,71 @@ function backlogIssues(entries: readonly Entry[]): number[] {
 }
 
 /**
- * Records an issue someone reopened on the forge after entail closed it. It
- * is kept in the log as what happened, not as the owner's word: the forge
- * does not say here who reopened it.
+ * Records an issue someone reopened on the forge after entail closed it, with
+ * who: the forge names the account that reopened it, and it is the owner's
+ * only when it is the account the owner's CLI is logged in as. When the forge
+ * names no one it is nobody's word. Returns the entry recorded, or null when
+ * the issue was not reopened after entail closed it, or the reopen is
+ * recorded already.
  */
-function noteReopened(issue: Issue, entries: readonly Entry[], record: (entry: NewEntry) => Entry): void {
-  if (issue.state !== "open") return;
+async function noteReopened(issue: Issue, entries: readonly Entry[], forge: WatchForge, record: (entry: NewEntry) => Entry): Promise<ReopenedEntry | null> {
+  if (issue.state !== "open") return null;
   const last = entries.findLast((entry): entry is ActedEntry => entry.type === "acted" && entry.issue === issue.number);
-  if (last === undefined || !last.closed) return;
-  if (entries.some((entry) => entry.type === "reopened" && entry.after === last.id)) return;
-  record({ type: "reopened", issue: issue.number, after: last.id });
+  if (last === undefined || !last.closed) return null;
+  if (entries.some((entry) => entry.type === "reopened" && entry.after === last.id)) return null;
+  const who = await forge.reopenedBy(issue.number);
+  const owner = who === null ? null : await forge.currentActor();
+  const by = who === null ? null : { username: who.username, owner: owner !== null && sameActor(who, owner) };
+  return record({ type: "reopened", issue: issue.number, after: last.id, by }) as ReopenedEntry;
+}
+
+/**
+ * The question the owner's own reopen of an issue entail closed leaves for
+ * them on the board: the no and the vision lines it quoted, with no model
+ * run. Their answer settles the ticket, recorded under their name, as for
+ * any question; it does not edit VISION.md. Null when no call closed the
+ * issue in the log, which leaves the reopen to be judged as anyone's.
+ */
+async function askAboutReopen(context: JudgeContext, issue: Issue, reopen: ReopenedEntry, entries: readonly Entry[]): Promise<NewEntry | null> {
+  const { options, state, forge } = context;
+  const acted = entries.find((entry) => entry.type === "acted" && entry.id === reopen.after);
+  const closing = acted?.type === "acted" ? entries.find((entry) => entry.id === acted.for) : undefined;
+  const call: CallEntry | undefined = closing?.type === "call" ? closing : closing?.type === "confirmed" || closing?.type === "overridden" || closing?.type === "answered" ? entries.find((entry): entry is CallEntry => entry.type === "call" && entry.id === closing.call) : undefined;
+  if (call === undefined) return null;
+  // The owner's own no (an override or an answer) rests on their words, not on the vision lines of the call it replaced.
+  const ownerNo = closing?.type === "overridden" || closing?.type === "answered" ? closing : null;
+  const no = ownerNo === null ? { text: call.call.reason, restsOn: call.call.restsOn } : { text: ownerNo.type === "overridden" ? ownerNo.reason : ownerNo.answer, restsOn: { visionLines: [], cases: [] } };
+  const who = reopen.by?.username ?? "the owner";
+  const comments = await forge.comments("issue", issue.number);
+  const issueText = renderIssue({ title: issue.title, body: issue.body, comments: comments.map((comment) => ({ author: comment.author.username, createdAt: comment.createdAt, body: comment.body })) });
+  const quoted = no.restsOn.visionLines.length > 0;
+  const name = `${state.repo}#${issue.number}`;
+  options.print(`${name} (reopened by the owner): ${issue.title}\n${indent("a question for the owner on the board, with the no it reopens")}`);
+  return {
+    type: "call",
+    issue: { number: issue.number, title: issue.title, url: issue.url, author: issue.author.username, createdAt: issue.createdAt },
+    trigger: "owner-reopen",
+    mentions: [],
+    content: contentHash(issue),
+    issueText,
+    vision: call.vision,
+    sha: call.sha,
+    call: {
+      call: "ask",
+      reason: `${who} reopened this issue after entail closed it with a no. Reopening is how the owner disagrees, so it is theirs to settle.`,
+      restsOn: no.restsOn,
+      question: `entail closed this issue with a no: ${no.text} You reopened it. Should it go ahead?`,
+      why: quoted ? "entail closed the issue quoting the vision line it rests on; the owner reopens an issue like that to change the vision or to overrule the call." : "entail closed the issue with a no; the owner reopens an issue like that to overrule the call.",
+      large: false,
+      criteria: [],
+    },
+    confirm: state.confirm,
+    owner: null,
+    model: "no model run",
+    effort: runSettings(state, options.settings).effort,
+    promptVersion: "none",
+    costUsd: null,
+  };
 }
 
 /** The issues a batch of changes asks to weigh: each changed issue, and each issue with a new `/entail` mention. */
@@ -799,7 +868,8 @@ async function judgeIssue(context: JudgeContext, issue: Issue, trigger: Trigger,
     vision: reading.vision,
     sha: reading.sha,
     call,
-    confirm: state.confirm,
+    // A no that stands on an issue reopened by someone else is not held for confirming again: entail closes it once more.
+    confirm: state.confirm && !(trigger === "reopen" && call.call === "no"),
     owner: owner?.word ?? null,
     model: judgment.facts.model,
     effort,

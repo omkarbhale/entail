@@ -81,7 +81,7 @@ export function postFor(pending: Pending, owner: string, repo: string, baseBranc
       }
       const waits = entry.confirm && entry.call.call !== "ask";
       const label = entry.call.call === "go" ? goLabel(scopeOf(entry.call)) : (`entail:${entry.call.call}` as const);
-      const text = callText(entry.call, entry.confirm, owner, issue, baseBranch);
+      const text = entry.trigger === "owner-reopen" ? reopenedText(entry.call, owner) : callText(entry.call, entry.confirm, owner, issue, baseBranch);
       return { issue, markerFor: entry.id, text: entry.recheck === undefined ? text : join(recheckText(entry.recheck, entry.call.call, owner), text), close: entry.call.call === "no" && !entry.confirm, reopen: false, label: waits ? null : label };
     }
     case "confirmed": {
@@ -214,6 +214,19 @@ export function callText(call: IssueCall, confirm: boolean, owner: string, issue
 export function rulingText(ruling: Ruling): string {
   const lines = ruling.answers.map((answer) => `- ${escape(answer.by)} answered ${outcomeWords(answer.outcome)} on #${answer.issue.number} (${answer.at.slice(0, 10)})`);
   return `It rests on these answers given on entail's board, not on a vision passage:\n\n${lines.join("\n")}\n\nA later answer that disagrees stops entail settling this kind of question itself.`;
+}
+
+/**
+ * The note on an issue the owner reopened after entail closed it with a no:
+ * where it stands now. The question itself stays on the board, as for any
+ * question, with the no and the vision lines it quoted.
+ */
+export function reopenedText(call: IssueCall, owner: string): string {
+  const quoted = call.restsOn.visionLines.length > 0;
+  return join(
+    `${owner} reopened this issue after entail closed it with a no, so it is theirs to settle: a question waiting on entail's board carries that no${quoted ? " and the vision line it quoted" : ""}. Nothing starts and nothing closes here until it is answered.`,
+    visionLinesText(call.restsOn.visionLines),
+  );
 }
 
 /**

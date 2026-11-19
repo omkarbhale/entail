@@ -401,6 +401,30 @@ export class FakeForge implements WatchForge {
     this.edit(number, { state: "closed" });
   }
 
+  /** Who the forge says reopened each issue last. */
+  readonly reopeners = new Map<number, Actor | null>();
+
+  /** Someone reopens an issue on the forge, as the forge's own record names them (`null`: it names no one). */
+  reopen(number: number, by: Actor | null): void {
+    this.reopeners.set(number, by);
+    this.edit(number, { state: "open" });
+  }
+
+  async reopenedBy(number: number): Promise<Actor | null> {
+    this.#check();
+    return this.reopeners.get(number) ?? null;
+  }
+
+  /** The account the owner's CLI is logged in as. */
+  async currentActor(): Promise<Actor | null> {
+    return this.account(OWNER_ACCOUNT.id, OWNER_ACCOUNT.username);
+  }
+
+  /** An account on this forge. */
+  account(id: number, username: string): Actor {
+    return { forge: this.kind, host: this.setting.host, id, username };
+  }
+
   async reopenIssue(number: number): Promise<void> {
     this.#check();
     this.reopened.push(number);

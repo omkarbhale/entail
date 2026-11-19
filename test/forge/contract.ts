@@ -40,6 +40,7 @@ export type Scenario =
   | "label"
   | "close"
   | "reopen"
+  | "reopened-by"
   | "close-pull-request"
   | "pull-request-files"
   | "merge"
@@ -90,6 +91,8 @@ export interface ForgeContractSubject {
  *   removed from issue #2, and `entail:investigate`, which issue #2 does not
  *   carry, is removed too.
  * - Close: issue #7 is closed as not planned, and issue #2 as completed.
+ * - Reopened by: issue #7 was closed by owner, reopened by reporter, closed by
+ *   owner and reopened by owner; issue #2 was never reopened.
  * - Close a PR: PR #4 is closed without merging.
  * - Merge: PR #4 is merged at its head (HEAD below) by squashing, making MERGE_COMMIT.
  * - Merge refused: PR #5's head moved away from the pinned sha, and PR #6 is a draft.
@@ -349,6 +352,12 @@ export function forgeContract(subject: ForgeContractSubject): void {
     test("an issue is reopened", async (t) => {
       const forge = forgeFor(t, "reopen");
       await forge.reopenIssue(7);
+    });
+
+    test("who reopened an issue is read from the forge's own record of it: the latest reopen's account, or no one", async (t) => {
+      const forge = forgeFor(t, "reopened-by");
+      assert.ok(sameActor((await forge.reopenedBy(7))!, actor(OWNER)), "the latest reopen was the owner's, not the reporter's before it");
+      assert.equal(await forge.reopenedBy(2), null, "an issue never reopened has no one who reopened it");
     });
 
     test("a PR is closed without merging", async (t) => {
