@@ -64,9 +64,11 @@ function span(ms: number): string {
  * of something waiting, this one states the change, since nothing waits on the
  * owner and the vision is theirs; the link is VISION.md at the commit.
  */
-export function grownLine(repo: string, grown: Pick<VisionGrownEntry, "by" | "line"> & { about: Pick<VisionGrownEntry["about"], "kind" | "number"> }): string {
+export function grownLine(repo: string, grown: Pick<VisionGrownEntry, "by" | "line" | "collaborator"> & { about: Pick<VisionGrownEntry["about"], "kind" | "number"> }): string {
   const where = `${grown.about.kind === "pr" ? "PR " : ""}#${grown.about.number}`;
-  return `entail: added to ${repo}'s ${VISION_PATH} from ${grown.by}'s answer on ${where}: ${grown.line}`;
+  // A collaborator's answer is said to be theirs, so the owner never reads it as their own word.
+  const from = grown.collaborator === true ? `${grown.by}'s answer on ${where} (a collaborator's, not stated by you)` : `${grown.by}'s answer on ${where}`;
+  return `entail: added to ${repo}'s ${VISION_PATH} from ${from}: ${grown.line}`;
 }
 
 export interface NoticeResult {
@@ -184,7 +186,7 @@ export class Notifier {
    * line that was not told is tried again. With no notice command set the
    * owner still has the log, `entail calls` and the line printed by the pass.
    */
-  async grown(items: readonly { repo: string; grown: Pick<VisionGrownEntry, "id" | "by" | "line" | "commit"> & { about: Pick<VisionGrownEntry["about"], "kind" | "number"> } }[]): Promise<string[]> {
+  async grown(items: readonly { repo: string; grown: Pick<VisionGrownEntry, "id" | "by" | "line" | "commit" | "collaborator"> & { about: Pick<VisionGrownEntry["about"], "kind" | "number"> } }[]): Promise<string[]> {
     const state = this.#read();
     const told = new Set(state.grown);
     const command = this.#options.command();

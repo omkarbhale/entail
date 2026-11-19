@@ -74,7 +74,7 @@ export function postFor(pending: Pending, owner: string, repo: string, baseBranc
         // The judgment ran again on the owner's go: the call posted is the owner's.
         const scope = goScope(entry) ?? "implement";
         const go = scope === "plan" ? "**Go, for planning**" : "**Go**";
-        const head = entry.owner.kind === "override" ? `${go}, by ${owner}, overriding entail's call on the board.` : `${go}, on ${owner}'s answer on the board.`;
+        const head = entry.owner.kind === "override" ? `${go}, by ${owner}, overriding entail's call on the board.` : `${go}, ${answerOn(owner, entry.owner.collaborator)}`;
         const reason = entry.owner.kind === "answer" && entry.call.call === "go" ? entry.call.reason : entry.owner.words;
         const criteria = entry.owner.call === "go" ? criteriaText(criteriaOf(entry.call), issue, scope, baseBranch, generic) : "";
         const label = entry.owner.call === "go" ? goLabel(scope) : "entail:no";
@@ -101,9 +101,9 @@ export function postFor(pending: Pending, owner: string, repo: string, baseBranc
     case "owner-no": {
       const { call, action } = pending;
       if (action.type === "answered" && action.parts !== undefined) {
-        return { issue: call.issue.number, markerFor: action.id, text: partsText(owner, action.answer, action.parts, filed), close: true, reopen: false, label: "entail:no" };
+        return { issue: call.issue.number, markerFor: action.id, text: partsText(owner, action.answer, action.parts, filed, action.collaborator === true ? action.by : undefined), close: true, reopen: false, label: "entail:no" };
       }
-      const head = action.type === "overridden" ? `**No**, by ${owner}, overriding entail's call on the board.` : `**No**, on ${owner}'s answer on the board.`;
+      const head = action.type === "overridden" ? `**No**, by ${owner}, overriding entail's call on the board.` : `**No**, ${answerOn(owner, action.type === "answered" && action.collaborator === true ? action.by : undefined)}`;
       const words = action.type === "overridden" ? action.reason : action.answer;
       return { issue: call.issue.number, markerFor: action.id, text: join(head, escape(words), "Closing the issue as not planned."), close: true, reopen: false, label: "entail:no" };
     }
@@ -137,8 +137,8 @@ export interface FiledPart {
  * parts turned down by name, then that the issue closes. The new issues are
  * named by number, which both forges turn into a link.
  */
-export function partsText(owner: string, answer: string, parts: AnswerParts, filed: readonly FiledPart[]): string {
-  const head = `**Some of it**, on ${owner}'s answer on the board: ${owner} took ${parts.accepted.length} of the ${parts.accepted.length + parts.declined.length} parts of this issue and turned down the rest.`;
+export function partsText(owner: string, answer: string, parts: AnswerParts, filed: readonly FiledPart[], collaborator?: string): string {
+  const head = `**Some of it**, ${answerOn(owner, collaborator)} ${collaborator ?? owner} took ${parts.accepted.length} of the ${parts.accepted.length + parts.declined.length} parts of this issue and turned down the rest.`;
   const taken = parts.accepted.map((part, index) => {
     const number = filed.find((one) => one.index === index)?.number ?? null;
     return `- ${number === null ? "(to be filed)" : `#${number}`} ${escape(part.title).replace(/\n+/gu, " ")}`;
@@ -176,6 +176,16 @@ export function partBody(owner: string, from: number, action: number, index: num
     .split("\n")
     .map((line) => line.replace(/^([ \t]*)\//u, "$1\\/"))
     .join("\n");
+}
+
+/**
+ * How the board answer a call rests on is named in a comment: the owner's by
+ * the owner's name, a collaborator's by their own, said to be a collaborator's
+ * the owner allowed and not the owner's word, so it never reads as the owner's.
+ */
+function answerOn(owner: string, collaborator: string | undefined): string {
+  if (collaborator === undefined) return `on ${owner}'s answer on the board.`;
+  return `on the answer of ${collaborator}, a collaborator ${owner} allowed to answer on the board. It is ${collaborator}'s word, not ${owner}'s own.`;
 }
 
 /** The note on a held issue: what it waits on, and what makes entail pick it up again. */
@@ -346,7 +356,7 @@ export function pullRequestPostFor(pending: LandingPending, owner: string, pullR
     case "landing-owner": {
       const { landing, action, to } = pending;
       const words = action.type === "overridden" ? action.reason : action.answer;
-      const how = action.type === "overridden" ? `by ${owner}, overriding entail's call on the board.` : `on ${owner}'s answer on the board.`;
+      const how = action.type === "overridden" ? `by ${owner}, overriding entail's call on the board.` : answerOn(owner, action.type === "answered" && action.collaborator === true ? action.by : undefined);
       const base = { pr: landing.pr.number, markerFor: action.id, close: false };
       if (to === "merge") return { ...base, merge: true, sentBack: false, text: (merge) => join(`**Merge**, ${how}`, escape(words), mergeText(merge, landing.head)) };
       return { ...base, merge: false, sentBack: true, text: () => join(`**Send back**, ${how}`, escape(words), "entail judges it again on its next push.") };

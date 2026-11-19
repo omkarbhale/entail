@@ -223,6 +223,7 @@ function RepoCard({ repo, settings, showRepo }: { repo: RepoView; settings: Sett
         </span>
       </div>
       <Pins repo={repo} />
+      <Collaborators repo={repo} />
       <div className="rrow">
         <span className="lbl">Calls</span>
         <span className="val small">
@@ -488,6 +489,53 @@ function DriftCheck({ repo, now }: { repo: RepoView; now: number }) {
         <span className="small muted">
           {repo.drift ? "entail checks the work merged since the last check against the vision, and files each drift as an issue." : "entail does not check merged work against the vision unless you turn this on."}
           {last === null ? null : last.state === "failed" ? ` The last check gave no answer ${ago(last.at, now)}.` : last.skipped !== null ? ` The last check ${ago(last.at, now)} had nothing to check.` : ` The last check ${ago(last.at, now)} found ${last.found === 0 ? "no drift" : `${last.found} drift${last.found === 1 ? "" : "s"}, ${last.filed} filed`}.`}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The collaborators the owner lets answer this repo's board items. Only the
+ * owner changes the list, and a repo with none behaves as before: the owner
+ * alone answers. A collaborator's answer settles tickets the same way, and is
+ * shown, posted and logged under their name, never as the owner's.
+ */
+function Collaborators({ repo }: { repo: RepoView }) {
+  const [name, setName] = useState("");
+  const change = useSave((one: { allow: string } | { disallow: string }) => api.changeRepo(repo.repo, one));
+  const wanted = name.trim();
+  const add = (event: FormEvent) => {
+    event.preventDefault();
+    if (wanted === "") return;
+    change.mutation.mutate({ allow: wanted }, { onSuccess: () => setName("") });
+  };
+  return (
+    <div className="rrow">
+      <span className="lbl">Collaborators</span>
+      <span className="val small">
+        {repo.collaborators.length === 0 && <span className="muted">None: only you answer.</span>}
+        {repo.collaborators.length > 0 && (
+          <ul className="plain pins">
+            {repo.collaborators.map((one) => (
+              <li key={one}>
+                <span>{one}</span>{" "}
+                <button type="button" className="link" aria-label={`Remove ${one}`} onClick={() => change.mutation.mutate({ disallow: one })} disabled={change.mutation.isPending}>
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <form className="val" onSubmit={add}>
+          <input className="field" aria-label={`Collaborator to allow for ${repo.repo}`} placeholder="Their name" value={name} onChange={(event) => setName(event.target.value)} autoComplete="off" spellCheck={false} />
+          <button className="btn sm" type="submit" disabled={change.mutation.isPending || wanted === ""}>
+            Allow
+          </button>
+          <Saved pending={change.mutation.isPending} saved={change.saved} />
+        </form>
+        <span className="muted">
+          A collaborator can answer this repo’s questions, and their answer settles the ticket the way yours does. It is shown and posted under their name, never as yours, and it never enters your case book. Only you allow or remove them.
         </span>
       </span>
     </div>

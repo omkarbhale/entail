@@ -43,6 +43,7 @@ import { Notifier } from "./notices.ts";
 import { OperationalLog } from "./operational-log.ts";
 import {
   answerCall,
+  collaboratorName,
   changeRepoSettings,
   checkSettingsChange,
   confirmCall,
@@ -61,7 +62,7 @@ import {
   waitingItems,
 } from "./owner.ts";
 import { parsePins, pinsFile } from "./pins.ts";
-import { clearedGoOn, goCallOn, heldActions, loggedRepos, readLog, readSettings, repoState, sendBacksPosted, visionGrowth, type GlobalSettings } from "./records.ts";
+import { clearedGoOn, goCallOn, heldActions, loggedRepos, readLog, readSettings, repoState, sameName, sendBacksPosted, visionGrowth, type GlobalSettings } from "./records.ts";
 import { formatReplay, replay, replayLandings } from "./replay.ts";
 import { forgeHost, forgeTitle, isRepo, repoSetting } from "./repo-ref.ts";
 import { installService, isWsl, machineServiceSystem, serviceStatus, uninstallService, type ServiceInputs } from "./service.ts";
@@ -80,7 +81,7 @@ const USAGE = `usage:
   entail enroll <owner/repo> [--no-confirm] [--since <time>]
   entail unenroll <owner/repo>
   entail repos [--all] [--json]
-  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--base <branch>|default] [--drift on|off] [--drift-every <days>|default] [--pin <topic>]... [--unpin <topic>]... [--criterion <text>... |none] [--owner <name>] [--notice <command>|none] [--start <command>|none] [--send-back <command>|none] [--backup <git remote url>|none]
+  entail settings [<owner/repo>] [--confirm on|off] [--model <model>|default] [--effort <level>|default] [--base <branch>|default] [--drift on|off] [--drift-every <days>|default] [--pin <topic>]... [--unpin <topic>]... [--criterion <text>... |none] [--allow <name>]... [--disallow <name>]... [--owner <name>] [--notice <command>|none] [--start <command>|none] [--send-back <command>|none] [--backup <git remote url>|none]
   entail backup status
   entail restore <git remote url>
   entail run [--once] [--dry-run] [--interval <seconds>] [--port <n>]
@@ -91,7 +92,7 @@ const USAGE = `usage:
   entail waiting [<owner/repo>] [--json]
   entail confirm <owner/repo>#<n>
   entail override <owner/repo>#<n> go|plan|no|merge|send-back <reason>
-  entail answer <owner/repo>#<n> go|plan|no|merge|send-back <answer> [--accept <parts>]
+  entail answer <owner/repo>#<n> go|plan|no|merge|send-back <answer> [--accept <parts>] [--as <collaborator>]
   entail calls [<owner/repo>] [--json]
   entail judge <owner/repo>#<n> [--model <model>] [--effort <level>] [--json]
   entail land <owner/repo>#<pr> [--issue <n>] [--model <model>] [--effort <level>] [--json]
@@ -119,6 +120,9 @@ settings   with a repo, its confirm mode, model and effort ("default" uses the o
            pins: --pin adds a topic and --unpin takes one
            out of the repo's pins file, each logged with your name, and the pins are listed
            ("anything touching a pinned topic comes to you"; the file also takes hand edits);
+           and its collaborators: --allow lets someone answer the repo's board items under
+           the name given and --disallow takes that back, each logged with your name, and
+           they are listed (none until you allow someone; only you grant or remove them);
            without, your name on comments, the default model and effort, the
            notice command entail runs with one line and a link when something starts
            waiting on you, and the start command entail runs when a go acts, with the
@@ -157,7 +161,9 @@ override   replace the latest call on an issue (go, plan or no) or a PR (merge o
            command gets the handoff with scope "plan", to write the plan and file the
            smaller tickets; go alone is a go to implement.
 answer     answer the question on an issue (go, plan or no) or a PR (merge or send-back)
-           with your call and words. On an issue that lists several suggestions, --accept
+           with your call and words. A collaborator you allowed for the repo gives theirs with
+           --as <their name>; it settles the ticket the same way and is recorded, shown and
+           posted under their name as a collaborator's, never as yours. On an issue that lists several suggestions, --accept
            1,3 takes only those parts of it (counted from 1, as waiting lists them): the
            call is no, and entail files one new issue for each part you accept and closes
            the issue with links to them and the parts turned down.
@@ -453,6 +459,8 @@ async function settingsCommand(args: string[]): Promise<number> {
     drift: { type: "string" },
     "drift-every": { type: "string" },
     criterion: { type: "string", multiple: true },
+    allow: { type: "string", multiple: true },
+    disallow: { type: "string", multiple: true },
     owner: { type: "string" },
     notice: { type: "string" },
     start: { type: "string" },
@@ -488,7 +496,9 @@ async function settingsCommand(args: string[]): Promise<number> {
     }
     const repo = repoName(positionals[0]!);
     // Each pin is a change of its own, so each is logged on its own.
-    const pins = [...(values.unpin ?? []).map((unpin) => ({ unpin })), ...(values.pin ?? []).map((pin) => ({ pin }))];
+    const pins: Record<string, string>[] = [...(values.unpin ?? []).map((unpin) => ({ unpin })), ...(values.pin ?? []).map((pin) => ({ pin }))];
+    // Each collaborator allowed or taken away is a change of its own, and only the owner makes them.
+    pins.push(...(values.disallow ?? []).map((disallow) => ({ disallow })), ...(values.allow ?? []).map((allow) => ({ allow })));
     for (const one of pins) checkSettingsChange(one);
     const by = Object.keys(change).length + pins.length === 0 ? "" : await ownerName(dataDirectory);
     let changed = Object.keys(change).length === 0 ? undefined : changeRepoSettings(dataDirectory, repo, by, checkSettingsChange(change));
@@ -503,6 +513,7 @@ async function settingsCommand(args: string[]): Promise<number> {
     );
     const pinned = readPinsSync(pinsFile(dataDirectory, repoSetting(repo)));
     if (pinned.length > 0) console.log(`pins: ${pinned.join("; ")}`);
+    if (state.collaborators.length > 0) console.log(`collaborators who may answer board items: ${state.collaborators.join("; ")}`);
     return 0;
   }
   if (values.confirm !== undefined) throw new UsageError("--confirm is a setting of one repo: name it");
@@ -918,8 +929,9 @@ async function waitingCommand(args: string[]): Promise<number> {
 }
 
 async function ownerCommand(command: "confirm" | "override" | "answer", args: string[]): Promise<number> {
-  const { positionals, values } = parse(args, { accept: { type: "string" } });
+  const { positionals, values } = parse(args, { accept: { type: "string" }, as: { type: "string" } });
   if (values.accept !== undefined && command !== "answer") throw new UsageError("--accept belongs to answer");
+  if (values.as !== undefined && command !== "answer") throw new UsageError("--as is for a collaborator's answer; confirming and overriding are the owner's");
   const accept = values.accept === undefined ? undefined : acceptedParts(values.accept);
   const expected = command === "confirm" ? 1 : 3;
   if (positionals.length !== expected) {
@@ -932,12 +944,19 @@ async function ownerCommand(command: "confirm" | "override" | "answer", args: st
   const reference = parseIssueReference(positionals[0]!);
   const dataDirectory = ensureDataDirectory();
   const id = latestItemOn(dataDirectory, reference.path, reference.number);
-  const by = await ownerName(dataDirectory);
+  const owner = await ownerName(dataDirectory);
+  const collaborator = values.as === undefined ? undefined : collaboratorName(values.as, "--as");
+  if (collaborator !== undefined && sameName(collaborator, owner)) throw new UsageError(`${collaborator} is the owner's own name: a collaborator answers under a name of their own`);
+  const by = collaborator ?? owner;
   const name = `${repoName(reference.path)}#${reference.number}`;
   const onPullRequest = findItem(dataDirectory, id).entry.type === "landing";
   if (command === "confirm") await confirmCall(dataDirectory, id, by);
   else if (command === "override") await overrideCall(dataDirectory, id, by, positionals[1], positionals[2]);
-  else await answerCall(dataDirectory, id, by, positionals[1], positionals[2], new Date(), accept === undefined ? {} : { accept });
+  const answered = command === "answer" ? await answerCall(dataDirectory, id, by, positionals[1], positionals[2], new Date(), { ...(accept === undefined ? {} : { accept }), ...(collaborator === undefined ? {} : { collaborator: true }) }) : null;
+  if (collaborator !== undefined && answered !== null) {
+    console.log(`${name}: ${answered.by}'s answer is recorded under their name as a collaborator's, not ${owner}'s; entail acts on the ${onPullRequest ? "PR" : "issue"} on its next pass.`);
+    return 0;
+  }
   console.log(`${name}: your ${command === "confirm" ? "confirmation" : command === "override" ? "override" : "answer"} is recorded under ${by}; entail writes it to the case book and acts on the ${onPullRequest ? "PR" : "issue"} on its next pass.`);
   return 0;
 }

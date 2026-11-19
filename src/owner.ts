@@ -41,6 +41,8 @@ import {
   latestLandings,
   stalledLandings,
   loggedRepos,
+  sameName,
+  byCollaborator,
   readLog,
   repoState,
   standingActions,
@@ -82,10 +84,10 @@ export const HOLD_MS = 10_000;
 
 /** An owner's request entail cannot carry out, with the HTTP status it answers to. */
 export class OwnerError extends Error {
-  readonly status: 400 | 404 | 409 | 502;
+  readonly status: 400 | 403 | 404 | 409 | 502;
   /** More for the board to read than the message, sent with it in the answer. */
   readonly extra: Record<string, unknown>;
-  constructor(status: 400 | 404 | 409 | 502, message: string, extra: Record<string, unknown> = {}) {
+  constructor(status: 400 | 403 | 404 | 409 | 502, message: string, extra: Record<string, unknown> = {}) {
     super(message);
     this.name = "OwnerError";
     this.status = status;
@@ -154,6 +156,16 @@ export interface RepoSettingsChange {
   driftEveryDays?: number | null;
   /** The generic criteria every PR in the repo must meet; empty or null clears them. */
   genericCriteria?: string[];
+  /** A collaborator to allow to answer board items for the repo, and one to take the permission from, by name. Only the owner changes these. */
+  allow?: string;
+  disallow?: string;
+}
+
+/** A collaborator's name as it is kept and shown: one line of words, trimmed, with runs of whitespace as single spaces. */
+export function collaboratorName(text: unknown, key = "a collaborator"): string {
+  const name = typeof text === "string" ? text.trim().replace(/\s+/gu, " ") : "";
+  if (name === "" || name.length > 80 || /[\p{Cc}]/u.test(name) || /^[/#]/u.test(name)) throw new OwnerError(400, `${key} is a name on one line, at most 80 characters, not starting with / or #`);
+  return name;
 }
 
 /** The most generic criteria a repo can have, and the longest one. */
@@ -163,7 +175,7 @@ export const GENERIC_CRITERIA_LIMIT = { count: 20, length: 500 } as const;
 export function checkSettingsChange(change: Record<string, unknown>): RepoSettingsChange {
   const checked: RepoSettingsChange = {};
   for (const key of Object.keys(change)) {
-    if (!["confirm", "model", "effort", "baseBranch", "pin", "unpin", "drift", "driftEveryDays", "genericCriteria"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
+    if (!["confirm", "model", "effort", "baseBranch", "pin", "unpin", "drift", "driftEveryDays", "genericCriteria", "allow", "disallow"].includes(key)) throw new OwnerError(400, `no setting named ${key}`);
   }
   if (change.confirm !== undefined) {
     if (typeof change.confirm !== "boolean") throw new OwnerError(400, "confirm is true or false");
@@ -207,6 +219,9 @@ export function checkSettingsChange(change: Record<string, unknown>): RepoSettin
     if (texts.some((item) => item === "" || item.length > GENERIC_CRITERIA_LIMIT.length)) throw new OwnerError(400, problem);
     checked.genericCriteria = [...new Set(texts)];
   }
+  for (const key of ["allow", "disallow"] as const) {
+    if (change[key] !== undefined) checked[key] = collaboratorName(change[key], key);
+  }
   return checked;
 }
 
@@ -231,7 +246,17 @@ export function changeRepoSettings(dataDirectory: string, repoText: string, by: 
     const criteria = change.genericCriteria;
     if (criteria.length !== state.genericCriteria.length || criteria.some((item, index) => item !== state.genericCriteria[index])) changed.genericCriteria = criteria;
   }
-  if (Object.keys(changed).length + Object.keys(pins).length > 0) appendEntry(dataDirectory, repo, { type: "settings", by, ...changed, ...pins }, now);
+  // Only the owner allows a collaborator or takes the permission back: `by` is the owner's name here, and a collaborator never reaches this.
+  const access: { allowed?: string; disallowed?: string } = {};
+  if (change.disallow !== undefined) {
+    const held = state.collaborators.find((name) => sameName(name, change.disallow!));
+    if (held !== undefined) access.disallowed = held;
+  }
+  if (change.allow !== undefined) {
+    if (sameName(change.allow, by)) throw new OwnerError(400, `${change.allow} is the owner's own name: a collaborator's answers are kept apart from the owner's, so a collaborator needs a name of their own`);
+    if (!state.collaborators.some((name) => sameName(name, change.allow!)) || access.disallowed !== undefined) access.allowed = change.allow;
+  }
+  if (Object.keys(changed).length + Object.keys(pins).length + Object.keys(access).length > 0) appendEntry(dataDirectory, repo, { type: "settings", by, ...changed, ...pins, ...access }, now);
   return repoState(repo, readLog(dataDirectory, repo));
 }
 
@@ -728,7 +753,7 @@ const TRIGGER_WORDS: Record<CallEntry["trigger"], string> = {
 
 function logRow(repo: string, entry: CallEntry, statuses: Map<number, CallStatus>, entries: readonly Entry[], book: readonly Case[], dayOf: (iso: string) => string): LogRow {
   const call = callView(repo, entry, statuses.get(entry.id)!, entries, book);
-  const trail: TrailStep[] = [{ at: entry.at, text: entry.trigger === "owner-reopen" ? "Asked the owner after they reopened the issue entail closed" : `Judged: ${entry.call.call}${TRIGGER_WORDS[entry.trigger]} · ${entry.model}, ${entry.effort}` }];
+  const trail: TrailStep[] = [{ at: entry.at, text: entry.trigger === "owner-reopen" ? "Asked the owner after they reopened the issue entail closed" : `Judged: ${entry.call.call}${entry.trigger === "owner" && entry.owner?.collaborator !== undefined ? ` on ${entry.owner.collaborator}'s answer, a collaborator's` : TRIGGER_WORDS[entry.trigger]} · ${entry.model}, ${entry.effort}` }];
   const actedFor = (id: number) => entries.find((other) => other.type === "acted" && other.for === id);
   // The holds that kept this issue waiting on its blockers before this call: those since its previous call.
   const index = entries.indexOf(entry);
@@ -760,9 +785,9 @@ function logRow(repo: string, entry: CallEntry, statuses: Map<number, CallStatus
     const rerun = entries.find((other): other is CallEntry => other.type === "call" && other.owner?.action === action.id);
     if (rerun !== undefined) {
       ownerCall = callView(repo, rerun, statuses.get(rerun.id)!, entries, book);
-      trail.push({ at: rerun.at, text: `Added to the case book; judged again on ${action.by}'s word, for the criteria` });
+      trail.push({ at: rerun.at, text: `Added to the case book; judged again on ${named(action)}'s word, for the criteria` });
       const rerunPosted = actedFor(rerun.id);
-      if (rerunPosted?.type === "acted") trail.push({ at: rerunPosted.at, text: `Posted ${action.by}'s go on the issue`, url: rerunPosted.comment.url });
+      if (rerunPosted?.type === "acted") trail.push({ at: rerunPosted.at, text: `Posted ${named(action)}'s go on the issue`, url: rerunPosted.comment.url });
     }
     const carried = actedFor(action.id);
     if (carried?.type === "acted") {
@@ -829,7 +854,12 @@ function isActionOn(entries: readonly Entry[], actionId: number, callId: number)
 function actionWords(action: OwnerAction): string {
   if (action.type === "confirmed") return `${action.by} confirmed`;
   if (action.type === "overridden") return `${action.by} overrode: ${action.differently === true ? "go, differently" : toWords(action)}`;
-  return `${action.by} answered: ${toWords(action)}`;
+  return `${named(action)} answered: ${toWords(action)}`;
+}
+
+/** Who gave an answer, as every view names them: a collaborator is named as one, so their answer never reads as the owner's. */
+function named(action: Pick<OwnerAction, "by"> & { collaborator?: true }): string {
+  return action.collaborator === true ? `${action.by} (a collaborator)` : action.by;
 }
 
 /** The call an owner's override or answer made, with a go for planning as such. */
@@ -1033,6 +1063,12 @@ function ownerWords(text: unknown, what: string): string {
 export interface ActOptions {
   /** How long the action can be undone before entail acts on it; 0, the default, acts on the next pass. */
   holdMs?: number;
+  /**
+   * `by` is a collaborator, not the owner. Only an answer is a collaborator's to
+   * give, and only when the owner allowed them for the repo; the answer is
+   * recorded under their name with `collaborator` set, by the same path as the owner's.
+   */
+  collaborator?: boolean;
 }
 
 /**
@@ -1114,6 +1150,19 @@ export interface AnswerOptions extends ActOptions {
 }
 
 /**
+ * Who an answer is recorded under. The owner's name for the owner; for a
+ * collaborator, the name the owner allowed them under, and only when the
+ * owner allowed them for this repo. A collaborator's answer is flagged so that
+ * it never reads as the owner's, anywhere it is shown, posted or counted.
+ */
+function answerer(dataDirectory: string, repo: string, by: string, options: ActOptions): { by: string; collaborator?: true } {
+  if (options.collaborator !== true) return { by };
+  const allowed = repoState(repo, readLog(dataDirectory, repo)).collaborators.find((name) => sameName(name, by));
+  if (allowed === undefined) throw new OwnerError(403, `${by} is not allowed to answer board items for ${repo}: only the owner can allow a collaborator`);
+  return { by: allowed, collaborator: true };
+}
+
+/**
  * Answers a call's question with the owner's call and words: go or no on an
  * issue, where a go runs the judgment again with the answer; merge or
  * send-back on a PR. On an issue that lists several suggestions the owner can
@@ -1130,7 +1179,12 @@ export async function answerCall(dataDirectory: string, id: number, by: string, 
     if (found.entry.call.call !== "ask") throw new OwnerError(409, `call ${id} is a ${found.entry.call.call}, not a question: confirm or override it`);
     if (status.status !== "waiting") throw new OwnerError(409, `call ${id} is not waiting for an answer (${status.status})`);
     if (options.accept !== undefined) throw new OwnerError(400, "parts are taken from an issue, not a PR");
-    return record(dataDirectory, found.repo, { type: "answered", by, call: id, to: owner, answer: words }, now, options);
+    const who = answerer(dataDirectory, found.repo, by, options);
+    // A change to the vision or a pinned path is merged only on the owner's word.
+    if (who.collaborator === true && (found.entry.touched.vision || found.entry.touched.pins.length > 0)) {
+      throw new OwnerError(403, `this PR changes the vision or a pinned path, which only the owner lets merge: ${by} cannot answer it`);
+    }
+    return record(dataDirectory, found.repo, { type: "answered", ...who, call: id, to: owner, answer: words }, now, options);
   }
   const { repo, entries, entry: call } = found;
   const { call: owner, scope } = ownerCall(to);
@@ -1139,6 +1193,7 @@ export async function answerCall(dataDirectory: string, id: number, by: string, 
   if (call.call.call !== "ask") throw new OwnerError(409, `call ${id} is a ${call.call.call}, not a question: confirm or override it`);
   if (status.status === "superseded") throw new OwnerError(409, `the issue was edited and entail judged it again: read the new question`);
   if (status.status !== "waiting") throw new OwnerError(409, `call ${id} is not waiting for an answer (${status.status})`);
+  const who = answerer(dataDirectory, repo, by, options);
   let parts: AnswerParts | undefined;
   if (options.accept !== undefined) {
     if (owner !== "no" || scope !== undefined) throw new OwnerError(400, "taking some parts of an issue answers no to the issue itself: the call is no");
@@ -1148,7 +1203,7 @@ export async function answerCall(dataDirectory: string, id: number, by: string, 
       throw new OwnerError(400, error instanceof Error ? error.message : String(error));
     }
   }
-  return record(dataDirectory, repo, { type: "answered", by, call: id, to: owner, ...(scope === undefined ? {} : { scope }), answer: words, ...(parts === undefined ? {} : { parts }) }, now, options);
+  return record(dataDirectory, repo, { type: "answered", ...who, call: id, to: owner, ...(scope === undefined ? {} : { scope }), answer: words, ...(parts === undefined ? {} : { parts }) }, now, options);
 }
 
 /**
@@ -1156,17 +1211,19 @@ export async function answerCall(dataDirectory: string, id: number, by: string, 
  * window has closed entail is acting on it, and it can no longer be undone
  * here; it can be overridden instead.
  */
-export function undoAction(dataDirectory: string, id: number, by: string, now = new Date()): { undone: ActionView; call: CallView } {
+export function undoAction(dataDirectory: string, id: number, by: string, now = new Date(), options: Pick<ActOptions, "collaborator"> = {}): { undone: ActionView; call: CallView } {
   const { repo, entries, entry } = findItem(dataDirectory, id);
   const action = standingActions(entries).get(entry.id);
   if (action === undefined) throw new OwnerError(409, `nothing on call ${id} to undo`);
+  // A collaborator takes back only their own answer; the owner can undo any.
+  if (options.collaborator === true && !(byCollaborator(action) && sameName(action.by, by))) throw new OwnerError(403, `only the owner can undo ${action.by}'s ${action.type === "answered" ? "answer" : "action"}`);
   const acted = entries.some(
     (other) => ((other.type === "acted" || other.type === "pr-acted") && other.for === action.id) || (other.type === "call" && other.owner?.action === action.id),
   );
   if (acted || action.holdUntil === undefined || Date.parse(action.holdUntil) <= now.getTime()) {
     throw new OwnerError(409, "too late to undo: entail is already acting on it; override the call instead");
   }
-  appendEntry(dataDirectory, repo, { type: "undone", by, action: action.id }, now);
+  appendEntry(dataDirectory, repo, { type: "undone", by: options.collaborator === true ? action.by : by, action: action.id }, now);
   const after = readLog(dataDirectory, repo);
   const view = entry.type === "call" ? callView(repo, entry, statusOf(after, entry), after, []) : landingView(repo, entry, landingStatuses(after).get(entry.id)!, after, []);
   return { undone: action, call: view };
@@ -1304,7 +1361,9 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
           lines.push(`      ${statusLine(item)} · ${item.model} at ${item.effort} effort · call ${item.id}`);
           break;
         }
-        const whose = item.owner === null ? "entail" : `entail, on ${item.owner.kind === "answer" ? "the owner's answer" : "the owner's override"} (the owner's call: ${item.owner.call})`;
+        const whose = item.owner === null ? "entail" : (item.owner.collaborator === undefined
+              ? `entail, on ${item.owner.kind === "answer" ? "the owner's answer" : "the owner's override"} (the owner's call: ${item.owner.call})`
+              : `entail, on ${item.owner.collaborator}'s answer, a collaborator's, not the owner's (call: ${item.owner.call})`);
         const issue = item.issue!;
         lines.push(`${at}  ${where(issue.number)}  ${item.call.toUpperCase()} by ${whose}: ${issue.title}`, `      ${item.reason}`);
         lines.push(...recheckLines(item.recheck, "      "));
@@ -1322,7 +1381,7 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         if (action.type === "confirmed") lines.push(`${at}  ${where(issue)}  CONFIRMED by ${action.by} (call ${action.call})`);
         if (action.type === "overridden") lines.push(`${at}  ${where(issue)}  OVERRIDDEN by ${action.by} to ${action.differently === true ? "go, differently" : toWords(action)} (call ${action.call})`, `      ${oneLine(action.reason)}`);
         if (action.type === "answered") {
-          lines.push(`${at}  ${where(issue)}  ANSWERED by ${action.by}: ${action.parts === undefined ? toWords(action) : `took ${action.parts.accepted.length} of ${action.parts.accepted.length + action.parts.declined.length} parts`} (call ${action.call})`, `      ${oneLine(action.answer)}`);
+          lines.push(`${at}  ${where(issue)}  ANSWERED by ${named(action)}: ${action.parts === undefined ? toWords(action) : `took ${action.parts.accepted.length} of ${action.parts.accepted.length + action.parts.declined.length} parts`} (call ${action.call})`, `      ${oneLine(action.answer)}`);
           if (action.parts !== undefined) {
             for (const part of action.parts.accepted) lines.push(`      accepted: ${part.title}`);
             for (const title of action.parts.declined) lines.push(`      turned down: ${title}`);
@@ -1386,7 +1445,7 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
       case "vision": {
         const { entry } = item;
         if (entry.type === "vision-grown") {
-          lines.push(`${at}  ${where(entry.about.number)}  added to VISION.md${entry.heading === null ? "" : ` under "${entry.heading}"`} automatically, from ${entry.by}'s answer on the board (call ${entry.on}, answer ${entry.answer}), at ${entry.commit.slice(0, 7)}`, `      ${entry.line}`, `      ${oneLine(entry.reason)}`);
+          lines.push(`${at}  ${where(entry.about.number)}  added to VISION.md${entry.heading === null ? "" : ` under "${entry.heading}"`} automatically, from ${named(entry)}'s answer on the board (call ${entry.on}, answer ${entry.answer}), at ${entry.commit.slice(0, 7)}`, `      ${entry.line}`, `      ${oneLine(entry.reason)}`);
         } else if (entry.type === "vision-considered") {
           if (entry.decision.add) lines.push(`${at}  ${where(null) || item.repo}  an answer (${entry.answer}) is a general statement: its line is to be added to VISION.md`, `      ${entry.decision.line}`);
           else lines.push(`${at}  ${where(null) || item.repo}  an answer (${entry.answer}) settles its own ticket and adds nothing to the vision: ${oneLine(entry.decision.reason)}`);
@@ -1426,6 +1485,8 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
             entry.genericCriteria === undefined ? null : entry.genericCriteria.length === 0 ? "no generic criteria" : `generic criteria: ${entry.genericCriteria.map((text) => `"${text}"`).join("; ")}`,
           ].filter((change) => change !== null);
           if (changes.length > 0) lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} set ${changes.join(", ")}`);
+          if (entry.disallowed !== undefined) lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} took away ${entry.disallowed}'s permission to answer board items`);
+          if (entry.allowed !== undefined) lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} allowed ${entry.allowed} to answer board items as a collaborator`);
           if (entry.unpinned !== undefined) lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} took the pin "${entry.unpinned}" off`);
           if (entry.pinned !== undefined) lines.push(`${at}  ${where(null) || item.repo}  ${entry.by} pinned "${entry.pinned}"`);
         }
@@ -1463,20 +1524,20 @@ function prLines(pr: PullRequestView, indent: string): string[] {
   return lines;
 }
 
-function statusLine(item: Pick<CallView, "status" | "call" | "settledBy">): string {
+function statusLine(item: Pick<CallView, "status" | "call" | "settledBy" | "owner">): string {
   switch (item.status) {
     case "waiting":
       return item.call === "ask" ? "waiting for the owner's answer" : "waiting for the owner to confirm";
     case "auto":
       return "acted on at once (confirm mode off)";
     case "owner":
-      return "the owner's call";
+      return item.owner?.collaborator === undefined ? "the owner's call" : `${item.owner.collaborator}'s call, a collaborator's answer`;
     case "superseded":
       return "judged again before the owner settled it";
     case "closed":
       return "the PR was merged or closed before the owner settled it";
     default:
-      return `${item.status} by ${item.settledBy?.by ?? "the owner"}`;
+      return `${item.status} by ${item.settledBy === null ? "the owner" : named(item.settledBy)}`;
   }
 }
 

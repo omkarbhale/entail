@@ -31,9 +31,10 @@ import {
   undoAction,
   unenroll,
   waitingResponse,
+  collaboratorName,
 } from "./owner.ts";
 import { SuggestionRunningError, type SuggestionRuns } from "./suggest.ts";
-import { loggedRepos, readLog, readSettings, repoState, writeSettings, type GlobalSettings } from "./records.ts";
+import { loggedRepos, readLog, readSettings, repoState, sameName, writeSettings, type GlobalSettings } from "./records.ts";
 import { forgeTitle, isSelfHostedHost } from "./repo-ref.ts";
 
 /**
@@ -55,12 +56,16 @@ import { forgeTitle, isSelfHostedHost } from "./repo-ref.ts";
  *   POST   /api/calls/:id/confirm             {}
  *   POST   /api/calls/:id/override            {"call": "go"|"plan"|"no", "reason": "...", "differently"?: true}  on an issue's call
  *                                             {"call": "merge"|"send-back", "reason": "..."}              on a PR's call
- *   POST   /api/calls/:id/answer              {"call": "go"|"plan"|"no", "answer": "...", "accept": [0, 2]?}     on an issue's call; accept takes only those parts of it, by position from 0, and the call is no
- *                                             {"call": "merge"|"send-back", "answer": "..."}  on a PR's call
- *   POST   /api/calls/:id/undo                {}: undoes the owner's action on the call while it is held
+ *   POST   /api/calls/:id/answer              {"call": "go"|"plan"|"no", "answer": "...", "accept": [0, 2]?, "as"?: "name"}     on an issue's call; accept takes only those parts of it, by position from 0, and the call is no
+ *                                             {"call": "merge"|"send-back", "answer": "...", "as"?: "name"}  on a PR's call
+ *                                             `as` names a collaborator the owner allowed for the repo (settings allow); the answer is then recorded under their name,
+ *                                             flagged as a collaborator's, and is refused for anyone not allowed. Only an answer and its undo take `as`: confirming,
+ *                                             overriding and every setting, allowing a collaborator included, are the owner's alone.
+ *   POST   /api/calls/:id/undo                {"as"?: "name"}: undoes the owner's action on the call while it is held; a collaborator undoes only their own answer
  *   GET    /api/repos[?all=1]                 enrolled repos (all=1: every repo with a log)
  *   POST   /api/repos                         {"repo": "owner/name", "confirm"?: bool, "since"?: ISO time}
- *   PATCH  /api/repos/:owner/:name            {"confirm"?: bool, "model"?: string|null, "effort"?: string|null, "baseBranch"?: string|null, "pin"?: string, "unpin"?: string, "drift"?: bool, "driftEveryDays"?: 1..365|null, "genericCriteria"?: string[]|null}
+ *   PATCH  /api/repos/:owner/:name            {"confirm"?: bool, "model"?: string|null, "effort"?: string|null, "baseBranch"?: string|null, "pin"?: string, "unpin"?: string, "drift"?: bool, "driftEveryDays"?: 1..365|null, "genericCriteria"?: string[]|null, "allow"?: string, "disallow"?: string}
+ *                                             allow lets a collaborator answer the repo's board items under that name, and disallow takes it back
  *                                             pin adds a topic to the repo's pins file and unpin takes one out; each is logged with who made it
  *   DELETE /api/repos/:owner/:name            unenrolls
  *   POST   /api/repos/:owner/:name/check      checks the repo now, and answers with what the check did
@@ -226,10 +231,16 @@ async function handle(options: ApiOptions, request: IncomingMessage, response: S
     if (action === undefined && method === "GET") return send(response, 200, itemView(dataDirectory, id, await options.book()));
     if (action !== undefined && method === "POST") {
       const body = await readJson(request);
-      const by = await options.owner();
-      const hold = { holdMs: options.holdMs ?? HOLD_MS };
+      const owner = await options.owner();
+      // A collaborator the owner allowed names themselves with `as`; they may only answer, and take back their own answer.
+      // Confirming and overriding are the owner's, and so is everything else on the API, which never takes `as`.
+      const collaborator = body.as === undefined ? undefined : collaboratorName(body.as, "as");
+      if (collaborator !== undefined && sameName(collaborator, owner)) throw new OwnerError(403, `${collaborator} is the owner's own name: a collaborator answers under a name of their own`);
+      if (collaborator !== undefined && action !== "answer" && action !== "undo") throw new OwnerError(403, `a collaborator may only answer a question or undo their own answer, not ${action}`);
+      const by = collaborator ?? owner;
+      const hold = { holdMs: options.holdMs ?? HOLD_MS, ...(collaborator === undefined ? {} : { collaborator: true }) };
       if (action === "undo") {
-        const undone = undoAction(dataDirectory, id, by, now());
+        const undone = undoAction(dataDirectory, id, by, now(), hold);
         options.events?.emit({ type: "changed" });
         return send(response, 200, undone);
       }
