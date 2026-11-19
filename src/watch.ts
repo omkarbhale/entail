@@ -44,6 +44,7 @@ import {
   mentionKey,
   newEntryId,
   pendingLanding,
+  interruptedHandoffs,
   interruptedStarts,
   pendingGrowth,
   pendingHandoffs,
@@ -473,7 +474,15 @@ async function passRepo(options: PassOptions, state: RepoState, entries: Entry[]
     await startWork(options, repo, acted, record);
   }
 
-  // The send-back command runs after the comment that sent the PR back was posted and recorded; a crash before its result is recorded runs it at the next pass.
+  // The send-back command runs after the comment that sent the PR back was posted and recorded; a crash before it begins runs it at the next pass.
+  // One that began and has no outcome was cut off with the command possibly already at work: it is logged as interrupted, never run again.
+  for (const begun of interruptedHandoffs([...readLog(options.dataDirectory, repo), ...planned])) {
+    if (options.dryRun) continue;
+    const error = "entail stopped while the send-back command was running; it may have taken effect, so it was not run again";
+    record({ type: "handed-back", for: begun.for, pr: begun.pr, command: begun.command, exit: null, error, interrupted: true });
+    options.log?.warn("hand-back-interrupted", { repo, pr: begun.pr, command: begun.command, error });
+    options.print(`${repo}#${begun.pr}: ${error}`);
+  }
   for (const acted of pendingHandoffs([...readLog(options.dataDirectory, repo), ...planned])) {
     options.signal?.throwIfAborted();
     await handBack(options, repo, acted, record);
@@ -996,6 +1005,7 @@ async function handBack(options: PassOptions, repo: string, acted: ReturnType<ty
     options.print(`would hand ${name} to the send-back command: ${command}\n${indent(JSON.stringify(handoff, null, 2))}`);
     return;
   }
+  record({ type: "handing-back", for: acted.id, pr: acted.pr, command });
   const result = await (options.handBack ?? runStart)(command, handoff);
   record({ type: "handed-back", for: acted.id, pr: acted.pr, command, exit: result.exit, ...(result.error === undefined ? {} : { error: result.error }) });
   if (result.exit === 0) {

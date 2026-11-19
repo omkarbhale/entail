@@ -322,6 +322,20 @@ export interface PrActedEntry extends EntryBase {
   handoff?: { command: string; handoff: SendBackHandoff };
 }
 
+/**
+ * entail is about to run the send-back command for a PR it sent back or
+ * cancelled. Written before the command runs, so a restart that finds it with
+ * no `handed-back` entry knows the command may already have taken effect and
+ * does not run it again.
+ */
+export interface HandingBackEntry extends EntryBase {
+  type: "handing-back";
+  /** The `pr-acted` entry whose handoff this is. */
+  for: number;
+  pr: number;
+  command: string;
+}
+
 /** entail ran the send-back command for a PR it sent back or cancelled: by which command, and how it exited. */
 export interface HandedBackEntry extends EntryBase {
   type: "handed-back";
@@ -331,6 +345,8 @@ export interface HandedBackEntry extends EntryBase {
   command: string;
   exit: number | null;
   error?: string;
+  /** Set when entail stopped while the command ran, so how it ended is unknown; it was not run again. */
+  interrupted?: true;
 }
 
 /**
@@ -588,6 +604,7 @@ export type Entry =
   | PrActedEntry
   | StartingEntry
   | StartedEntry
+  | HandingBackEntry
   | HandedBackEntry
   | SuggestedEntry
   | SuggestionFiledEntry
@@ -1042,10 +1059,16 @@ export function interruptedStarts(entries: readonly Entry[]): StartingEntry[] {
   return entries.filter((entry): entry is StartingEntry => entry.type === "starting" && !ended.has(entry.for));
 }
 
-/** The `pr-acted` entries whose handoff is still to run, in log order: each with a handoff and no `handed-back` entry for it. */
+/** The `pr-acted` entries whose handoff is still to run, in log order: each with a handoff, no `handing-back` marker and no `handed-back` entry. */
 export function pendingHandoffs(entries: readonly Entry[]): (PrActedEntry & { handoff: NonNullable<PrActedEntry["handoff"]> })[] {
-  const handed = new Set(entries.flatMap((entry) => (entry.type === "handed-back" ? [entry.for] : [])));
-  return entries.filter((entry): entry is PrActedEntry & { handoff: NonNullable<PrActedEntry["handoff"]> } => entry.type === "pr-acted" && entry.handoff !== undefined && !handed.has(entry.id));
+  const begun = new Set(entries.flatMap((entry) => (entry.type === "handing-back" || entry.type === "handed-back" ? [entry.for] : [])));
+  return entries.filter((entry): entry is PrActedEntry & { handoff: NonNullable<PrActedEntry["handoff"]> } => entry.type === "pr-acted" && entry.handoff !== undefined && !begun.has(entry.id));
+}
+
+/** The send-backs that began and have no recorded outcome: entail stopped while the command ran. They are not run again. */
+export function interruptedHandoffs(entries: readonly Entry[]): HandingBackEntry[] {
+  const ended = new Set(entries.flatMap((entry) => (entry.type === "handed-back" ? [entry.for] : [])));
+  return entries.filter((entry): entry is HandingBackEntry => entry.type === "handing-back" && !ended.has(entry.for));
 }
 
 /** Whether work on an issue was started already: its start command exited 0 or was interrupted, or a start is still to run. */

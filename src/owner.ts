@@ -848,6 +848,7 @@ export function logItems(dataDirectory: string, book: readonly Case[], repoFilte
           items.push({ kind: "acted", repo, at: entry.at, for: entry.for, issue: entry.issue, url: entry.comment.url, closed: entry.closed });
           break;
         case "starting":
+        case "handing-back":
           break;
         case "started":
           items.push({ kind: "started", repo, at: entry.at, issue: entry.issue, command: entry.command, exit: entry.exit, error: entry.error ?? null });
@@ -1267,7 +1268,7 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         lines.push(`${at}  ${where(item.issue)}  ${item.exit === 0 ? "started work with" : item.exit === null && item.error?.startsWith("entail stopped while") === true ? "the start was interrupted" : "the start command failed"}: ${item.command}${item.exit === 0 ? "" : ` (${item.error ?? `exit ${item.exit}`})`}`);
         break;
       case "handed-back":
-        lines.push(`${at}  ${where(item.pr)}  ${item.exit === 0 ? "handed the PR to" : "the send-back command failed"}: ${item.command}${item.exit === 0 ? "" : ` (${item.error ?? `exit ${item.exit}`})`}`);
+        lines.push(`${at}  ${where(item.pr)}  ${item.exit === 0 ? "handed the PR to" : item.exit === null && item.error?.startsWith("entail stopped while") === true ? "the send-back was interrupted" : "the send-back command failed"}: ${item.command}${item.exit === 0 ? "" : ` (${item.error ?? `exit ${item.exit}`})`}`);
         break;
       case "pr-acted": {
         const did = item.merged !== null ? ` and merged at ${item.merged.sha.slice(0, 7)}` : item.closed ? " and closed the PR unmerged" : item.refused !== null ? `; the merge did not happen: ${item.refused}` : "";

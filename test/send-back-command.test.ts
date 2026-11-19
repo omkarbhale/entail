@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { confirmCall, formatLog, logItems, overrideCall, waitingItems } from "../src/owner.ts";
-import { readLog, type CallEntry, type HandedBackEntry, type PrActedEntry } from "../src/records.ts";
+import { appendEntry, readLog, type CallEntry, type HandedBackEntry, type PrActedEntry } from "../src/records.ts";
 import type { SendBackHandoff } from "../src/send-backs.ts";
 import { runStart } from "../src/starts.ts";
 import { harness, landingAnswer, OWNER, REPO, verdict, type Harness } from "./watch-fixture.ts";
@@ -218,4 +218,47 @@ test("the example send-back command appends each handoff to a file, one line eac
   const lines = readFileSync(file, "utf8").trimEnd().split("\n");
   assert.equal(lines.length, 2);
   assert.deepEqual(JSON.parse(lines[0]!), handoff);
+});
+
+test("a send-back that began with no recorded outcome, as after a crash mid-command, is logged as interrupted and not run again", async (t) => {
+  const h = harness(t, { confirm: false, settings: { sendBack: "my-agent" } });
+  const hand = recorder();
+  const handoff: SendBackHandoff = {
+    repo: REPO,
+    outcome: "send-back",
+    pr: { number: 4, url: "https://github.com/acme/tally/pull/4", title: "T" },
+    issue: null,
+    head: HEADS[0]!,
+    call: 1,
+    by: "entail",
+    reason: "R",
+    needsToChange: ["Fix it."],
+    checklist: [],
+    criteria: [],
+  };
+  const acted = appendEntry(h.dataDirectory, REPO, { type: "pr-acted", for: 1, pr: 4, comment: { id: 5, url: "https://github.com/acme/tally/pull/4#issuecomment-5" }, merged: null, refused: null, sentBack: true, closed: false, handoff: { command: "my-agent", handoff } });
+  appendEntry(h.dataDirectory, REPO, { type: "handing-back", for: acted.id, pr: 4, command: "my-agent" });
+  await h.pass({ handBack: hand.handBack });
+  await h.pass({ handBack: hand.handBack });
+  assert.deepEqual(hand.handoffs, [], "the command is not run again");
+  assert.equal(handedBack(h).length, 1, "recorded once");
+  assert.equal(handedBack(h)[0]!.interrupted, true);
+  assert.equal(handedBack(h)[0]!.exit, null);
+  assert.match(formatLog(logItems(h.dataDirectory, []), { repoColumn: false }), /#4 {2}the send-back was interrupted: my-agent/u);
+});
+
+test("a send-back writes its handing-back marker before the command runs", async (t) => {
+  const h = harness(t, { confirm: false, settings: { sendBack: "my-agent" } });
+  await goIssue(h);
+  h.forge.openPull(4, "Read standard input", { head: HEADS[0]!, closes: [1] });
+  h.forge.report(HEADS[0]!, ["test", "passed"]);
+  h.scriptLanding(4, sendBack("Fix it."));
+  let seen: string[] = [];
+  await h.pass({
+    handBack: async () => {
+      seen = readLog(h.dataDirectory, REPO).map((entry) => entry.type);
+      return { exit: 0 };
+    },
+  });
+  assert.ok(seen.includes("handing-back") && !seen.includes("handed-back"));
 });
