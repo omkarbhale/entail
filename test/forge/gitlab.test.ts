@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
 import { test, type TestContext } from "node:test";
 import { createForge } from "../../src/forge/create-forge.ts";
-import { ForgeLoggedOutError, ForgeRequestError, projectKey, RateLimitedError } from "../../src/forge/forge.ts";
+import { ForgeCutOffError, ForgeLoggedOutError, ForgeRequestError, projectKey, RateLimitedError } from "../../src/forge/forge.ts";
 import { CHANGE_OVERLAP_MS, GitLabForge, REQUIRED_PIPELINE, unsupportedGitLabVersion } from "../../src/forge/gitlab.ts";
 import { type Exchange, loadRecording, RecordedTransport } from "./recorded-transport.ts";
 
@@ -606,4 +606,61 @@ test("the open merge requests into the base branch are listed filtered on it", a
       [6, "main", true, null],
     ],
   );
+});
+
+const CUT_OFF: Exchange["error"] = {
+  message: "glab api GET … on gitlab.example.org: the connection was dropped after 250000 characters of the response (Stream error: stream ID 1; INTERNAL_ERROR; received from peer.)",
+  loggedOut: false,
+  cutOff: true,
+};
+
+test("a merge request list cut off mid-stream is read again in smaller pages from the same place, and the rest follows at that size", async (t) => {
+  const smaller = MERGE_REQUESTS.replace("per_page=100", "per_page=50");
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: ISSUES }, response: list([]) },
+    { request: { method: "GET", path: MERGE_REQUESTS }, error: CUT_OFF },
+    { request: { method: "GET", path: smaller }, response: list([mergeRequest(9, { updated_at: "2026-11-03T09:00:00.000Z" })], "2") },
+    { request: { method: "GET", path: `${smaller}&page=2` }, response: list([mergeRequest(8)]) },
+  ]);
+  const batch = await forge.changesSince(null);
+  assert.deepEqual(
+    batch.changes.map((change) => `${change.kind} ${change.id}`),
+    ["pull-request 8009", "pull-request 8008"],
+  );
+});
+
+test("a later page cut off inside its JSON is asked for again at the smaller size from its first item", async (t) => {
+  const order = "order_by=created_at&sort=asc";
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: `${PROJECT}/issues?state=opened&${order}&per_page=100` }, response: list([issue(3, "2026-11-01T10:00:00Z", 0)], "2") },
+    // The CLI exited cleanly but the body stops inside a string.
+    { request: { method: "GET", path: `${PROJECT}/issues?state=opened&${order}&per_page=100&page=2` }, response: { status: 200, headers: { "X-Next-Page": "3" }, body: '[{"iid":5,"title":"Iss' } },
+    { request: { method: "GET", path: `${PROJECT}/issues?state=opened&${order}&per_page=50&page=3` }, response: list([issue(5, "2026-11-02T10:00:00Z", 0)], "4") },
+    { request: { method: "GET", path: `${PROJECT}/issues?state=opened&${order}&per_page=50&page=4` }, response: list([issue(6, "2026-11-02T11:00:00Z", 0)]) },
+  ]);
+  assert.deepEqual((await forge.openIssues()).map((one) => one.number), [3, 5, 6]);
+});
+
+test("a list cut off even one item at a time fails as a dropped connection, not as a body that is not JSON", async (t) => {
+  const order = "order_by=created_at&sort=asc";
+  const sizes = [100, 50, 25, 5, 1];
+  const { forge } = forgeOn(
+    t,
+    sizes.map((size) => ({ request: { method: "GET", path: `${PROJECT}/issues?state=opened&${order}&per_page=${size}` }, response: { status: 200, body: '[{"iid":' } })),
+  );
+  await assert.rejects(forge.openIssues(), (error: unknown) => {
+    assert.ok(error instanceof ForgeCutOffError);
+    assert.match(error.message, /per_page=1 on gitlab\.example\.org: the connection was dropped partway through the response/);
+    assert.doesNotMatch(error.message, /not JSON/);
+    return true;
+  });
+});
+
+test("a single read cut off mid-stream is a dropped connection, and a body that is not JSON at all is still a request error", async (t) => {
+  const { forge } = forgeOn(t, [
+    { request: { method: "GET", path: `${PROJECT}/merge_requests/4?with_merge_status_recheck=true` }, error: CUT_OFF },
+    { request: { method: "GET", path: `${PROJECT}/merge_requests/5?with_merge_status_recheck=true` }, response: { status: 200, body: "<html>maintenance</html>" } },
+  ]);
+  await assert.rejects(forge.pullRequest(4), (error: unknown) => error instanceof ForgeCutOffError && /Stream error/.test(error.message));
+  await assert.rejects(forge.pullRequest(5), (error: unknown) => error instanceof ForgeRequestError && /not JSON/.test(error.message));
 });

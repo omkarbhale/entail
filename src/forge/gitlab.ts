@@ -17,6 +17,7 @@ import {
   type Forge,
   type ForgeComment,
   type ForgeInstance,
+  ForgeCutOffError,
   ForgeLoggedOutError,
   ForgeRequestError,
   type ForgeSetting,
@@ -27,6 +28,7 @@ import {
   issueNumbersInBranch,
   type MergeMethod,
   type MergeOutcome,
+  parseJson,
   type PostedComment,
   type Project,
   type PullRequestState,
@@ -34,6 +36,7 @@ import {
   type PullRequestComment,
   RateLimitedError,
   type RepoAccess,
+  smallerPage,
 } from "./forge.ts";
 import { type ForgeMethod, type ForgeRequest, type ForgeResponse, type Transport, TransportError } from "./transport.ts";
 
@@ -471,9 +474,7 @@ export class GitLabForge implements Forge {
   async recentDefaultBranchChecks(commits: number): Promise<CommitChecks[]> {
     const { baseBranch } = await this.project();
     const params = new URLSearchParams({ ref: baseBranch, order_by: "id", sort: "desc", per_page: String(pageCount(commits)) });
-    const path = `${this.#projectRef}/pipelines?${params}`;
-    const pipelines = await this.#getJson(path);
-    if (!Array.isArray(pipelines)) throw this.#malformed(200, path, "expected a list");
+    const pipelines = await this.#readPages(`${this.#projectRef}/pipelines`, params, () => false, pageCount(commits));
     const recent: CommitChecks[] = [];
     for (const pipeline of pipelines) {
       const sha = this.#field(pipeline, "sha", "string", "pipeline");
@@ -518,25 +519,53 @@ export class GitLabForge implements Forge {
 
   /**
    * Reads a list page by page, following GitLab's `x-next-page`, and stops at
-   * the first item `stop` accepts, leaving that item and the rest out.
+   * the first item `stop` accepts, leaving that item and the rest out, or once
+   * it holds `limit` items.
+   *
+   * A page cut off before it ended, as a server or a proxy in front of it may
+   * do to a long response, is read again in smaller pages from the same item,
+   * and the rest of the list follows at that size, so a list never depends on
+   * one long response arriving whole.
    */
-  async #readPages(base: string, params: URLSearchParams, stop: (item: unknown) => boolean): Promise<unknown[]> {
+  async #readPages(
+    base: string,
+    params: URLSearchParams,
+    stop: (item: unknown) => boolean,
+    limit = Number.POSITIVE_INFINITY,
+  ): Promise<unknown[]> {
     const items: unknown[] = [];
-    let path = `${base}?${params}`;
+    let pageParams = new URLSearchParams(params);
     for (;;) {
-      const response = await this.#get(path);
-      this.#ensureOk(response, path, "GET");
-      const body = parseJson(response, this.setting.host, path, "GET");
+      const { path, response, body } = await this.#readPage(`${base}?${pageParams}`);
+      pageParams = new URLSearchParams(path.slice(path.indexOf("?") + 1));
       if (!Array.isArray(body)) throw this.#malformed(response.status, path, "expected a list");
       for (const item of body) {
-        if (stop(item)) return items;
+        if (items.length >= limit || stop(item)) return items;
         items.push(item);
       }
       const next = response.headers["x-next-page"]?.trim();
-      if (!next) return items;
-      const nextParams = new URLSearchParams(params);
-      nextParams.set("page", next);
-      path = `${base}?${nextParams}`;
+      if (!next || items.length >= limit) return items;
+      pageParams.set("page", next);
+    }
+  }
+
+  /**
+   * One page of a list, read whole: a page cut off before it ended is asked
+   * for again in smaller pages ({@link smallerPage}) until one arrives whole,
+   * and the path it came from is returned with it. A page cut off at one item
+   * is the error.
+   */
+  async #readPage(path: string): Promise<{ path: string; response: ForgeResponse; body: unknown }> {
+    for (;;) {
+      try {
+        const response = await this.#get(path);
+        this.#ensureOk(response, path, "GET");
+        return { path, response, body: parseJson(response, this.setting.host, path, "GET") };
+      } catch (error) {
+        const smaller = error instanceof ForgeCutOffError ? smallerPage(path) : null;
+        if (smaller === null) throw error;
+        path = smaller;
+      }
     }
   }
 
@@ -690,6 +719,9 @@ export class GitLabForge implements Forge {
     } catch (error) {
       if (error instanceof TransportError && error.loggedOut) {
         throw new ForgeLoggedOutError(this.setting.host, error.message);
+      }
+      if (error instanceof TransportError && error.cutOff) {
+        throw new ForgeCutOffError(this.setting.host, request.method, request.path, error.message);
       }
       throw error;
     }
@@ -927,14 +959,6 @@ function rateLimitReset(response: ForgeResponse): Date {
     return new Date(Date.now() + retryAfter * 1000);
   }
   return new Date(Date.now() + DEFAULT_RATE_LIMIT_WAIT_MS);
-}
-
-function parseJson(response: ForgeResponse, host: string, path: string, method: ForgeMethod): unknown {
-  try {
-    return JSON.parse(response.body);
-  } catch {
-    throw new ForgeRequestError(host, response.status, method, path, "the response body is not JSON");
-  }
 }
 
 /** GitLab's own message for an error response, or the start of its body. */
