@@ -429,6 +429,8 @@ export interface AnsweredEntry extends EntryBase, ByOwner, Held {
 export interface UndoneEntry extends EntryBase, ByOwner {
   type: "undone";
   action: number;
+  /** Why entail voided the action, when the owner did not undo it: the collaborator was taken off the repo. */
+  reason?: string;
 }
 
 /** The owner asked entail to judge the issues that were open when the repo was enrolled. */

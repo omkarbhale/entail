@@ -257,6 +257,14 @@ export function changeRepoSettings(dataDirectory: string, repoText: string, by: 
     if (!state.collaborators.some((name) => sameName(name, change.allow!)) || access.disallowed !== undefined) access.allowed = change.allow;
   }
   if (Object.keys(changed).length + Object.keys(pins).length + Object.keys(access).length > 0) appendEntry(dataDirectory, repo, { type: "settings", by, ...changed, ...pins, ...access }, now);
+  if (access.disallowed !== undefined && access.allowed === undefined) {
+    const log = readLog(dataDirectory, repo);
+    for (const action of standingActions(log).values()) {
+      if (byCollaborator(action) && sameName(action.by, access.disallowed) && !actedOn(log, action)) {
+        appendEntry(dataDirectory, repo, { type: "undone", by, action: action.id, reason: `${action.by} is no longer allowed to answer board items for ${repo}` }, now);
+      }
+    }
+  }
   return repoState(repo, readLog(dataDirectory, repo));
 }
 
@@ -1206,6 +1214,12 @@ export async function answerCall(dataDirectory: string, id: number, by: string, 
   return record(dataDirectory, repo, { type: "answered", ...who, call: id, to: owner, ...(scope === undefined ? {} : { scope }), answer: words, ...(parts === undefined ? {} : { parts }) }, now, options);
 }
 
+function actedOn(entries: readonly Entry[], action: OwnerAction): boolean {
+  return entries.some(
+    (other) => ((other.type === "acted" || other.type === "pr-acted") && other.for === action.id) || (other.type === "call" && other.owner?.action === action.id),
+  );
+}
+
 /**
  * Undoes the owner's action on a call while it is still held. Once the
  * window has closed entail is acting on it, and it can no longer be undone
@@ -1217,10 +1231,7 @@ export function undoAction(dataDirectory: string, id: number, by: string, now = 
   if (action === undefined) throw new OwnerError(409, `nothing on call ${id} to undo`);
   // A collaborator takes back only their own answer; the owner can undo any.
   if (options.collaborator === true && !(byCollaborator(action) && sameName(action.by, by))) throw new OwnerError(403, `only the owner can undo ${action.by}'s ${action.type === "answered" ? "answer" : "action"}`);
-  const acted = entries.some(
-    (other) => ((other.type === "acted" || other.type === "pr-acted") && other.for === action.id) || (other.type === "call" && other.owner?.action === action.id),
-  );
-  if (acted || action.holdUntil === undefined || Date.parse(action.holdUntil) <= now.getTime()) {
+  if (actedOn(entries, action) || action.holdUntil === undefined || Date.parse(action.holdUntil) <= now.getTime()) {
     throw new OwnerError(409, "too late to undo: entail is already acting on it; override the call instead");
   }
   appendEntry(dataDirectory, repo, { type: "undone", by: options.collaborator === true ? action.by : by, action: action.id }, now);

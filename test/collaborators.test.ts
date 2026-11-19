@@ -90,6 +90,29 @@ test("a collaborator who was removed can no longer answer", async (t) => {
   await assert.rejects(collaboratorAnswer(h, id, "go", "Yes."), (error: unknown) => error instanceof OwnerError && error.status === 403);
 });
 
+test("removing a collaborator voids their answer still held: it settles nothing and they cannot undo it", async (t) => {
+  const h = harness(t);
+  allow(h);
+  const id = await asked(h);
+  await answerCall(h.dataDirectory, id, SAM, "no", "No.", new Date(), { holdMs: HOLD_MS, collaborator: true });
+  changeRepoSettings(h.dataDirectory, REPO, OWNER, { disallow: SAM });
+  const voided = readLog(h.dataDirectory, REPO).filter((entry) => entry.type === "undone");
+  assert.equal(voided.length, 1);
+  assert.match(voided[0]!.type === "undone" ? voided[0]!.reason ?? "" : "", /Sam is no longer allowed/u);
+  assert.throws(() => undoAction(h.dataDirectory, id, SAM, new Date(), { collaborator: true }), (error: unknown) => error instanceof OwnerError && error.status === 409);
+  assert.equal(itemView(h.dataDirectory, id, []).status, "waiting");
+});
+
+test("removing a collaborator leaves an answer already acted on, and another collaborator's held answer", async (t) => {
+  const h = harness(t);
+  allow(h);
+  allow(h, "Priya");
+  const id = await asked(h);
+  await answerCall(h.dataDirectory, id, "Priya", "no", "No.", new Date(), { holdMs: HOLD_MS, collaborator: true });
+  changeRepoSettings(h.dataDirectory, REPO, OWNER, { disallow: SAM });
+  assert.equal(readLog(h.dataDirectory, REPO).filter((entry) => entry.type === "undone").length, 0);
+});
+
 // The answer: the same single path, under the collaborator's name.
 
 test("a collaborator's answer is stored, shown on the board and in the log under their name, never as the owner's", async (t) => {
