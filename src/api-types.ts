@@ -147,6 +147,8 @@ export interface CallView {
   /** For ask: the question and what makes it one. */
   question: { question: string; why: string; large: boolean } | null;
   restsOn: { visionLines: VisionLineView[]; cases: CaseRefView[] };
+  /** Set on a call a learned ruling settled instead of asking: the board answers it rests on, each under the name of who gave it. */
+  ruling: RulingView | null;
   judgedAt: string;
   trigger: TriggerName;
   owner: OwnerWordView | null;
@@ -165,6 +167,26 @@ export interface CallView {
   waitingSince: string;
   /** On a PR's call, everything about the PR; null on an issue's. */
   pr: PullRequestView | null;
+}
+
+/** The board answers a call settled by a learned ruling rests on. */
+export interface RulingView {
+  /** The kind of question it settles. */
+  kind: string;
+  outcome: "go" | "plan" | "no";
+  answers: {
+    /** The answer's entry in the log. */
+    id: number;
+    /** Whoever gave it. */
+    by: string;
+    at: string;
+    outcome: "go" | "plan" | "no";
+    /** The answer's own words. */
+    words: string;
+    issue: { number: number; title: string; url: string };
+  }[];
+  /** The question entail would have asked the owner. */
+  asked: { question: string; why: string };
 }
 
 /** What a call a vision change moved shows: the call before → this one, and the passage of the vision change that moved it. */

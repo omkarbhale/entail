@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { CallView } from "../api.ts";
+import type { CallView, RulingView } from "../api.ts";
 import { ago, callLabel, forgeName, shortName, shownCall, sizeLine, sourceLabel, subject, type ShownCall } from "../format.ts";
 
 /** The parts every item has, in order: what the ticket was, what entail concluded, why, and what it rests on. */
@@ -228,6 +228,7 @@ function PullRequestFacts({ item }: { item: CallView }) {
 
 export function RestsOn({ item }: { item: CallView }) {
   const { visionLines, cases } = item.restsOn;
+  if (item.ruling !== null) return <RulingAnswers ruling={item.ruling} />;
   return (
     <div className="rests">
       <span className="k">Rests on</span>
@@ -252,6 +253,30 @@ export function RestsOn({ item }: { item: CallView }) {
           <li>{item.visionCommit === null ? "On the merits: the repo has no VISION.md." : "On the merits: no vision line speaks to this."}</li>
         )}
       </ul>
+    </div>
+  );
+}
+
+/** What a call settled by a learned ruling rests on: the board answers, each under the name of whoever gave it. */
+function RulingAnswers({ ruling }: { ruling: RulingView }) {
+  const word = (outcome: RulingView["outcome"]) => (outcome === "plan" ? "go, for planning" : outcome);
+  return (
+    <div className="rests ruling">
+      <span className="k">Settled by a ruling</span>
+      <p className="muted small">
+        {ruling.answers.length} board answers to “{ruling.kind}” questions, all {word(ruling.outcome)}, and none the other way. A later answer that disagrees stops entail settling this kind of question itself.
+      </p>
+      <ul>
+        {ruling.answers.map((answer) => (
+          <li key={answer.id}>
+            <b>{answer.by}</b> answered {word(answer.outcome)} on <External href={answer.issue.url}>#{answer.issue.number}</External> <span className="muted small">{answer.at.slice(0, 10)}</span>: <q>{answer.words}</q>
+          </li>
+        ))}
+      </ul>
+      <details>
+        <summary className="muted small">The question entail would have asked</summary>
+        <p>{ruling.asked.question}</p>
+      </details>
     </div>
   );
 }

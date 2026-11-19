@@ -3,6 +3,7 @@ import type {
   ActionView,
   BlockedView,
   CallView,
+  RulingView,
   FailingView,
   HeldView,
   LogFilter,
@@ -19,7 +20,7 @@ import type {
 import { caseSlug, LANDING_CALLS, landingCaseSlug, OWNER_CALLS, type Case, type LandingCase, type LandingOwnerCall, type OwnerCall } from "./case-book.ts";
 import { refsText, refText } from "./blockers.ts";
 import { ciGreen } from "./landing.ts";
-import { scopeOf } from "./judgment.ts";
+import { outcomeWords, scopeOf, type Ruling } from "./judgment.ts";
 import { isBranchName } from "./git.ts";
 import { EFFORTS, type Effort } from "./model-runner.ts";
 import { parsePins, pinsFile } from "./pins.ts";
@@ -320,6 +321,7 @@ export function callView(repo: string, entry: CallEntry, status: CallStatus, ent
         };
       }),
     },
+    ruling: entry.call.call !== "ask" && entry.call.ruling !== undefined ? rulingView(entry.call.ruling) : null,
     judgedAt: entry.at,
     trigger: entry.trigger,
     owner: entry.owner,
@@ -348,6 +350,15 @@ export function callView(repo: string, entry: CallEntry, status: CallStatus, ent
   };
 }
 
+function rulingView(ruling: Ruling): RulingView {
+  return {
+    kind: ruling.kind,
+    outcome: ruling.outcome,
+    answers: ruling.answers.map((answer) => ({ id: answer.action, by: answer.by, at: answer.at, outcome: answer.outcome, words: answer.words, issue: answer.issue })),
+    asked: { question: ruling.asked.question, why: ruling.asked.why },
+  };
+}
+
 /** A PR's call as the owner reads it. */
 export function landingView(repo: string, entry: LandingEntry, status: CallStatus, entries: readonly Entry[], book: readonly Case[]): CallView {
   const settledBy = "action" in status ? status.action : null;
@@ -369,6 +380,7 @@ export function landingView(repo: string, entry: LandingEntry, status: CallStatu
     criteria: entry.criteria,
     question: call.question === null ? null : { ...call.question, large: false },
     restsOn: restsOnView(repo, entry.vision, call.restsOn, book),
+    ruling: null,
     judgedAt: entry.at,
     trigger: firstHead?.id === entry.id ? "opened" : "push",
     owner: null,
@@ -1169,6 +1181,7 @@ export function formatLog(items: readonly LogItem[], options: { repoColumn: bool
         lines.push(...recheckLines(item.recheck, "      "));
         for (const line of item.restsOn.visionLines) lines.push(`      rests on the vision: > ${line.text}`);
         for (const past of item.restsOn.cases) lines.push(`      rests on case ${past.slug}`);
+        if (item.ruling !== null) lines.push(...rulingViewLines(item.ruling, "      "));
         if (item.question !== null) lines.push(`      question: ${item.question.question}`);
         for (const criterion of item.criteria) lines.push(`      criterion [${criterion.source}]: ${criterion.criterion}`);
         lines.push(`      ${statusLine(item)} · ${item.model} at ${item.effort} effort · call ${item.id}`);
@@ -1300,6 +1313,14 @@ function statusLine(item: Pick<CallView, "status" | "call" | "settledBy">): stri
   }
 }
 
+/** A ruling-settled call's answers as lines, each under the name of whoever gave it, with a link to the ticket it settled. */
+function rulingViewLines(ruling: RulingView, indent: string): string[] {
+  return [
+    `${indent}settled by a ruling: ${ruling.answers.length} board answers to "${ruling.kind}" questions, all ${outcomeWords(ruling.outcome)}`,
+    ...ruling.answers.map((answer) => `${indent}  - ${answer.by} answered ${outcomeWords(answer.outcome)} on ${answer.issue.url} (${answer.at.slice(0, 10)}): ${answer.words.replace(/\s+/gu, " ").trim()}`),
+  ];
+}
+
 /** What waits on the owner, as text. */
 export function formatWaiting(items: readonly CallView[]): string {
   if (items.length === 0) return "Nothing is waiting on you.";
@@ -1316,6 +1337,7 @@ export function formatWaiting(items: readonly CallView[]): string {
     lines.push(...recheckLines(item.recheck, "  "));
     for (const line of item.restsOn.visionLines) lines.push(`  rests on the vision: > ${line.text}`);
     for (const past of item.restsOn.cases) lines.push(`  rests on case ${past.slug}${past.url === null ? "" : ` (${past.url})`}`);
+    if (item.ruling !== null) lines.push(...rulingViewLines(item.ruling, "  "));
     if (item.pr !== null) lines.push(...prLines(item.pr, "  "));
     else for (const criterion of item.criteria) lines.push(`  criterion [${criterion.source}]: ${criterion.criterion}`);
     return lines.join("\n");

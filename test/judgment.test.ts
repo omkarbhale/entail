@@ -58,6 +58,7 @@ function verdict(overrides: Partial<Verdict> = {}): Verdict {
     large_because: "",
     criteria: [],
     question: null,
+    question_kind: "",
     ...overrides,
   };
 }
@@ -152,7 +153,7 @@ test("the prompt names the three outcomes and keeps a go for planning for size, 
   assert.match(prompt, /a go to implement, for work that fits one PR, and a go for planning, for a ticket too large for one PR/u);
   assert.match(prompt, /A go for planning is for size alone, never for risk: a change that is hard to undo is still ask, however large/u);
   assert.match(prompt, /The owner's own answer on this issue that already approved the change, the part that makes it hard to undo included, settles it/u);
-  assert.equal(JUDGMENT_PROMPT_VERSION, "issue-call-5");
+  assert.equal(JUDGMENT_PROMPT_VERSION, "issue-call-6");
 });
 
 test("no routes to no, dropping any criteria or question", () => {
@@ -164,7 +165,7 @@ test("ask routes to ask with its one question", () => {
   const routed = routeVerdict(verdict({ call: "ask", question: { question: "Which totals?", why: "Two readings differ." } }));
   assert.deepEqual(routed, {
     ok: true,
-    call: { call: "ask", reason: "It makes the product better.", restsOn: { visionLines: [], cases: [] }, question: "Which totals?", why: "Two readings differ.", large: false, criteria: [] },
+    call: { call: "ask", reason: "It makes the product better.", restsOn: { visionLines: [], cases: [] }, question: "Which totals?", why: "Two readings differ.", large: false, criteria: [], kind: "" },
   });
 });
 

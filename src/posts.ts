@@ -1,4 +1,4 @@
-import { scopeOf, type Criterion, type GoScope, type IssueCall } from "./judgment.ts";
+import { outcomeWords, scopeOf, type Criterion, type GoScope, type IssueCall, type Ruling } from "./judgment.ts";
 import type { LandingCall } from "./landing.ts";
 import { refsText } from "./blockers.ts";
 import {
@@ -141,12 +141,22 @@ export function callText(call: IssueCall, confirm: boolean, owner: string, issue
   }
   if (call.call === "no") {
     const tail = confirm ? `The issue closes once ${owner} confirms this call on entail's board.` : "Closing the issue as not planned.";
-    return join(`**No.** ${escape(call.reason)}`, visionLinesText(call.restsOn.visionLines), tail);
+    return join(`**No.** ${escape(call.reason)}`, visionLinesText(call.restsOn.visionLines), call.ruling === undefined ? "" : rulingText(call.ruling), tail);
   }
   const scope = scopeOf(call);
   const head = `**${scope === "plan" ? "Go, for planning" : "Go"}.** ${escape(call.reason)}`;
   const tail = confirm ? `This call waits for ${owner} to confirm it on entail's board; nothing starts until then.` : "";
-  return join(head, scope === "plan" ? PLANNING_LINE : "", criteriaText(criteriaOf(call), issue, scope, baseBranch), tail);
+  return join(head, call.ruling === undefined ? "" : rulingText(call.ruling), scope === "plan" ? PLANNING_LINE : "", criteriaText(criteriaOf(call), issue, scope, baseBranch), tail);
+}
+
+/**
+ * The board answers a ruling-settled call rests on, each under the name of
+ * whoever gave it, with the ticket it settled and when. Only what each answer
+ * decided is posted: the question and the owner's words stay on the board.
+ */
+export function rulingText(ruling: Ruling): string {
+  const lines = ruling.answers.map((answer) => `- ${escape(answer.by)} answered ${outcomeWords(answer.outcome)} on #${answer.issue.number} (${answer.at.slice(0, 10)})`);
+  return `It rests on these answers given on entail's board, not on a vision passage:\n\n${lines.join("\n")}\n\nA later answer that disagrees stops entail settling this kind of question itself.`;
 }
 
 /**

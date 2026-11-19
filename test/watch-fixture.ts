@@ -362,6 +362,7 @@ export function verdict(overrides: Partial<Verdict> = {}): Verdict {
     large_because: "",
     criteria: [],
     question: null,
+    question_kind: "",
     ...overrides,
   };
 }
